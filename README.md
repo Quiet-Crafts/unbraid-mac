@@ -1,192 +1,203 @@
-<p align="center"><img src=".github/icon.png" width="128" alt=""></p>
+<p align="center">
+  <img src=".github/banner.png" alt="unbraid: every app, its own exit. Per-app VPN routing for macOS, free and open source." width="760">
+</p>
 
-# unbraid for Mac
+<p align="center">
+  <a href="https://github.com/quiet-crafts/unbraid-mac/releases/latest"><img src="https://img.shields.io/github/v/release/quiet-crafts/unbraid-mac?label=download&color=FFA66B" alt="Latest release"></a>
+  <img src="https://img.shields.io/badge/macOS-26%2B-8EE0A8" alt="macOS 26 or later">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/licence-GPL--3.0-7CC4FF" alt="GPL-3.0 licence"></a>
+  <a href="https://unbraid.app"><img src="https://img.shields.io/badge/website-unbraid.app-C9A7FF" alt="Website"></a>
+</p>
 
-Every app, its own exit. unbraid sends each app on your Mac through a different VPN location at the same time: a
-streaming app leaves from the US, another from Italy, your banking app skips the VPN, an app you don't trust gets no
-network at all, and everything else leaves from the Netherlands. Your home network stays reachable over Tailscale.
+unbraid is a split tunneling VPN client for the Mac that lets every app take its own exit. Your banking app can skip
+the VPN while a streaming app leaves from the US, a second app from Italy and everything else from the Netherlands,
+all at the same time. If you use Tailscale, your home network stays reachable too.
 
-This is the native macOS version of [unbraid for Android](https://github.com/Quiet-Crafts/unbraid). Free and open
-source.
+<p align="center">
+  <a href="https://github.com/quiet-crafts/unbraid-mac/releases/latest"><b>Download the DMG</b></a>
+  &nbsp;·&nbsp; <a href="https://unbraid.app">Website</a>
+  &nbsp;·&nbsp; <a href="https://unbraid.app/privacy">Privacy policy</a>
+  &nbsp;·&nbsp; <a href="https://github.com/quiet-crafts/unbraid-mac/issues">Report a bug</a>
+</p>
 
-[Website](https://unbraid.app) · [Download](https://unbraid.app/download/) · [Guides](https://unbraid.app/guides/) ·
-[Privacy policy](https://unbraid.app/privacy/)
+There is also [unbraid for Android](https://github.com/quiet-crafts/unbraid), with the same idea and the same
+providers.
 
-## What it does
+## Highlights
 
-- **Routes**: a default exit for all other apps, plus any number of exceptions. An app can also go **Direct** or be
-  **Blocked**.
-- **Providers**: NordVPN (NordLynx, OpenVPN, Double VPN, Onion), Mullvad, Private Internet Access, IVPN, Proton VPN
-  (including Free), Surfshark, ExpressVPN, Windscribe and AirVPN, plus your own WireGuard, OpenVPN and Shadowsocks
-  servers and Tailscale exit nodes. Routes can mix providers.
-- **Home access** through Tailscale (or a self-hosted Headscale) or a WireGuard tunnel, from every app.
-- **Profiles**: save a setup and switch it from the window, the menu bar, Control Center or the Shortcuts app.
-- **Menu bar** control with the front app's route one click away, and **desktop widgets**.
-- **Insights**: data per exit and app, live speed, protected time, and speed tests through each exit (M-Lab).
-- **Protection**: kill switch, connect on demand, a DNS filter of your choice, provider ad blocking, and health
-  checks that move a route whose server stopped answering.
+- Give any app its own exit country or server, let it skip the VPN with Direct, or block it from the network. Several
+  exits stay connected at once.
+- Use the VPN accounts you already have. One route can go through Mullvad while another uses NordVPN.
+- Reach your home network through Tailscale, Headscale or a home WireGuard tunnel, or send chosen apps out through a
+  Tailscale exit node.
+- Connection checks notice a server that stopped answering and move its route to another port or server.
+- A DNS filter of your choice, per route and for Direct traffic, plus the provider's own ad and tracker blocking
+  where it has one.
+- Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets and Control Center
+  controls.
+- Stats on this Mac: data per route and app, live speed, and speed tests through several exits at once.
+- No ads, no unbraid account and no analytics. Free software under the GPL.
 
-You bring the VPN: unbraid has no servers of its own and works with the accounts and servers you already have.
+## What it works with
 
-## Install
+You bring the VPN. unbraid has no servers of its own and works with the accounts and servers you already have.
 
-Download the DMG from [unbraid.app/download](https://unbraid.app/download/) or from this repository's
-[releases](https://github.com/Quiet-Crafts/unbraid-mac/releases), open it and drag unbraid to Applications. It needs
-macOS 26 or later, on a Mac with Apple silicon or an Intel processor.
+You can sign in with NordVPN (NordLynx, OpenVPN, Double VPN and Onion over VPN), Mullvad, Private Internet Access,
+IVPN, ExpressVPN or AirVPN. For Proton VPN (Free included) and Surfshark you add your WireGuard key once, and for
+Windscribe you paste one WireGuard config from their website. After that you choose from the servers your plan
+includes. You can also import your own WireGuard or OpenVPN config, paste a Shadowsocks key, or join a Tailscale
+tailnet (a self-hosted Headscale works as well).
 
-When you first open unbraid, macOS asks you to allow its network extension (System Settings › General › Login Items &
-Extensions), and the first time you connect, to add a VPN configuration. unbraid needs both to route each app.
+Routes can mix providers. One app can use Mullvad in Sweden while another uses NordVPN in Japan.
 
-Each release lists a `SHA256SUMS` file. To check a download, put it in the same folder and run
-`shasum -a 256 -c SHA256SUMS`. Releases are signed with a Developer ID and notarized by Apple:
-`spctl --assess --type open --context context:primary-signature -v unbraid-<version>-<build>.dmg` prints
-`source=Notarized Developer ID`.
+## Getting started
+
+1. Download the DMG from the [releases page](https://github.com/quiet-crafts/unbraid-mac/releases/latest), open it
+   and drag unbraid to Applications. Then open unbraid from Applications.
+2. macOS asks you to allow unbraid's network extension. Allow it in System Settings › General › Login Items &
+   Extensions. unbraid lives in the menu bar; its window opens from there.
+3. Accept the terms and choose your VPN. You can sign in to a provider, import a WireGuard or OpenVPN file (*Your own
+   server*), paste a Shadowsocks key, or use Tailscale on its own.
+4. Select the default route in the sidebar and choose *Change Server…* to pick a country. This is where every app
+   goes unless you say otherwise. Then click *Connect* and allow the VPN configuration when macOS asks.
+5. To send some apps somewhere else, click *Add Route* and choose another country or server. In *All Apps*, click
+   *Show My Apps* (the list stays on your Mac), then drag apps onto a route in the sidebar or use *Move To*. Choose
+   *Direct* for apps that should not use the VPN at all, like a banking app.
+
+Each release lists the DMG's SHA-256 checksum and is signed with a Developer ID and notarized by Apple.
+[Check the download](#check-the-download) explains how to confirm both before you install.
+
+## Good to know
+
+unbraid is a VPN app, not a VPN service. It has no servers, so you need an account with a supported provider
+(the free Proton VPN plan works) or a server of your own.
+
+While unbraid is connected, it is the Mac's VPN. Turn off your provider's own app first, since two VPN apps on one
+Mac get in each other's way.
+
+Your provider's limits still apply. Providers with a connection limit count each route in use as a connection,
+while Mullvad counts unbraid as one device. The default route stays connected while unbraid is on. Other routes
+connect as soon as an app is assigned to them, even if that app is idle.
+
+The app needs macOS 26 or later, on a Mac with Apple silicon or an Intel processor. It doesn't update itself: to
+update, quit unbraid, drag the new version from the DMG over the old one and open it. Your setup stays. macOS may ask
+you to allow the updated network extension again.
+
+## Questions
+
+### How is this different from the split tunneling in my VPN app?
+
+In many VPN apps, split tunneling means you can pick apps that skip the VPN, while every other app leaves from the
+same place. unbraid lets you choose an exit for each app, and those exits can come from different providers.
+
+### Can I use it without a VPN subscription?
+
+Yes. The free Proton VPN plan works, and so does a server of your own. You can import a WireGuard or OpenVPN file,
+paste a Shadowsocks key, or use only Tailscale, for example with an exit node at home.
+
+### Can I reach my home network while I use a VPN?
+
+Yes. With Tailscale, or with your router's WireGuard config added as a home tunnel, apps can reach devices at home
+and still use their VPN exit for everything else.
+
+### Does it have a kill switch?
+
+Yes. In Settings › Protection, *Kill switch* blocks traffic outside the tunnel, for the internet or for the internet
+and your home network, and *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
+restarts. Apps you set to Direct still use your normal connection while unbraid is connected.
+
+### Does it get around my provider's device limit?
+
+No. Providers with a connection limit count each route in use against it. Mullvad counts unbraid as one device.
 
 ## How it works
 
-A packet tunnel system extension runs the [sing-box](https://github.com/SagerNet/sing-box) engine. Each connection is
-matched to the app that owns it (its process path, including helpers inside the app bundle and sockets opened for it
-by macOS services) and sent to that app's exit. DNS answers are fake addresses resolved again on the exit the app uses,
-so services see the right country. The app compiles the configuration, picks servers and watches their health; the
-extension only runs the engine.
+unbraid runs a packet tunnel network extension with the [sing-box](https://github.com/SagerNet/sing-box) engine
+behind it. The app compiles the configuration, picks servers and watches their health; the extension only runs the
+engine.
 
 ```
-apps ─► utun ─► sing-box ─► rules: DNS → blocked → home → LAN → the app's route → default
-                             ├─ WireGuard / OpenVPN / Shadowsocks exits, one per location
-                             ├─ Tailscale (home, exit nodes)
-                             └─ direct
+apps -> utun -> sing-box -> rules: DNS, blocked, home, LAN, the app's route, default
+                            |- one WireGuard, OpenVPN or Shadowsocks exit per location
+                            |- Tailscale (home, exit nodes)
+                            '- direct
 ```
 
-### Repository layout
+Each TCP and UDP connection is routed by the program that opened it, matched by its path, including helpers inside an
+app's bundle. A connection macOS opens on an app's behalf, such as Safari's pages through WebKit or a download
+through nsurlsessiond, counts as that app's. DNS is answered with fake addresses and looked up again on the exit the
+app really uses, so a site sees the country you picked for that app. IPv6 follows an app's route or is refused. Only
+the default route and the routes your apps use are connected.
 
-| Path | What it holds |
-|---|---|
-| `App/` | The app: `Core/` (configuration compiler, models, parsers and the HTTP client; most of it unit tested), `Engine/` (the connection, tunnel control, app catalogue, statistics), `Providers/` (one file per VPN provider), `UI/` (SwiftUI window, Settings, menu bar panel) |
-| `Tunnel/` | The packet tunnel system extension that runs the engine |
-| `Widgets/` | Desktop and Notification Centre widgets |
-| `Shared/` | Code used by more than one target: the sealed store, the XPC protocol, the configuration check the extension runs |
-| `Tests/` | Unit tests, with synthetic fixtures and golden engine configurations |
-| `Resources/` | Assets, server catalogues, fonts and the licence notices shown in the app |
-| `Config/` | Signing settings (`Signing.xcconfig`; your own go in `Local.xcconfig`) |
-| `Frameworks/` | The engine's recorded hash (`Libbox.sha256`); the engine itself is built by `tools/build-libbox.sh` |
-| `tools/` | Build, release and engine scripts, the sing-box patches with their notices, and the repository's git hooks |
-| `project.yml` | The Xcode project's source ([XcodeGen](https://github.com/yonaskolb/XcodeGen)); `unbraid.xcodeproj` is generated from it |
+Server lists come from each provider's public API where there is one, and otherwise from
+[gluetun-servers](https://github.com/qdm12/gluetun-servers).
 
 ## Build
 
-You need macOS 26, Xcode 26, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go 1.21 or later installed: the
-scripts pin Go 1.26.10, which Go then fetches by itself (upstream sing-box 1.14.4 builds with 1.26.10).
+You need macOS 26, Xcode 26, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go 1.21 or later (Go fetches the
+exact toolchain itself through `GOTOOLCHAIN`).
 
 ```bash
-tools/build-libbox.sh     # Frameworks/Libbox.xcframework from sing-box 1.14.4 plus unbraid's patches (including its OpenVPN module)
+tools/build-libbox.sh     # Frameworks/Libbox.xcframework from sing-box v1.14.4 with the patches in tools/
 xcodegen                  # unbraid.xcodeproj from project.yml
 tools/dev-install.sh      # Debug build into /Applications (system extensions run only from there)
+xcodebuild -project unbraid.xcodeproj -scheme UnbraidTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
 ```
 
-`tools/build-libbox.sh` keeps its sing-box checkout in `WORK` (default `~/Development/unbraid-mac-deps`) and resets it on
-every run, so give it a folder of its own. The engine's hash in `Frameworks/Libbox.sha256` comes out the same with the
-same Xcode; another Xcode version builds a working engine with a different hash, which you then record yourself.
+The build script keeps its work files in `~/Development/unbraid-mac-deps`. Set `WORK` to use another folder. The
+patches in `tools/` stop the engine from writing the running configuration, which holds private keys, to disk, match
+connections opened for an app by another process to that app, hand the Tailscale node state to the app to be sealed,
+refuse files sent through Taildrop, give an OpenVPN tunnel a resolver inside it when its server pushes none, and let
+the app's connection checks look up their servers through the tunnel being checked. `tools/build-cli.sh` builds the
+engine's command-line version, which the tests use to check every generated configuration.
 
-**Running it** takes an Apple Developer Program membership: the tunnel is a Network Extension system extension, which
-needs a signing team with that capability. To sign with your own team, create `Config/Local.xcconfig` (git ignores it)
-with your team ID and a bundle-ID prefix of your own, as described in `Config/Signing.xcconfig`. Your build then has its
-own bundle IDs, app group and extension, but it shares unbraid's data folder and `unbraid:` links, so don't run both on
-one Mac. `tools/xc.sh` lets Xcode create the signing profiles: with your Xcode account, or with an App Store Connect API
-key (`ASC_KEY_ID`, `ASC_ISSUER_ID` and `ASC_KEY_PATH`, from the environment or `.secrets/asc.env`).
-
-The tunnel is a system extension: macOS asks you to allow it once in System Settings › General › Login Items &
-Extensions.
-
-### Tests
-
-The unit tests build and run without signing (no app, extension or engine needed):
-
-```bash
-xcodebuild -project unbraid.xcodeproj -scheme UnbraidTests -configuration Debug -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO test
-```
-
-They cover the providers' parsers and sign-in checks, the configuration compiler, server picking, the OpenVPN,
-WireGuard and Shadowsocks imports, statistics, the speed test's parsing, Tailscale link checks and log redaction.
-The tests that check every generated configuration against the engine itself need its command-line build: run
-`tools/build-cli.sh` first, or they are skipped. With your own `WORK`, add
-`TEST_RUNNER_UNBRAID_SING_BOX="$WORK/sing-box-cli-mac"` to the test command so they find it.
-
-### Releases
-
-`tools/release.sh` builds a release from a clean commit: it checks the engine against its recorded hash, scans the
-engine's Go modules for known vulnerabilities (govulncheck), runs the whole test suite with the engine (every test must
-pass, none skipped), writes the complete source archive, then archives, signs with Developer ID, checks every
-signature and entitlement, notarizes and staples the DMG, and tags the commit. `tools/release.sh --check-only` runs the
-checks and tests and stops before anything is archived or signed. It refuses a `Config/Local.xcconfig` unless
-`ALLOW_LOCAL_XCCONFIG=1`; it then takes only the signing settings from it and puts it in the source archive.
-
-## Updates
-
-unbraid doesn't check for updates by itself, and has no updater. Help › Check for Updates… opens the download page on
-unbraid.app. To update, quit unbraid, replace the app in Applications with the one from the newer DMG and open it: it
-then asks macOS to update its network extension, which may need your approval again. A release never replaces its
-extension with an older build.
+Running the app takes an Apple Developer Program membership, because the network extension needs a signing team with
+that capability. Put your own team ID and bundle-ID prefix in `Config/Local.xcconfig` (git ignores it), as
+`Config/Signing.xcconfig` describes. `tools/release.sh` builds a release: the tests, the source archive, Developer ID
+signing, notarization and the DMG.
 
 ## Privacy
 
-No analytics, no accounts of its own, no servers of its own. Provider sign-ins, keys and the Tailscale node state are
-stored on this Mac, sealed with keys kept in the Keychain; a provider gets its own login, token or account number only
-when you sign in, connect or sign out, open its page in Settings (your plan, this Mac's device and the account's
-limits), or browse NordVPN's dedicated IP servers. Statistics are off until you turn them
-on, stay on this Mac, and can be deleted at any time. The list of installed apps is read only on this Mac (after you
-agree, on a new install).
+We add no advertising or analytics. You don't need an unbraid account. Your provider credentials are sealed with a key
+kept in the Keychain and are only sent to the service they belong to. The list of installed apps is read on the Mac so
+you can assign routes, and it never leaves the Mac. Statistics are off until you turn them on and stay on the Mac. The
+privacy policy, with every service the app talks to, is at [unbraid.app/privacy](https://unbraid.app/privacy).
 
-What unbraid itself contacts, and why. These requests leave from your Mac's own connection unless they say "through"
-a tunnel:
+To report a security problem, see [SECURITY.md](SECURITY.md).
 
-- **Your VPN providers**, only the ones you use, at sign-in, connect and sign-out, when you open their page in Settings,
-  and for their server lists (when unbraid
-  starts, then about once a day, and when you browse servers, connected or not): NordVPN (api.nordvpn.com,
-  downloads.nordcdn.com), Mullvad (api.mullvad.net), Private Internet Access (www.privateinternetaccess.com,
-  serverlist.piaservers.net, and the WireGuard API of the server you connect to), IVPN (api.ivpn.net). Surfshark
-  (api.surfshark.com), Windscribe (assets.windscribe.com) and AirVPN (airvpn.org) get only requests for public lists.
-- **GitHub** (raw.githubusercontent.com): the community server lists of
-  [gluetun-servers](https://github.com/qdm12/gluetun-servers) for Proton VPN (including Free) and ExpressVPN, and as a
-  fallback for Surfshark and AirVPN. GitHub sees which provider's list is fetched, never a login.
-- **Connection checks**, about once a minute while connected, through each provider tunnel that unbraid can move to
-  another server (not imported servers, pinned servers, dedicated IPs or Tailscale), each on its own schedule: a STUN
-  request to stun.l.google.com:19302 and one to stun.cloudflare.com:3478, both at the same time, and a TLS handshake with
-  www.google.com:443 if neither has answered after 3 seconds; the check gives up after 8 seconds. Always through the
-  tunnel being checked, never from your own address.
-- **DNS**: an app on a VPN looks names up through its tunnel, with your custom DNS server if you set one, else the
-  provider's or the one its configuration or OpenVPN server gives, else Quad9 (9.9.9.9) for WireGuard, Shadowsocks and
-  Tailscale exits that name none. Direct apps use your network's resolver, and so do local names (with local network
-  access on) and reverse lookups of private addresses. Some lookups macOS makes for apps itself (mail, service and text
-  records) follow the default route.
-- **Tailscale**, only if you set it up: its control server (login.tailscale.com, controlplane.tailscale.com) or your
-  Headscale, Tailscale's relays and your tailnet's devices. They receive what a Tailscale client sends: the device's
-  public keys, its addresses and ports, its OS and version, network checks, and your auth key if you give one; the
-  device is named "unbraid". Tailscale's log upload is left out of unbraid. Apps on a Tailscale exit reach Tailscale's
-  own sites and your Headscale server directly, so the exit can't block its own sign-in.
-- **M-Lab** (locate.measurementlab.net and a test server), only for a speed test you start, after you accept its data
-  policy, through the exit you test. M-Lab publishes the results, including the IP address it sees.
+## Check the download
 
-The VPN servers, your own servers and your home network carry the traffic of the apps you send there. Links you open
-from the app (unbraid.app, provider account pages, Tailscale sign-in) open in your browser and follow its route. The
-[privacy policy](https://unbraid.app/privacy/) has the details.
+Download the DMG and `SHA256SUMS` from the release into the same folder. From that folder, run:
 
-## Contributing and security
+```sh
+shasum -a 256 -c SHA256SUMS
+```
 
-Bug reports are welcome in this repository's issues; [CONTRIBUTING.md](CONTRIBUTING.md) says what helps most. Please
-report security problems privately, as [SECURITY.md](SECURITY.md) describes.
+The line for the DMG should end in `OK`. The DMG is signed with the Developer ID of team `28PLDKCR52` and notarized by
+Apple. To check, run `spctl --assess --type open --context context:primary-signature -v` with the DMG's name; it should
+print `accepted` and `source=Notarized Developer ID`.
 
-## Support
+## Support the project
 
-unbraid is free and made by one person. If it is useful to you, you can
-[support unbraid with a donation](https://unbraid.app/donate/).
+unbraid is free and has no paid features. If it is useful to you, see
+[unbraid.app/donate](https://unbraid.app/donate/) for ways to support it. A donation doesn't unlock anything.
+
+Bug reports are welcome in the [issue tracker](https://github.com/quiet-crafts/unbraid-mac/issues). The project
+doesn't take pull requests. [CONTRIBUTING.md](CONTRIBUTING.md) explains why and how else you can help.
 
 ## Licence
 
-GPL-3.0-or-later, as required by sing-box. Not affiliated with any VPN provider, Tailscale or SagerNet.
-[THIRD-PARTY.md](THIRD-PARTY.md) lists the components unbraid is built from and their licences.
+unbraid is free software under the GNU General Public License, version 3 or (at your option) any later version.
+See [LICENSE](LICENSE). sing-box, which unbraid is built on, is under the GPL as well.
 
-The complete source of each release is published next to its DMG, as `unbraid-<version>-<build>-source.tar.gz`: this
-repository at the release commit, sing-box with unbraid's patches applied, every Go module the engine is built from,
-and `BUILDING.txt` with the toolchain versions and commands (`tools/source-archive.sh` makes it). The full licence
-texts ship inside the app (Settings › About › All Licence Texts).
+unbraid includes or downloads work by other people under their own licences. [THIRD-PARTY.md](THIRD-PARTY.md)
+lists them, and the full texts ship inside the app (`Resources/notices.txt`, generated by `tools/notices.sh` from the
+Go modules that are actually linked). Each release publishes its complete source next to the DMG.
+
+unbraid is an independent project and isn't affiliated with or endorsed by the VPN providers named here,
+Tailscale or SagerNet. Product names belong to their owners.
+
+## About this repository
+
+unbraid is published by Quiet Crafts. Parts of the code and of the text in this repository were written with the
+help of AI tools. The developer reviews and tests every change before it is released.

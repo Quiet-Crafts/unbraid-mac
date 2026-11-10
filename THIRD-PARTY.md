@@ -1,9 +1,9 @@
 # Third-party software
 
-unbraid is built on other people's work. This file lists what the Mac app includes or downloads and under which
-licence. The complete licence texts, including every Go module linked into the engine, ship inside the app in
-`Resources/notices.txt` (Settings › About › All Licence Texts). `tools/notices.sh` regenerates that file after an engine
-build.
+unbraid is built on other people's work. This file lists what the app includes or downloads and under which
+licence. The complete licence texts, including every Go module linked into the sing-box library, ship inside the
+app in `Resources/notices.txt` (Settings, About, All Licence Texts). `tools/notices.sh` regenerates that file after
+a libbox build.
 
 ## Included in the app
 
