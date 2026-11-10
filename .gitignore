@@ -1,0 +1,30 @@
+.DS_Store
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+dist/
+
+# The engine (tools/build-libbox.sh): a folder, or a link to a shared copy in a worktree. Its hash is committed
+# (Frameworks/Libbox.sha256), the framework itself is not.
+Frameworks/Libbox.xcframework
+
+# Your own signing team and bundle IDs (see Config/Signing.xcconfig)
+Config/Local.xcconfig
+
+# Never published: local notes, tool state and keys
+_INTERNAL/
+.claude/
+AGENTS.md
+CLAUDE.md
+.secrets/
+*.p8
+*.p12
+*.pfx
+*.pem
+*.key
+*.cer
+*.mobileprovision
+*.provisionprofile
+*.xcarchive
+*.dmg

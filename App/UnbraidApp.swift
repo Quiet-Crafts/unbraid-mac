@@ -1,0 +1,312 @@
+import ServiceManagement
+import SwiftUI
+import WidgetKit
+
+// The app's entry point: its scenes (the main window, the menu bar extra, Settings) and menu commands, and the app
+// delegate that installs the tunnel extension, shows the window when needed, quits cleanly, asks once about opening
+// at login, and acts on widget and Control Center requests.
+
+@main
+struct UnbraidApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
+    @State private var model = AppModel.shared
+
+    var body: some Scene {
+        Window("unbraid", id: "main") {
+            RootView().environment(model)
+        }
+        .defaultSize(width: 1040, height: 700)
+        .windowToolbarStyle(.unified)
+        .commands { UnbraidCommands(model: model) }
+
+        MenuBarExtra {
+            MenuBarPanel().environment(model)
+        } label: {
+            MenuBarIcon()
+        }
+        .menuBarExtraStyle(.window)
+
+        Settings {
+            SettingsView().environment(model)
+        }
+        .windowToolbarStyle(.unifiedCompact)
+    }
+}
+
+/// The menu bar glyph: the logo, with a small mark for paused and off so the state reads at a glance.
+/// It lives as long as the app, so it also hands the app delegate SwiftUI's way to open the main window.
+struct MenuBarIcon: View {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
+    /// Read here, not in the scene: a scene that reads the connection redraws the status item at every change of it.
+    var body: some View {
+        let state = Connection.shared.state
+        let phase = state.phase
+        let protection = state.runState.protection(blocked: Set(state.blocked.keys))
+        Image(phase == .on ? "MenuBarOn" : phase == .paused ? "MenuBarPaused" : "MenuBarOff")
+            .accessibilityLabel(phase == .on ? "unbraid, \(protection.map { $0 ? "protected" : "connected" } ?? "connected")" : phase == .paused ? "unbraid, paused" : "unbraid, not connected")
+            .task {
+                AppDelegate.openWindow = { openWindow(id: "main") }
+                AppDelegate.openSettings = { openSettings() }
+            }
+    }
+}
+
+struct UnbraidCommands: Commands {
+    let model: AppModel
+    @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.sceneActions) private var actions
+    @FocusedValue(\.goTo) private var goTo
+
+    var body: some Commands {
+        CommandGroup(after: .newItem) {
+            Button("Open unbraid") { openWindow(id: "main"); NSApp.activate() }.keyboardShortcut("o")
+            // From any page of the window: the route picker belongs to the window, not to a page.
+            Button("New Route…") { Presentation.shared.picker = PickerTarget(id: "") }.keyboardShortcut("n").disabled(goTo == nil)
+            Button("Add App…") { actions?.addApp?() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(actions?.addApp == nil)
+        }
+        CommandGroup(after: .textEditing) {
+            Button("Find") { actions?.find?() }.keyboardShortcut("f").disabled(actions?.find == nil)
+        }
+        CommandGroup(after: .toolbar) {
+            Section {
+                Button("All Apps") { goTo?(.apps(nil)) }.keyboardShortcut("1")
+                Button("Traffic") { goTo?(.traffic) }.keyboardShortcut("2")
+                Button("Activity") { goTo?(.activity) }.keyboardShortcut("3")
+                Button("Speed Test") { goTo?(.speed) }.keyboardShortcut("4")
+            }.disabled(goTo == nil)
+            Menu("Appearance") { AppearanceItems() }
+            Menu("Period") {
+                Picker("Period", selection: actions?.period ?? .constant(.week)) {
+                    ForEach(Period.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+            }.disabled(actions?.period == nil)
+            Button("History") { actions?.showHistory?() }.keyboardShortcut("y").disabled(actions?.showHistory == nil)
+            Button("Turn On Statistics…") { actions?.recordStatistics?() }.disabled(actions?.recordStatistics == nil)
+        }
+        // Moving the selected apps, from any page that lists them: ⌥⌘ and the route's place in the sidebar.
+        CommandMenu("Apps") {
+            Menu("Move To") { MoveItems { actions?.move?($0) } }.disabled(actions?.move == nil)
+        }
+        CommandMenu("Connection") {
+            Menu("Switch Profile") {
+                ForEach(Array(model.setup.profiles.prefix(3).enumerated()), id: \.element.name) { index, profile in
+                    Button(profile.name) { model.switchProfile(profile.name) }
+                        .keyboardShortcut(KeyEquivalent(Character(String(index + 1))), modifiers: [.control, .command])
+                }
+            }
+
+            Button(model.vpn.state.phase == .off ? "Connect" : model.vpn.state.phase == .paused ? "Resume" : "Disconnect") {
+                model.vpn.state.phase == .on || model.vpn.state.phase == .connecting ? model.disconnect() : model.connect()
+            }.keyboardShortcut("k")
+            if model.vpn.state.phase == .paused {
+                Button("Disconnect") { model.disconnect() }
+            }
+            Button("Pause for 15 Minutes") { model.pause(15) }
+                .keyboardShortcut("k", modifiers: [.command, .shift]).disabled(model.vpn.state.phase != .on)
+            Menu("Pause") {
+                ForEach([5, 15, 60], id: \.self) { m in Button(m == 60 ? "1 Hour" : "\(m) Minutes") { model.pause(m) } }
+                Button("Until Resumed") { model.pause(0) }
+            }.disabled(model.vpn.state.phase != .on)
+        }
+        // There is no Help book: Help opens the website.
+        CommandGroup(replacing: .help) {
+            Button("Show Tour") { Presentation.shared.startTour() }.disabled(!model.signedIn)
+            Divider()
+            SwiftUI.Link("unbraid Website", destination: URL(string: Site.home)!)
+            SwiftUI.Link("Guides", destination: URL(string: Site.guides)!)
+            SwiftUI.Link("Contact", destination: URL(string: Site.contact)!)
+            Divider()
+            // No update check of its own (unbraid.app publishes no version to ask for yet): the download page instead.
+            SwiftUI.Link("Check for Updates…", destination: URL(string: Site.download)!)
+            Divider()
+            SwiftUI.Link("Privacy Policy", destination: URL(string: Site.privacy)!)
+        }
+    }
+}
+
+struct SceneActions {
+    var addApp: (() -> Void)?
+    var find: (() -> Void)?
+    /// Moves the selected apps to a route (nil = follow the default).
+    var move: ((String?) -> Void)?
+    var period: Binding<Period>?
+    var showHistory: (() -> Void)?
+    var recordStatistics: (() -> Void)?
+}
+
+private struct SceneActionsKey: FocusedValueKey { typealias Value = SceneActions }
+extension FocusedValues {
+    var sceneActions: SceneActions? {
+        get { self[SceneActionsKey.self] }
+        set { self[SceneActionsKey.self] = newValue }
+    }
+}
+
+/// Launch at login, the tunnel extension, widget actions, and the Dock icon only while the window is open.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Set by the menu bar icon once SwiftUI is up.
+    static var openWindow: (() -> Void)?
+    static var openSettings: (() -> Void)?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Appearance.current.apply()
+        #if DEBUG
+        if PerfHost.active { PerfHost.start(); return }
+        #endif
+        Connection.shared.tunnel.installExtension()
+        Task { await Connection.shared.restorePause() }
+        LoginItem.shared.watch()
+        WidgetActions.listen()
+        Stats.shared.follow()
+        #if DEBUG
+        DebugHooks.install()
+        #endif
+        // The widgets' week: bytes per day and route, only while statistics are on.
+        Snapshot.weekSource = {
+            guard Store.shared.setup.prefs.stats else { return [] }
+            return await Stats.shared.week()
+        }
+        Snapshot.startPublishing()
+        // Show the window on a first launch (nothing set up yet) or when opened by hand rather than at login.
+        let atLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
+        if !atLogin || !AppModel.shared.signedIn { Task { try? await Task.sleep(for: .milliseconds(200)); Self.openMain() } }
+        NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
+            // The Dock icon goes with the last regular window: unbraid lives on in the menu bar.
+            DispatchQueue.main.async { if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { NSApp.setActivationPolicy(.accessory) } }
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        if !hasVisibleWindows { Self.openMain() }
+        return true
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Before anything awaits: the widgets' snapshot is no longer vouched for (their reload request then has the
+        // whole quit to go out), nothing freshens it again, and no widget request is acted on from here on.
+        Snapshot.retire()
+        WidgetActions.stop()
+        Task {
+            // A Tailscale speed test leaves the routed apps on its test node until put back: bounded, the rest is done at
+            // the next launch.
+            await SpeedTest.shared.settle(within: .seconds(4))
+            await Connection.shared.resumeBeforeQuit()
+            // The open session up to now and the sums not yet written, bounded: a stuck write never holds up the quit.
+            _ = await bounded(2) { await Stats.shared.close() }
+            // An owed drop the disk didn't take yet is tried once more, so the next launch still makes it.
+            Running.retryOwed()
+            // Saves still queued (setup, accounts, records), bounded too: a write stuck on a stalled disk can't hold up the quit.
+            _ = await bounded(10) { await FileWork.shared.drain() }
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
+    }
+
+    /// unbraid:// only opens the window: a link in a web page must never change the protection state.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        if urls.contains(where: { $0.scheme == "unbraid" }) { Self.openMain() }
+    }
+
+    /// Static, and not reached through NSApp.delegate: that is SwiftUI's own delegate, which only forwards to this one,
+    /// so a cast of it to AppDelegate is always nil.
+    static func openMain() {
+        NSApp.setActivationPolicy(.regular)
+        openWindow?()
+        NSApp.activate()
+    }
+}
+
+/// Open at login is asked once, after the first connection works, instead of being registered unasked at the first
+/// launch: someone who only tries unbraid shouldn't find it at every login. Settings › General has the switch.
+@Observable
+final class LoginItem {
+    static let shared = LoginItem()
+    /// Ask now: the window shows the question when it is open, and keeps it until it is answered.
+    private(set) var offer = false
+    private static let key = "loginItemOffered"
+    private var handled: Bool { UserDefaults.standard.bool(forKey: Self.key) }
+
+    /// Follows the connection until the question has been asked and answered (or the switch was used in Settings).
+    func watch() {
+        guard !handled else { offer = false; return }
+        let phase = withObservationTracking { Connection.shared.state.phase } onChange: {
+            Task { @MainActor in LoginItem.shared.watch() }
+        }
+        if phase == .on, SMAppService.mainApp.status == .notRegistered { offer = true }
+    }
+
+    /// The answer, or a choice made in Settings: never asked again.
+    func answer(_ open: Bool) {
+        UserDefaults.standard.set(true, forKey: Self.key)
+        offer = false
+        guard open else { return }
+        do {
+            try SMAppService.mainApp.register()
+            if SMAppService.mainApp.status == .requiresApproval {
+                AppModel.shared.notice = "To open unbraid at login, allow it in System Settings › General › Login Items."
+            }
+        } catch {
+            AppModel.shared.notice = "unbraid couldn't add itself to your login items: \(error.localizedDescription) Try again in Settings › General."
+        }
+    }
+
+    func settingsChanged() { UserDefaults.standard.set(true, forKey: Self.key); offer = false }
+}
+
+/// The widget's buttons: the request is a file in the app-group container (macOS keeps other apps out of it) and a
+/// Darwin notification only wakes the app to read it, so posting the notification alone changes nothing. When macOS
+/// runs a button in the app (launching it if needed, see ConnectIntent), the request is written here too and read at
+/// once or at launch (if still fresh, see `take`).
+enum WidgetActions {
+    /// A Pause waiting for the running tunnel to be taken over after a launch.
+    private static var waiting: Task<Void, Never>?
+    /// Quitting: requests are left alone (a pause started now would outlive the app that resumes it).
+    private static var stopped = false
+    private static var lastProfileSwitch: (action: String, at: ContinuousClock.Instant)?
+
+    static func listen() {
+        CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
+            Task { @MainActor in WidgetActions.handle() }
+        }, WidgetAction.note as CFString, nil, .deliverImmediately)
+        handle()
+    }
+
+    /// Both ways in, one at a time: the launch and the notification can't both act on one request.
+    private static func handle() {
+        guard !stopped, let action = WidgetAction.take() else { return }
+        waiting?.cancel()
+        waiting = nil
+        switch action {
+        case "connect": AppModel.shared.connect()
+        case "pause":
+            // Only a tunnel that is on pauses; at launch it is taken over a moment later, so wait for that, briefly.
+            // Pause never connects.
+            waiting = Task {
+                let deadline = ContinuousClock.now + .seconds(15)
+                while Connection.shared.state.phase != .on, ContinuousClock.now < deadline {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    if Task.isCancelled { return }
+                }
+                guard !Task.isCancelled, !stopped, Connection.shared.state.phase == .on else { return }
+                AppModel.shared.pause(15)
+            }
+        default:
+            let model = AppModel.shared
+            switch WidgetAction.profileDecision(action, generation: model.profileGeneration, names: model.setup.profiles.map(\.name), current: model.setup.profile, connected: model.vpn.state.phase == .on,
+                lastSwitch: lastProfileSwitch.flatMap { ContinuousClock.now - $0.at < .seconds(2) ? $0.action : nil }) {
+            case .reject: break
+            case .pause: model.pause(15)
+            case .connect: model.connect()
+            case .switchTo(let name):
+                lastProfileSwitch = (action, .now)
+                model.switchProfile(name, connectIfOff: true, offeredGeneration: model.profileGeneration)
+            }
+        }
+    }
+
+    /// Quitting: a Pause still waiting is dropped, and later requests are not read.
+    static func stop() { stopped = true; waiting?.cancel(); waiting = nil }
+}

@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- The route mark is adapted from the Material Symbols "alt_route" symbol (Copyright Google LLC, Apache License 2.0),
+       redrawn by the unbraid authors. -->
+  <defs>
+    <!-- Graphite tile, lit from above -->
+    <linearGradient id="tile" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2A3035"/>
+      <stop offset="0.55" stop-color="#171B1E"/>
+      <stop offset="1" stop-color="#0D1012"/>
+    </linearGradient>
+    <!-- Warm light pooling where the routes part -->
+    <radialGradient id="pool" cx="512" cy="520" r="360" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FF9A55" stop-opacity="0.26"/>
+      <stop offset="0.5" stop-color="#FF9A55" stop-opacity="0.07"/>
+      <stop offset="1" stop-color="#FF9A55" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Rim light on the tile's top edge -->
+    <linearGradient id="rim" x1="0" y1="100" x2="0" y2="924" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.22"/>
+      <stop offset="0.25" stop-color="#FFFFFF" stop-opacity="0.04"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0.02"/>
+    </linearGradient>
+    <!-- The route: the app's accent, brighter at the top -->
+    <linearGradient id="route" x1="0" y1="250" x2="0" y2="780" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFC08E"/>
+      <stop offset="0.5" stop-color="#FFA66B"/>
+      <stop offset="1" stop-color="#F7864A"/>
+    </linearGradient>
+    <linearGradient id="direct" x1="0" y1="250" x2="0" y2="620" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFE3CC"/>
+      <stop offset="1" stop-color="#FFC9A0"/>
+    </linearGradient>
+    <filter id="drop" x="-30%" y="-30%" width="160%" height="170%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="16" result="b"/>
+      <feFlood flood-color="#000000" flood-opacity="0.55"/>
+      <feComposite in2="b" operator="in" result="s"/>
+      <feGaussianBlur in="SourceGraphic" stdDeviation="20" result="glow"/>
+      <feColorMatrix in="glow" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 0.32 0" result="g"/>
+      <feMerge><feMergeNode in="s"/><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="tileShadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12"/>
+      <feOffset dy="10"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.35"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- macOS icon grid: 824 pt tile inside 1024, continuous-corner squircle -->
+  <g filter="url(#tileShadow)">
+    <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#tile)"/>
+  </g>
+  <rect x="100" y="100" width="824" height="824" rx="185.4" fill="url(#pool)"/>
+  <rect x="102" y="102" width="820" height="820" rx="183.4" fill="none" stroke="url(#rim)" stroke-width="4"/>
+
+  <g filter="url(#drop)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Direct: the dashed way out, your own connection -->
+    <g opacity="0.94">
+      <path d="M480.0 579.7 C 436.5 540.8 364.0 510.8 364.0 424.0 L 364 386" stroke="url(#direct)" stroke-width="64" stroke-linecap="butt" stroke-dasharray="60.4 30"/>
+      <path d="M364 356 L 364 300" stroke="url(#direct)" stroke-width="64" stroke-linecap="butt"/>
+      <path d="M282 366 L 364 284 L 446 366" stroke="url(#direct)" stroke-width="64"/>
+    </g>
+    <!-- Routed: the stem carries on, up and right through the tunnel -->
+    <path d="M512 752 L 512 640 C 512 556 660 548 660 424 L 660 300" stroke="url(#route)" stroke-width="72"/>
+    <path d="M574 370 L 660 284 L 746 370" stroke="url(#route)" stroke-width="72"/>
+  </g>
+</svg>

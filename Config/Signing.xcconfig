@@ -1,0 +1,13 @@
+// Who signs unbraid, and under which bundle IDs. These are the maintainer's: to build and run your own copy, put your
+// own values in Config/Local.xcconfig (git ignores it), for example
+//   DEVELOPMENT_TEAM = ABCDE12345
+//   BUNDLE_PREFIX = com.example.unbraid
+// The app is BUNDLE_PREFIX, its tunnel extension BUNDLE_PREFIX.tunnel, its widgets BUNDLE_PREFIX.widgets; the app group
+// and the extension's XPC service follow, and the code reads them back from its Info.plist (Shared/AppGroup.swift).
+// Release builds are signed by hand for Developer ID, with these provisioning profiles (tools/release.sh).
+DEVELOPMENT_TEAM = 28PLDKCR52
+BUNDLE_PREFIX = app.unbraid
+RELEASE_PROFILE_APP = unbraid Developer ID
+RELEASE_PROFILE_TUNNEL = unbraid tunnel Developer ID
+
+#include? "Local.xcconfig"

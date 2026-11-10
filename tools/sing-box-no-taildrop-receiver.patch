@@ -1,0 +1,46 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-10-21:
+Tailscale never takes files from other devices.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index 4d0c8d2..aa0d7ab 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -263,7 +263,7 @@ func (t *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+ 		if mkdirErr != nil {
+ 			return E.Cause(mkdirErr, "create state directory")
+ 		}
+-		if !version.IsAppleTV() {
++		if !version.IsAppleTV() && taildropReceiver {
+ 			mkdirErr = filemanager.MkdirAll(t.ctx, t.taildrop.directory, 0o700)
+ 			if mkdirErr != nil {
+ 				return E.Cause(mkdirErr, "create taildrop directory")
+@@ -458,7 +458,7 @@ func (t *Endpoint) postStart(scope *adapter.Scope) error {
+ 		t.taildrop.close()
+ 		return nil
+ 	})
+-	if !version.IsAppleTV() {
++	if !version.IsAppleTV() && taildropReceiver {
+ 		registerTaildropEndpoint(localBackend, t)
+ 		scope.Add(func() error {
+ 			unregisterTaildropEndpoint(localBackend)
+diff --git a/protocol/tailscale/taildrop.go b/protocol/tailscale/taildrop.go
+index 78359a6..d12e371 100644
+--- a/protocol/tailscale/taildrop.go
++++ b/protocol/tailscale/taildrop.go
+@@ -56,8 +56,14 @@ var (
+ 	taildropEndpoints = make(map[*ipnlocal.LocalBackend]*Endpoint)
+ )
+ 
++// Unbraid: the engine runs as root and uses Tailscale as an exit only: it never takes files from peers (no PeerAPI
++// handler, no inbox folder). ts_omit_taildrop doesn't cover this receiver, which sing-box builds with gVisor.
++const taildropReceiver = false
++
+ func init() {
+-	ipnlocal.RegisterPeerAPIHandler("/v0/put/", handleTaildropRequest)
++	if taildropReceiver {
++		ipnlocal.RegisterPeerAPIHandler("/v0/put/", handleTaildropRequest)
++	}
+ }
+ 
+ func registerTaildropEndpoint(backend *ipnlocal.LocalBackend, endpoint *Endpoint) {

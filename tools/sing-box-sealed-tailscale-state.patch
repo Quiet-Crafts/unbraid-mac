@@ -1,0 +1,234 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-10-21:
+Tailscale's node state goes to the app to be sealed, never to a plain file.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/experimental/libbox/platform.go b/experimental/libbox/platform.go
+index eb24d05..4d3f828 100644
+--- a/experimental/libbox/platform.go
++++ b/experimental/libbox/platform.go
+@@ -27,6 +27,8 @@ type PlatformInterface interface {
+ 	LookupSFTPServer() (string, error)
+ 	ReadSystemSSHHostKey() (string, error)
+ 	TailscaleHostname() string
++	ReadTailscaleState() (string, error)
++	WriteTailscaleState(state string) error
+ 	UsePlatformBridge() bool
+ 	CreateBridge(options *BridgeOptions) (BridgeSession, error)
+ }
+diff --git a/experimental/libbox/service.go b/experimental/libbox/service.go
+index 2c1dbe3..153b4ae 100644
+--- a/experimental/libbox/service.go
++++ b/experimental/libbox/service.go
+@@ -271,6 +271,14 @@ func (w *platformInterfaceWrapper) TailscaleHostname() string {
+ 	return w.iif.TailscaleHostname()
+ }
+ 
++func (w *platformInterfaceWrapper) ReadTailscaleState() (string, error) {
++	return w.iif.ReadTailscaleState()
++}
++
++func (w *platformInterfaceWrapper) WriteTailscaleState(state string) error {
++	return w.iif.WriteTailscaleState(state)
++}
++
+ func (w *platformInterfaceWrapper) UsePlatformBridge() bool {
+ 	return w.iif.UsePlatformBridge()
+ }
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index aa0d7ab..9cc692c 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -188,6 +188,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 	}
+ 	taildropDirectory = filemanager.BasePath(ctx, os.ExpandEnv(taildropDirectory))
+ 	taildropDirectory, _ = filepath.Abs(taildropDirectory)
++	stateStore, err := newPlatformStore(platformInterface)
++	if err != nil {
++		return nil, err
++	}
+ 	return &Endpoint{
+ 		Adapter:           endpoint.NewAdapter(C.TypeTailscale, tag, []string{N.NetworkTCP, N.NetworkUDP, N.NetworkICMP}, nil),
+ 		ctx:               ctx,
+@@ -200,6 +204,7 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
+ 		detour:            options.Detour,
+ 		server: &tsnet.Server{
+ 			Dir:      stateDirectory,
++			Store:    stateStore,
+ 			Hostname: hostname,
+ 			Logf: func(format string, args ...any) {
+ 				logger.Trace(fmt.Sprintf(format, args...))
+diff --git a/protocol/tailscale/platform_store.go b/protocol/tailscale/platform_store.go
+new file mode 100644
+index 0000000..5e66ac4
+--- /dev/null
++++ b/protocol/tailscale/platform_store.go
+@@ -0,0 +1,84 @@
++package tailscale
++
++import (
++	"bytes"
++	"encoding/json"
++	"maps"
++	"sync"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/tailscale/ipn"
++)
++
++// Unbraid: tsnet's FileStore writes the node and machine keys in plaintext. This store keeps the
++// state in memory and hands every change, in FileStore's JSON format, to the platform to seal.
++type platformStateStore interface {
++	ReadTailscaleState() (string, error)
++	WriteTailscaleState(state string) error
++}
++
++type platformStore struct {
++	access   sync.Mutex
++	platform platformStateStore
++	state    map[ipn.StateKey][]byte
++}
++
++func newPlatformStore(platformInterface adapter.PlatformInterface) (ipn.StateStore, error) {
++	platform, loaded := platformInterface.(platformStateStore)
++	if !loaded {
++		return nil, nil
++	}
++	content, err := platform.ReadTailscaleState()
++	if err != nil {
++		return nil, err
++	}
++	store := &platformStore{platform: platform, state: make(map[ipn.StateKey][]byte)}
++	if content != "" {
++		err = json.Unmarshal([]byte(content), &store.state)
++		if err != nil {
++			return nil, err
++		}
++	}
++	return store, nil
++}
++
++func (s *platformStore) ReadState(id ipn.StateKey) ([]byte, error) {
++	s.access.Lock()
++	defer s.access.Unlock()
++	state, loaded := s.state[id]
++	if !loaded {
++		return nil, ipn.ErrStateNotExist
++	}
++	return state, nil
++}
++
++// Memory changes only once the platform has sealed the new state: after a failed write, a later identical write is
++// attempted again (it isn't mistaken for one already saved) and reads keep returning what is sealed. A nil state
++// deletes; an empty one is kept.
++func (s *platformStore) WriteState(id ipn.StateKey, state []byte) error {
++	s.access.Lock()
++	defer s.access.Unlock()
++	current, loaded := s.state[id]
++	if loaded == (state != nil) && bytes.Equal(current, state) {
++		return nil
++	}
++	next := maps.Clone(s.state)
++	if next == nil {
++		next = make(map[ipn.StateKey][]byte)
++	}
++	if state == nil {
++		delete(next, id)
++	} else {
++		next[id] = bytes.Clone(state)
++	}
++	content, err := json.Marshal(next)
++	if err != nil {
++		return err
++	}
++	err = s.platform.WriteTailscaleState(string(content))
++	if err != nil {
++		return err
++	}
++	s.state = next
++	return nil
++}
+diff --git a/protocol/tailscale/platform_store_test.go b/protocol/tailscale/platform_store_test.go
+new file mode 100644
+index 0000000..b10a576
+--- /dev/null
++++ b/protocol/tailscale/platform_store_test.go
+@@ -0,0 +1,79 @@
++package tailscale
++
++import (
++	"errors"
++	"testing"
++
++	"github.com/sagernet/tailscale/ipn"
++)
++
++type sealingPlatform struct {
++	fail   bool
++	sealed string
++}
++
++func (p *sealingPlatform) ReadTailscaleState() (string, error) { return p.sealed, nil }
++
++func (p *sealingPlatform) WriteTailscaleState(state string) error {
++	if p.fail {
++		return errors.New("not sealed")
++	}
++	p.sealed = state
++	return nil
++}
++
++func read(t *testing.T, store ipn.StateStore, id ipn.StateKey) string {
++	t.Helper()
++	value, err := store.ReadState(id)
++	if errors.Is(err, ipn.ErrStateNotExist) {
++		return "<none>"
++	}
++	if err != nil {
++		t.Fatal(err)
++	}
++	return string(value)
++}
++
++// Unbraid: a write the platform couldn't seal changes nothing, and the same write is attempted again.
++func TestPlatformStoreCommitsOnlySealedWrites(t *testing.T) {
++	platform := &sealingPlatform{fail: true}
++	store := &platformStore{platform: platform} // no state map yet: the first write makes one
++	if err := store.WriteState("k", []byte("v")); err == nil {
++		t.Fatal("a failed seal reported success")
++	}
++	if read(t, store, "k") != "<none>" || platform.sealed != "" {
++		t.Fatal("an unsealed value was served")
++	}
++	platform.fail = false
++	if err := store.WriteState("k", []byte("v")); err != nil {
++		t.Fatal(err)
++	}
++	if err := store.WriteState("other", []byte("o")); err != nil {
++		t.Fatal(err)
++	}
++	sealed := platform.sealed
++	platform.fail = true
++	if err := store.WriteState("k", []byte("w")); err == nil || read(t, store, "k") != "v" {
++		t.Fatal("an overwrite that wasn't sealed took effect")
++	}
++	if err := store.WriteState("k", nil); err == nil || read(t, store, "k") != "v" {
++		t.Fatal("a delete that wasn't sealed took effect")
++	}
++	if platform.sealed != sealed || read(t, store, "other") != "o" {
++		t.Fatal("a failed write changed the sealed state or another key")
++	}
++	platform.fail = false
++	if err := store.WriteState("k", nil); err != nil || read(t, store, "k") != "<none>" {
++		t.Fatal("the delete wasn't retried")
++	}
++	if err := store.WriteState("empty", []byte{}); err != nil || read(t, store, "empty") != "" {
++		t.Fatal("an empty value was taken for no value")
++	}
++	reopened, err := newPlatformStore(nil)
++	if err != nil || reopened != nil {
++		t.Fatal("a platform without sealing must leave tsnet's own store")
++	}
++	if platform.sealed != `{"empty":"","other":"bw=="}` {
++		t.Fatalf("sealed: %s", platform.sealed)
++	}
++}

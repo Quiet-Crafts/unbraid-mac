@@ -1,0 +1,3 @@
+=== Material Symbols (the route mark in the menu bar and the app icon, adapted from its alt_route symbol)
+Copyright Google LLC. Licensed under the Apache License, Version 2.0 (full text at the end). The menu bar images are
+drawn from the symbol; the app icon (tools/icon/AppIcon.svg) redraws it, changed by the unbraid authors.

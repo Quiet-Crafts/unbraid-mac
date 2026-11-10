@@ -1,0 +1,23 @@
+=== Changes to sing-box and its OpenVPN module
+unbraid's engine is sing-box v1.14.4 (github.com/sagernet/sing-box) with its OpenVPN module
+github.com/sagernet/sing-openvpn v0.1.1-0.20261020061838-432d37b47c92, both under the GNU GPL v3.0 or later, changed by
+the unbraid authors with the patches in the tools folder of unbraid's source (published with each release):
+- sing-box-no-config-snapshot.patch, 2026-10-20: the engine never writes its configuration to disk.
+- sing-box-darwin-effective-pid.patch, 2026-10-21: a connection opened for an app by another process (WebKit for
+  Safari, nsurlsessiond for downloads) counts as that app's.
+- sing-box-sealed-tailscale-state.patch, 2026-10-21: Tailscale's node state goes to the app to be sealed, never to a
+  plain file.
+- sing-box-no-taildrop-receiver.patch, 2026-10-21: Tailscale never takes files from other devices.
+- sing-box-darwin-local-dns-ipv4-first.patch, 2026-10-22: the engine asks the network's IPv4 DNS servers before its
+  IPv6 ones, so a lookup isn't spent waiting on an IPv6 server that doesn't answer.
+- sing-openvpn-bounded-exit-notify.patch, 2026-10-21, last changed 2026-11-10: OpenVPN's exit notifications are
+  bounded, and filters of pushed options also match an option written in capitals or quotes.
+- sing-box-darwin-udp-owner.patch, 2026-10-27: UDP ownership fallback excludes sockets connected to another destination.
+- sing-box-openvpn-dns-fallback.patch, 2026-10-27: an OpenVPN tunnel whose server pushes no DNS server (or only a
+  search domain) can be given a resolver inside the tunnel.
+- sing-box-stun-dns.patch, 2026-10-27: connection checks can look up STUN servers through the tunnel being checked.
+- sing-box-z-lifecycle.patch, 2026-10-27, last changed 2026-11-10: a connection test or a Tailscale sign-out that
+  overlaps a reload or a stop returns an error instead of stopping the engine, and configuration checks release the
+  WireGuard and OpenVPN devices they built.
+- sing-box-z-deps-security.patch, 2026-10-27, last changed 2026-11-10: gRPC, Go networking and cryptography, and
+  compression (brotli, klauspost/compress) dependencies receive security fixes.

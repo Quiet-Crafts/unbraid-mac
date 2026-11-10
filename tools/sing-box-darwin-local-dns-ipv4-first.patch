@@ -1,0 +1,208 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-10-22:
+the engine asks the network's IPv4 DNS servers before its IPv6 ones, so a lookup isn't spent waiting on an
+IPv6 server that doesn't answer.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/dns/transport/local/local_order_test.go b/dns/transport/local/local_order_test.go
+new file mode 100644
+index 0000000..21c8fd9
+--- /dev/null
++++ b/dns/transport/local/local_order_test.go
+@@ -0,0 +1,88 @@
++package local
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/netip"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/dns"
++	"github.com/sagernet/sing-box/dns/transport"
++	"github.com/sagernet/sing-box/dns/transport/local/systemconfig"
++	"github.com/sagernet/sing/common/logger"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++
++	mDNS "github.com/miekg/dns"
++)
++
++// Unbraid: why the order of the network's resolvers matters (systemconfig asks IPv4 ones first). They are asked one
++// after another, each for a whole attempt timeout, so one that never answers ahead of one that does uses up the lookup.
++func TestSilentFirstResolverUsesUpTheLookup(t *testing.T) {
++	silent, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer silent.Close()
++	answering, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1)})
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer answering.Close()
++	go func() {
++		buffer := make([]byte, 2048)
++		for {
++			n, from, readErr := answering.ReadFromUDP(buffer)
++			if readErr != nil {
++				return
++			}
++			var query mDNS.Msg
++			if query.Unpack(buffer[:n]) != nil {
++				continue
++			}
++			response := new(mDNS.Msg)
++			response.SetReply(&query)
++			response.Answer = []mDNS.RR{&mDNS.A{Hdr: mDNS.RR_Header{Name: query.Question[0].Name, Rrtype: mDNS.TypeA, Class: mDNS.ClassINET, Ttl: 60}, A: net.IPv4(192, 0, 2, 1)}}
++			packed, _ := response.Pack()
++			answering.WriteToUDP(packed, from)
++		}
++	}()
++	address := func(conn *net.UDPConn) M.Socksaddr {
++		return M.SocksaddrFromNetIP(netip.MustParseAddrPort(conn.LocalAddr().String()))
++	}
++	lookup := func(servers ...M.Socksaddr) error {
++		config := &systemconfig.Config{Servers: servers, Timeout: 5 * time.Second, Attempts: 2, Ndots: 1}
++		scope := adapter.NewScope(context.Background(), logger.NOP())
++		defer scope.Close()
++		set := &localServerSet{config: config, serverScope: scope}
++		for _, server := range servers {
++			udp := transport.NewUDPRaw(logger.NOP(), dns.NewTransportAdapter(C.DNSTypeUDP, "", nil), N.SystemDialer, server)
++			if startErr := udp.Start(adapter.StartStateStart, scope); startErr != nil {
++				return startErr
++			}
++			set.transports = append(set.transports, udp)
++		}
++		message := new(mDNS.Msg)
++		message.SetQuestion("example.com.", mDNS.TypeA)
++		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
++		defer cancel()
++		done := make(chan error, 1)
++		newNameExchanger(config, set, message, "example.com.")(ctx, func(response *mDNS.Msg, exchangeErr error) {
++			if exchangeErr == nil && len(response.Answer) == 0 {
++				exchangeErr = context.Canceled
++			}
++			done <- exchangeErr
++		})
++		return <-done
++	}
++	if err := lookup(address(silent), address(answering)); !errors.Is(err, context.DeadlineExceeded) {
++		t.Fatalf("a silent first resolver should use up the lookup, got %v", err)
++	}
++	if err := lookup(address(answering), address(silent)); err != nil {
++		t.Fatalf("an answering first resolver: %v", err)
++	}
++}
+diff --git a/dns/transport/local/systemconfig/source_darwin.go b/dns/transport/local/systemconfig/source_darwin.go
+index 38d7484..78e54b3 100644
+--- a/dns/transport/local/systemconfig/source_darwin.go
++++ b/dns/transport/local/systemconfig/source_darwin.go
+@@ -4,6 +4,7 @@ package systemconfig
+ 
+ import (
+ 	"context"
++	"slices"
+ 	"sync"
+ 	"time"
+ 
+@@ -89,6 +90,23 @@ func newConfig(resolver dnsinfo.Resolver) *Config {
+ 		return config
+ 	}
+ 	config.Servers = common.Map(resolver.Servers, M.SocksaddrFromNetIP)
++	// Unbraid: the network's IPv4 resolvers are asked before its IPv6 ones. They are tried one after another, each for
++	// a whole attempt timeout, so a first resolver that never answers uses up a lookup's time. Under a Network Extension
++	// with includeAllNetworks and the local network inside the tunnel, the extension's own IPv6 on the physical
++	// interface stopped being answered within a minute while its IPv4 kept working, and every lookup timed out on the
++	// network's IPv6 resolver. A silent IPv4 resolver ahead of working IPv6 ones would still use up a lookup, as any
++	// silent first resolver did before.
++	slices.SortStableFunc(config.Servers, func(a, b M.Socksaddr) int {
++		aIs4, bIs4 := a.Addr.Unmap().Is4(), b.Addr.Unmap().Is4()
++		switch {
++		case aIs4 == bIs4:
++			return 0
++		case aIs4:
++			return -1
++		default:
++			return 1
++		}
++	})
+ 	for _, searchDomain := range resolver.Search {
+ 		searchDomain = mDNS.Fqdn(searchDomain)
+ 		if searchDomain == "." {
+diff --git a/dns/transport/local/systemconfig/source_darwin_test.go b/dns/transport/local/systemconfig/source_darwin_test.go
+new file mode 100644
+index 0000000..54ad077
+--- /dev/null
++++ b/dns/transport/local/systemconfig/source_darwin_test.go
+@@ -0,0 +1,67 @@
++//go:build cgo && darwin
++
++package systemconfig
++
++import (
++	"net/netip"
++	"slices"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-tun/dnsinfo"
++)
++
++func serverStrings(config *Config) []string {
++	var servers []string
++	for _, server := range config.Servers {
++		servers = append(servers, server.String())
++	}
++	return servers
++}
++
++func addrPorts(addresses ...string) []netip.AddrPort {
++	var ports []netip.AddrPort
++	for _, address := range addresses {
++		ports = append(ports, netip.MustParseAddrPort(address))
++	}
++	return ports
++}
++
++// A network's IPv4 resolvers are asked first, each family keeping its own order, ports and zones.
++func TestNewConfigAsksIPv4ResolversFirst(t *testing.T) {
++	for _, testCase := range []struct {
++		name    string
++		servers []string
++		want    []string
++	}{
++		{"ipv6 listed first", []string{"[2001:4860:4860::8888]:53", "[2001:4860:4860::8844]:53", "8.8.8.8:53", "8.8.4.4:53"},
++			[]string{"8.8.8.8:53", "8.8.4.4:53", "[2001:4860:4860::8888]:53", "[2001:4860:4860::8844]:53"}},
++		{"interleaved", []string{"[fe80::1%en0]:53", "192.168.178.1:53", "[2001:db8::53]:5353", "[::ffff:10.0.0.1]:53", "9.9.9.9:5353"},
++			[]string{"192.168.178.1:53", "[::ffff:10.0.0.1]:53", "9.9.9.9:5353", "[fe80::1%en0]:53", "[2001:db8::53]:5353"}},
++		{"ipv4 only", []string{"192.168.178.1:53", "1.1.1.1:53"}, []string{"192.168.178.1:53", "1.1.1.1:53"}},
++		{"ipv6 only", []string{"[2001:db8::2]:53", "[2001:db8::1]:53"}, []string{"[2001:db8::2]:53", "[2001:db8::1]:53"}},
++	} {
++		t.Run(testCase.name, func(t *testing.T) {
++			resolver := dnsinfo.Resolver{Servers: addrPorts(testCase.servers...), Search: []string{"example.com"}, Timeout: 3 * time.Second}
++			before := slices.Clone(resolver.Servers)
++			config := newConfig(resolver)
++			if got := serverStrings(config); !slices.Equal(got, testCase.want) {
++				t.Fatalf("servers %v, want %v", got, testCase.want)
++			}
++			if !slices.Equal(resolver.Servers, before) {
++				t.Fatal("the resolver's own list was reordered")
++			}
++			if !slices.Equal(config.Search, []string{"example.com."}) || config.Timeout != 3*time.Second || config.Attempts != 2 || config.Ndots != 1 {
++				t.Fatalf("other settings changed: %+v", config)
++			}
++		})
++	}
++}
++
++// A network with no resolvers keeps the loopback defaults, IPv4 first as before.
++func TestNewConfigWithoutResolvers(t *testing.T) {
++	config := newConfig(dnsinfo.Resolver{})
++	if got := serverStrings(config); !slices.Equal(got, []string{"127.0.0.1:53", "[::1]:53"}) {
++		t.Fatalf("servers %v", got)
++	}
++}

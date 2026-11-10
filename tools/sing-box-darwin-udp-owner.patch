@@ -1,0 +1,84 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-10-27:
+A UDP socket connected to another destination cannot own a packet via the local-address fallback.
+Applied after sing-box-darwin-effective-pid.patch by tools/build-libbox.sh.
+
+diff --git a/common/process/searcher_darwin_shared.go b/common/process/searcher_darwin_shared.go
+index 3513bf6..6704cce 100644
+--- a/common/process/searcher_darwin_shared.go
++++ b/common/process/searcher_darwin_shared.go
+@@ -250,7 +250,8 @@ func matchDarwinConnectionEntry(entries []darwinConnectionEntry, network string,
+ 		if network != N.NetworkUDP {
+ 			continue
+ 		}
+-		if !hasLocalFallback && entry.localAddr == sourceAddr {
++		// A connected UDP socket cannot send to another destination on Darwin.
++		if !hasLocalFallback && entry.localAddr == sourceAddr && entry.remotePort == 0 && entry.remoteAddr.IsUnspecified() {
+ 			hasLocalFallback = true
+ 			localFallback = entry
+ 		}
+diff --git a/common/process/searcher_darwin_udp_owner_test.go b/common/process/searcher_darwin_udp_owner_test.go
+new file mode 100644
+index 0000000..405bfa1
+--- /dev/null
++++ b/common/process/searcher_darwin_udp_owner_test.go
+@@ -0,0 +1,60 @@
++//go:build darwin
++
++package process
++
++import (
++	"errors"
++	"net/netip"
++	"testing"
++
++	N "github.com/sagernet/sing/common/network"
++)
++
++func TestDarwinUDPConnectedSocketCannotOwnAnotherDestination(t *testing.T) {
++	for _, family := range []struct{ local, remote, other, wildcard string }{
++		{"10.0.0.2", "203.0.113.1", "203.0.113.2", "0.0.0.0"},
++		{"2001:db8::1", "2001:db8::2", "2001:db8::3", "::"},
++	} {
++		t.Run(family.local, func(t *testing.T) {
++			source := netip.AddrPortFrom(netip.MustParseAddr(family.local), 50000)
++			destination := netip.AddrPortFrom(netip.MustParseAddr(family.remote), 443)
++			connected := darwinConnectionEntry{localAddr: source.Addr(), localPort: source.Port(),
++				remoteAddr: netip.MustParseAddr(family.other), remotePort: 443, pid: 10}
++			wildcard := darwinConnectionEntry{localAddr: netip.MustParseAddr(family.wildcard), localPort: source.Port(),
++				remoteAddr: netip.MustParseAddr(family.wildcard), pid: 20}
++			local := wildcard
++			local.localAddr, local.pid = source.Addr(), 30
++			exact := connected
++			exact.remoteAddr, exact.pid = destination.Addr(), 40
++			remotePortOnly := local
++			remotePortOnly.remotePort = 443
++			remoteAddressOnly := local
++			remoteAddressOnly.remoteAddr = destination.Addr()
++			for _, c := range []struct {
++				name    string
++				entries []darwinConnectionEntry
++				pid     uint32
++				match   darwinConnectionMatchKind
++			}{
++				{"wildcard wins", []darwinConnectionEntry{connected, wildcard}, 20, darwinConnectionMatchWildcardFallback},
++				{"wildcard first", []darwinConnectionEntry{wildcard, connected}, 20, darwinConnectionMatchWildcardFallback},
++				{"connected only", []darwinConnectionEntry{connected}, 0, darwinConnectionMatchExact},
++				{"remote port only", []darwinConnectionEntry{remotePortOnly}, 0, darwinConnectionMatchExact},
++				{"remote address only", []darwinConnectionEntry{remoteAddressOnly}, 0, darwinConnectionMatchExact},
++				{"local beats wildcard", []darwinConnectionEntry{wildcard, connected, local}, 30, darwinConnectionMatchLocalFallback},
++				{"exact beats local", []darwinConnectionEntry{wildcard, local, exact}, 40, darwinConnectionMatchExact},
++			} {
++				t.Run(c.name, func(t *testing.T) {
++					entry, match, err := matchDarwinConnectionEntry(c.entries, N.NetworkUDP, source, destination)
++					if c.pid == 0 {
++						if !errors.Is(err, ErrNotFound) {
++							t.Fatalf("got owner %d, error %v", entry.pid, err)
++						}
++					} else if err != nil || entry.pid != c.pid || match != c.match {
++						t.Fatalf("got owner %d match %v error %v, want owner %d match %v", entry.pid, match, err, c.pid, c.match)
++					}
++				})
++			}
++		})
++	}
++}

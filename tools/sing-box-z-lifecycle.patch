@@ -1,0 +1,369 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-11-10:
+A connection test or a Tailscale sign-out that overlaps a reload or a stop returns an error instead of
+stopping the engine, and configuration checks release the WireGuard and OpenVPN devices they built.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/adapter/endpoint/manager.go b/adapter/endpoint/manager.go
+index c4abc31..1b0a385 100644
+--- a/adapter/endpoint/manager.go
++++ b/adapter/endpoint/manager.go
+@@ -71,9 +71,21 @@ func (m *Manager) Create(ctx context.Context, router adapter.Router, logger log.
+ 	defer m.access.Unlock()
+ 	_, loaded := m.endpointByTag[tag]
+ 	if loaded {
++		if closer, ok := endpoint.(interface{ CloseBeforeStart() error }); ok {
++			_ = closer.CloseBeforeStart()
++		}
+ 		return E.New("duplicate endpoint tag: ", tag)
+ 	}
+ 	m.endpoints = append(m.endpoints, endpoint)
+ 	m.endpointByTag[tag] = endpoint
+ 	return nil
+ }
++
++// CloseBeforeStart releases resources allocated by endpoint constructors.
++func (m *Manager) CloseBeforeStart() {
++	for _, endpoint := range m.Endpoints() {
++		if closer, ok := endpoint.(interface{ CloseBeforeStart() error }); ok {
++			_ = closer.CloseBeforeStart()
++		}
++	}
++}
+diff --git a/box.go b/box.go
+index 3654fb6..ffb9e58 100644
+--- a/box.go
++++ b/box.go
+@@ -107,7 +107,7 @@ func Context(
+ 	return ctx
+ }
+ 
+-func New(options Options) (*Box, error) {
++func New(options Options) (_ *Box, resultErr error) {
+ 	createdAt := time.Now()
+ 	ctx := options.Context
+ 	if ctx == nil {
+@@ -206,6 +206,11 @@ func New(options Options) (*Box, error) {
+ 	internalServices = append(internalServices, netnsManager)
+ 	dnsOptions := common.PtrValueOrDefault(options.DNS)
+ 	endpointManager := endpoint.NewManager(endpointRegistry)
++	defer func() {
++		if resultErr != nil {
++			endpointManager.CloseBeforeStart()
++		}
++	}()
+ 	inboundManager := inbound.NewManager(inboundRegistry, endpointManager)
+ 	outboundManager := outbound.NewManager(outboundRegistry, endpointManager, routeOptions.Final)
+ 	dnsTransportManager := dns.NewTransportManager(dnsTransportRegistry, outboundManager, dnsOptions.Final)
+diff --git a/daemon/quality_lifecycle_test.go b/daemon/quality_lifecycle_test.go
+new file mode 100644
+index 0000000..3f0e5ee
+--- /dev/null
++++ b/daemon/quality_lifecycle_test.go
+@@ -0,0 +1,91 @@
++package daemon
++
++import (
++	"context"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/common/trafficcontrol"
++	"github.com/sagernet/sing/common/observable"
++
++	"google.golang.org/grpc"
++	"google.golang.org/grpc/codes"
++	"google.golang.org/grpc/status"
++)
++
++type qualityStream[T any] struct{ grpc.ServerStream }
++
++func (qualityStream[T]) Context() context.Context { return context.Background() }
++func (qualityStream[T]) Send(*T) error            { return nil }
++
++func TestQualityTestsReturnUnavailableAfterInstanceCloses(t *testing.T) {
++	service := &StartedService{serviceStatus: &ServiceStatus{Status: ServiceStatus_STARTED}}
++	if err := service.StartSTUNTest(&STUNTestRequest{}, qualityStream[STUNTestProgress]{}); status.Code(err) != codes.Unavailable {
++		t.Fatalf("STUN: %v", err)
++	}
++	if err := service.StartNetworkQualityTest(&NetworkQualityTestRequest{}, qualityStream[NetworkQualityTestProgress]{}); status.Code(err) != codes.Unavailable {
++		t.Fatalf("network quality: %v", err)
++	}
++	if err := service.SubscribeConnections(&SubscribeConnectionsRequest{}, qualityStream[ConnectionEvents]{}); status.Code(err) != codes.Unavailable {
++		t.Fatalf("connections: %v", err)
++	}
++}
++
++// A reload publishes the next instance before starting it: a stream that waited for the old one must not take it.
++func TestConnectionsRefuseAnInstanceStillStarting(t *testing.T) {
++	subscriber := observable.NewSubscriber[*ServiceStatus](4)
++	service := &StartedService{
++		ctx:                     context.Background(),
++		serviceStatus:           &ServiceStatus{Status: ServiceStatus_STARTING},
++		serviceStatusSubscriber: subscriber,
++		serviceStatusObserver:   observable.NewObserver(subscriber, 2),
++		instance:                &Instance{trafficManager: trafficcontrol.NewManager()},
++	}
++	t.Cleanup(func() { _ = service.serviceStatusObserver.Close() })
++	done := make(chan error, 1)
++	go func() {
++		done <- service.SubscribeConnections(&SubscribeConnectionsRequest{}, qualityStream[ConnectionEvents]{})
++	}()
++	for {
++		select {
++		case err := <-done:
++			if status.Code(err) != codes.Unavailable {
++				t.Fatalf("connections: %v", err)
++			}
++			return
++		case <-time.After(10 * time.Millisecond):
++			subscriber.Emit(&ServiceStatus{Status: ServiceStatus_STARTED})
++		}
++	}
++}
++
++func TestTailscaleCommandsReturnUnavailableAfterInstanceCloses(t *testing.T) {
++	service := &StartedService{serviceStatus: &ServiceStatus{Status: ServiceStatus_STARTED}}
++	ctx := context.Background()
++	for _, tag := range []string{"ts", ""} {
++		if _, err := service.TailscaleLogout(ctx, &TailscaleLogoutRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("logout %q: %v", tag, err)
++		}
++		if _, err := service.SetTailscaleExitNode(ctx, &SetTailscaleExitNodeRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("exit node %q: %v", tag, err)
++		}
++		if _, err := service.GetTailscaleCertificate(ctx, &TailscaleCertificateRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("certificate %q: %v", tag, err)
++		}
++		if err := service.StartTailscalePing(&TailscalePingRequest{EndpointTag: tag}, qualityStream[TailscalePingResponse]{}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("ping %q: %v", tag, err)
++		}
++		if _, err := service.MarkTaildropInboxRead(ctx, &MarkTaildropInboxReadRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("mark read %q: %v", tag, err)
++		}
++		if _, err := service.DeleteTaildropFile(ctx, &DeleteTaildropFileRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("delete %q: %v", tag, err)
++		}
++		if _, err := service.CancelTaildropReceiving(ctx, &CancelTaildropReceivingRequest{EndpointTag: tag}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("cancel receiving %q: %v", tag, err)
++		}
++		if err := service.DownloadTaildropFile(&DownloadTaildropFileRequest{EndpointTag: tag}, qualityStream[DownloadTaildropFileChunk]{}); status.Code(err) != codes.Unavailable {
++			t.Fatalf("download %q: %v", tag, err)
++		}
++	}
++}
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 2a9983c..571d240 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -798,7 +798,11 @@ func (s *StartedService) SubscribeConnections(request *SubscribeConnectionsReque
+ 	}
+ 	s.serviceAccess.RLock()
+ 	boxService := s.instance
++	started := s.serviceStatus.Status == ServiceStatus_STARTED
+ 	s.serviceAccess.RUnlock()
++	if boxService == nil || !started {
++		return status.Error(codes.Unavailable, "service unavailable")
++	}
+ 
+ 	trafficManager := boxService.trafficManager
+ 	if trafficManager == nil {
+@@ -1258,6 +1262,9 @@ func resolveOutbound(instance *Instance, tag string) (adapter.Outbound, error) {
+ }
+ 
+ func resolveTailscaleEndpoint(instance *Instance, tag string) (adapter.Endpoint, error) {
++	if instance == nil {
++		return nil, status.Error(codes.Unavailable, "service unavailable")
++	}
+ 	endpointManager := service.FromContext[adapter.EndpointManager](instance.ctx)
+ 	endpoint, loaded := endpointManager.Get(tag)
+ 	if !loaded {
+@@ -1495,9 +1502,12 @@ func (s *StartedService) StartNetworkQualityTest(
+ 	}
+ 	s.serviceAccess.RLock()
+ 	boxService := s.instance
+-	s.serviceAccess.RUnlock()
+-
++	if boxService == nil {
++		s.serviceAccess.RUnlock()
++		return status.Error(codes.Unavailable, "service unavailable")
++	}
+ 	outbound, err := resolveOutbound(boxService, request.OutboundTag)
++	s.serviceAccess.RUnlock()
+ 	if err != nil {
+ 		return err
+ 	}
+@@ -1541,9 +1551,12 @@ func (s *StartedService) StartSTUNTest(
+ 	}
+ 	s.serviceAccess.RLock()
+ 	boxService := s.instance
+-	s.serviceAccess.RUnlock()
+-
++	if boxService == nil {
++		s.serviceAccess.RUnlock()
++		return status.Error(codes.Unavailable, "service unavailable")
++	}
+ 	outbound, err := resolveOutbound(boxService, request.OutboundTag)
++	s.serviceAccess.RUnlock()
+ 	if err != nil {
+ 		return err
+ 	}
+diff --git a/daemon/started_service_taildrop.go b/daemon/started_service_taildrop.go
+index 66db972..8e0d657 100644
+--- a/daemon/started_service_taildrop.go
++++ b/daemon/started_service_taildrop.go
+@@ -33,6 +33,9 @@ const (
+ )
+ 
+ func resolveTailscaleProvider(instance *Instance, tag string) (adapter.TailscaleEndpoint, string, error) {
++	if instance == nil {
++		return nil, "", status.Error(codes.Unavailable, "service unavailable")
++	}
+ 	if tag != "" {
+ 		endpoint, err := resolveTailscaleEndpoint(instance, tag)
+ 		if err != nil {
+diff --git a/experimental/libbox/config.go b/experimental/libbox/config.go
+index a3f47f5..eb36711 100644
+--- a/experimental/libbox/config.go
++++ b/experimental/libbox/config.go
+@@ -62,6 +62,11 @@ func CheckConfig(configContent string) error {
+ 		Options: options,
+ 	})
+ 	if err == nil {
++		for _, endpoint := range instance.Endpoint().Endpoints() {
++			if closer, ok := endpoint.(interface{ CloseBeforeStart() error }); ok {
++				_ = closer.CloseBeforeStart()
++			}
++		}
+ 		instance.Close()
+ 	}
+ 	return err
+diff --git a/experimental/libbox/config_cleanup_test.go b/experimental/libbox/config_cleanup_test.go
+new file mode 100644
+index 0000000..ec52824
+--- /dev/null
++++ b/experimental/libbox/config_cleanup_test.go
+@@ -0,0 +1,49 @@
++//go:build with_gvisor && with_wireguard
++
++package libbox
++
++import (
++	"runtime"
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestCheckConfigClosesWireGuardStack(t *testing.T) {
++	config := `{"endpoints":[{"type":"wireguard","tag":"wg","address":["10.0.0.2/32"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"127.0.0.1","port":51820,"public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","allowed_ips":["0.0.0.0/0"]}]}]}`
++	if err := CheckConfig(config); err != nil {
++		t.Fatal(err)
++	}
++	runtime.GC()
++	before := runtime.NumGoroutine()
++	for i := 0; i < 12; i++ {
++		if err := CheckConfig(config); err != nil {
++			t.Fatal(err)
++		}
++	}
++	runtime.GC()
++	time.Sleep(100 * time.Millisecond)
++	if after := runtime.NumGoroutine(); after > before+8 {
++		t.Fatalf("goroutines grew from %d to %d", before, after)
++	}
++}
++
++func TestFailedCheckConfigClosesConstructedEndpoints(t *testing.T) {
++	endpoint := `{"type":"wireguard","tag":"wg","address":["10.0.0.2/32"],"private_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","peers":[{"address":"127.0.0.1","port":51820,"public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","allowed_ips":["0.0.0.0/0"]}]}`
++	config := `{"endpoints":[` + strings.Join([]string{endpoint, endpoint}, ",") + `]}`
++	if err := CheckConfig(config); err == nil {
++		t.Fatal("duplicate tag accepted")
++	}
++	runtime.GC()
++	before := runtime.NumGoroutine()
++	for i := 0; i < 12; i++ {
++		if err := CheckConfig(config); err == nil {
++			t.Fatal("duplicate tag accepted")
++		}
++	}
++	runtime.GC()
++	time.Sleep(100 * time.Millisecond)
++	if after := runtime.NumGoroutine(); after > before+8 {
++		t.Fatalf("goroutines grew from %d to %d", before, after)
++	}
++}
+diff --git a/protocol/openvpn/client.go b/protocol/openvpn/client.go
+index a0e585e..dd8eb6c 100644
+--- a/protocol/openvpn/client.go
++++ b/protocol/openvpn/client.go
+@@ -855,3 +855,9 @@ func openVPNDomainMatches(suffix string, domain string) bool {
+ 	}
+ 	return normalizedDomain == normalizedSuffix || strings.HasSuffix(normalizedDomain, "."+normalizedSuffix)
+ }
++
++// CloseBeforeStart releases the device allocated during construction.
++func (c *ClientEndpoint) CloseBeforeStart() error {
++	c.cancelLoop()
++	return c.device.Close()
++}
+diff --git a/protocol/openvpn/server.go b/protocol/openvpn/server.go
+index 269b7a9..77b3f3c 100644
+--- a/protocol/openvpn/server.go
++++ b/protocol/openvpn/server.go
+@@ -764,3 +764,9 @@ func (s *ServerEndpoint) ListenPacket(ctx context.Context, destination M.Socksad
+ 	packetConn, _, err := s.ListenPacketWithDestination(ctx, destination)
+ 	return packetConn, err
+ }
++
++// CloseBeforeStart releases the device allocated during construction.
++func (s *ServerEndpoint) CloseBeforeStart() error {
++	s.cancelLoop()
++	return s.device.Close()
++}
+diff --git a/protocol/tailscale/endpoint.go b/protocol/tailscale/endpoint.go
+index 9cc692c..06d54a1 100644
+--- a/protocol/tailscale/endpoint.go
++++ b/protocol/tailscale/endpoint.go
+@@ -127,6 +127,7 @@ type Endpoint struct {
+ 	systemInterfaceMTU  uint32
+ 	keyAuth             bool
+ 	started             atomic.Bool
++	restartAccess       sync.Mutex
+ 	systemDialer        *dialer.DefaultDialer
+ }
+ 
+@@ -556,6 +557,10 @@ func (t *Endpoint) postStart(scope *adapter.Scope) error {
+ 	t.started.Store(true)
+ 	scope.Add(func() error {
+ 		t.started.Store(false)
++		// Unbraid: wait for a backend restart after a logout to finish before the server closes beneath it; any
++		// later one sees started false and is refused.
++		t.restartAccess.Lock()
++		t.restartAccess.Unlock()
+ 		return nil
+ 	})
+ 	return nil
+@@ -741,6 +746,12 @@ func (t *Endpoint) Logout(ctx context.Context) error {
+ 	// LocalBackend.Logout deletes the profile and restarts the backend with
+ 	// empty preferences, and only tsnet.Server.Start performs the login
+ 	// bootstrap, so redo it here to obtain a new auth URL.
++	// Unbraid: never on a server that is closing (restarting a shut-down backend panics); see Start.
++	t.restartAccess.Lock()
++	defer t.restartAccess.Unlock()
++	if !t.started.Load() {
++		return E.New("Tailscale is not ready yet")
++	}
+ 	localBackend := t.server.ExportLocalBackend()
+ 	prefs := ipn.NewPrefs()
+ 	prefs.Hostname = t.server.Hostname
+diff --git a/protocol/wireguard/endpoint.go b/protocol/wireguard/endpoint.go
+index 4d51968..a2d1d78 100644
+--- a/protocol/wireguard/endpoint.go
++++ b/protocol/wireguard/endpoint.go
+@@ -342,3 +342,6 @@ func (w *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address ne
+ 	}
+ 	return w.endpoint.Lookup(address) != nil
+ }
++
++// CloseBeforeStart releases the device allocated during construction.
++func (w *Endpoint) CloseBeforeStart() error { return w.endpoint.Close() }

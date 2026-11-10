@@ -1,0 +1,302 @@
+Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-10-21:
+a connection opened for an app by another process (WebKit for Safari, nsurlsessiond for
+downloads) counts as that app's.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/common/process/searcher_darwin_shared.go b/common/process/searcher_darwin_shared.go
+index 4cb3dde..3513bf6 100644
+--- a/common/process/searcher_darwin_shared.go
++++ b/common/process/searcher_darwin_shared.go
+@@ -20,17 +20,18 @@ import (
+ const (
+ 	darwinSnapshotTTL = 200 * time.Millisecond
+ 
+-	darwinXinpgenSize        = 24
+-	darwinXsocketOffset      = 104
+-	darwinXinpcbForeignPort  = 16
+-	darwinXinpcbLocalPort    = 18
+-	darwinXinpcbVFlag        = 44
+-	darwinXinpcbForeignAddr  = 48
+-	darwinXinpcbLocalAddr    = 64
+-	darwinXinpcbIPv4Addr     = 12
+-	darwinXsocketUID         = 64
+-	darwinXsocketLastPID     = 68
+-	darwinTCPExtraStructSize = 208
++	darwinXinpgenSize         = 24
++	darwinXsocketOffset       = 104
++	darwinXinpcbForeignPort   = 16
++	darwinXinpcbLocalPort     = 18
++	darwinXinpcbVFlag         = 44
++	darwinXinpcbForeignAddr   = 48
++	darwinXinpcbLocalAddr     = 64
++	darwinXinpcbIPv4Addr      = 12
++	darwinXsocketUID          = 64
++	darwinXsocketLastPID      = 68
++	darwinXsocketEffectivePID = 72
++	darwinTCPExtraStructSize  = 208
+ )
+ 
+ type darwinConnectionEntry struct {
+@@ -39,6 +40,7 @@ type darwinConnectionEntry struct {
+ 	localPort  uint16
+ 	remotePort uint16
+ 	pid        uint32
++	lastPID    uint32
+ 	uid        int32
+ }
+ 
+@@ -60,6 +62,7 @@ type darwinConnectionFinder struct {
+ 	ttl       time.Duration
+ 	snapshots map[string]darwinSnapshot
+ 	builder   func(string) (darwinSnapshot, error)
++	execPath  func(uint32) (string, error)
+ }
+ 
+ var sharedDarwinConnectionFinder = newDarwinConnectionFinder(darwinSnapshotTTL)
+@@ -69,6 +72,7 @@ func newDarwinConnectionFinder(ttl time.Duration) *darwinConnectionFinder {
+ 		ttl:       ttl,
+ 		snapshots: make(map[string]darwinSnapshot),
+ 		builder:   buildDarwinSnapshot,
++		execPath:  getExecPathFromPID,
+ 	}
+ }
+ 
+@@ -103,14 +107,20 @@ func (f *darwinConnectionFinder) find(network string, source netip.AddrPort, des
+ 		if entry.pid == 0 {
+ 			return owner, nil
+ 		}
+-		processPath, err := getExecPathFromPID(entry.pid)
+-		if err == nil {
++		if processPath, ok := f.processPath(entry.pid); ok {
+ 			owner.ProcessPath = processPath
+ 			return owner, nil
+ 		}
+ 		if fromCache {
+ 			continue
+ 		}
++		// Unbraid: the effective owner (the app that delegated the socket) may have quit, as when nsurlsessiond finishes a
++		// background download for it. The process that last used the socket owns it then, and only failing that nobody.
++		if entry.lastPID != 0 && entry.lastPID != entry.pid {
++			if processPath, ok := f.processPath(entry.lastPID); ok {
++				owner.ProcessPath = processPath
++			}
++		}
+ 		return owner, nil
+ 	}
+ 	if lastOwner != nil {
+@@ -119,6 +129,11 @@ func (f *darwinConnectionFinder) find(network string, source netip.AddrPort, des
+ 	return nil, ErrNotFound
+ }
+ 
++func (f *darwinConnectionFinder) processPath(pid uint32) (string, bool) {
++	processPath, err := f.execPath(pid)
++	return processPath, err == nil && processPath != ""
++}
++
+ func (f *darwinConnectionFinder) resetCache() {
+ 	f.access.Lock()
+ 	defer f.access.Unlock()
+@@ -191,6 +206,13 @@ func parseDarwinConnectionEntry(inp []byte, so []byte) (darwinConnectionEntry, b
+ 		pid:        binary.NativeEndian.Uint32(so[darwinXsocketLastPID : darwinXsocketLastPID+4]),
+ 		uid:        int32(binary.NativeEndian.Uint32(so[darwinXsocketUID : darwinXsocketUID+4])),
+ 	}
++	entry.lastPID = entry.pid
++	// Unbraid: a socket opened on behalf of an app (WebKit's network process for Safari, nsurlsessiond for background
++	// downloads) carries that app as its effective owner. Prefer it, so the app's own route applies; the last pid stays
++	// for when the effective owner has gone (see find).
++	if pid := binary.NativeEndian.Uint32(so[darwinXsocketEffectivePID : darwinXsocketEffectivePID+4]); int32(pid) > 0 {
++		entry.pid = pid
++	}
+ 	flag := inp[darwinXinpcbVFlag]
+ 	switch {
+ 	case flag&0x1 != 0:
+diff --git a/common/process/searcher_darwin_shared_test.go b/common/process/searcher_darwin_shared_test.go
+new file mode 100644
+index 0000000..22d47a2
+--- /dev/null
++++ b/common/process/searcher_darwin_shared_test.go
+@@ -0,0 +1,184 @@
++//go:build darwin
++
++package process
++
++import (
++	"encoding/binary"
++	"errors"
++	"net/netip"
++	"testing"
++	"time"
++
++	N "github.com/sagernet/sing/common/network"
++)
++
++// Unbraid: a socket's effective owner wins, and the process that last used it stands in once that owner has gone.
++
++func darwinTestSocket(t *testing.T, lastPID uint32, effectivePID uint32) darwinConnectionEntry {
++	t.Helper()
++	inp := make([]byte, darwinXsocketOffset)
++	so := make([]byte, structSize-darwinXsocketOffset)
++	binary.BigEndian.PutUint16(inp[darwinXinpcbForeignPort:], 443)
++	binary.BigEndian.PutUint16(inp[darwinXinpcbLocalPort:], 50000)
++	inp[darwinXinpcbVFlag] = 0x1
++	copy(inp[darwinXinpcbForeignAddr+darwinXinpcbIPv4Addr:], []byte{203, 0, 113, 5})
++	copy(inp[darwinXinpcbLocalAddr+darwinXinpcbIPv4Addr:], []byte{10, 0, 0, 2})
++	binary.NativeEndian.PutUint32(so[darwinXsocketUID:], 501)
++	binary.NativeEndian.PutUint32(so[darwinXsocketLastPID:], lastPID)
++	binary.NativeEndian.PutUint32(so[darwinXsocketEffectivePID:], effectivePID)
++	entry, ok := parseDarwinConnectionEntry(inp, so)
++	if !ok {
++		t.Fatal("socket not parsed")
++	}
++	return entry
++}
++
++func TestDarwinEntryKeepsBothOwners(t *testing.T) {
++	for _, c := range []struct {
++		last, effective, pid uint32
++	}{
++		{last: 10, effective: 0, pid: 10},
++		{last: 10, effective: 20, pid: 20},
++		{last: 10, effective: 10, pid: 10},
++		{last: 10, effective: 0xFFFFFFFF, pid: 10},
++		{last: 0, effective: 0, pid: 0},
++	} {
++		entry := darwinTestSocket(t, c.last, c.effective)
++		if entry.pid != c.pid || entry.lastPID != c.last || entry.uid != 501 {
++			t.Errorf("last %d effective %d: pid %d, last %d, uid %d", c.last, c.effective, entry.pid, entry.lastPID, entry.uid)
++		}
++		if entry.remoteAddr != netip.MustParseAddr("203.0.113.5") || entry.localPort != 50000 || entry.remotePort != 443 {
++			t.Errorf("addresses: %v", entry)
++		}
++	}
++}
++
++type darwinTestFinder struct {
++	*darwinConnectionFinder
++	builds  int
++	lookups []uint32
++}
++
++func newDarwinTestFinder(t *testing.T, entry darwinConnectionEntry, paths map[uint32]string) *darwinTestFinder {
++	f := &darwinTestFinder{darwinConnectionFinder: newDarwinConnectionFinder(time.Hour)}
++	f.builder = func(string) (darwinSnapshot, error) {
++		f.builds++
++		return darwinSnapshot{createdAt: time.Now(), entries: []darwinConnectionEntry{entry}}, nil
++	}
++	f.execPath = func(pid uint32) (string, error) {
++		f.lookups = append(f.lookups, pid)
++		if path, ok := paths[pid]; ok {
++			return path, nil
++		}
++		return "", errors.New("no such process")
++	}
++	return f
++}
++
++func (f *darwinTestFinder) owner(t *testing.T) (string, int32) {
++	t.Helper()
++	owner, err := f.find(N.NetworkTCP, netip.MustParseAddrPort("10.0.0.2:50000"), netip.MustParseAddrPort("203.0.113.5:443"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	return owner.ProcessPath, owner.UserId
++}
++
++func equalPIDs(a, b []uint32) bool {
++	if len(a) != len(b) {
++		return false
++	}
++	for i := range a {
++		if a[i] != b[i] {
++			return false
++		}
++	}
++	return true
++}
++
++func TestDarwinOwnerFallsBackToTheLastPID(t *testing.T) {
++	app, helper := "/Applications/App.app/Contents/MacOS/App", "/usr/libexec/nsurlsessiond"
++	for _, c := range []struct {
++		name    string
++		paths   map[uint32]string
++		want    string
++		lookups []uint32
++	}{
++		{"effective owner runs", map[uint32]string{20: app, 10: helper}, app, []uint32{20}},
++		{"effective owner gone", map[uint32]string{10: helper}, helper, []uint32{20, 10}},
++		{"both gone", map[uint32]string{}, "", []uint32{20, 10}},
++		{"an empty path is no path", map[uint32]string{20: "", 10: helper}, helper, []uint32{20, 10}},
++	} {
++		f := newDarwinTestFinder(t, darwinTestSocket(t, 10, 20), c.paths)
++		path, uid := f.owner(t)
++		if path != c.want || uid != 501 || !equalPIDs(f.lookups, c.lookups) || f.builds != 1 {
++			t.Errorf("%s: path %q uid %d lookups %v builds %d", c.name, path, uid, f.lookups, f.builds)
++		}
++	}
++}
++
++func TestDarwinOwnerRefreshesBeforeFallingBack(t *testing.T) {
++	f := newDarwinTestFinder(t, darwinTestSocket(t, 10, 20), map[uint32]string{10: "/usr/libexec/nsurlsessiond"})
++	f.owner(t)
++	f.lookups = nil
++	// From the cached snapshot the effective owner's path fails: the snapshot is taken again before the last pid stands in.
++	path, _ := f.owner(t)
++	if path != "/usr/libexec/nsurlsessiond" || f.builds != 2 || !equalPIDs(f.lookups, []uint32{20, 20, 10}) {
++		t.Errorf("path %q builds %d lookups %v", path, f.builds, f.lookups)
++	}
++}
++
++func TestDarwinOwnerWithoutPIDsHasNoPath(t *testing.T) {
++	f := newDarwinTestFinder(t, darwinTestSocket(t, 0, 0), map[uint32]string{0: "/kernel"})
++	path, uid := f.owner(t)
++	if path != "" || uid != 501 || len(f.lookups) != 0 {
++		t.Errorf("path %q uid %d lookups %v", path, uid, f.lookups)
++	}
++}
++
++func TestDarwinOwnerSamePIDsAskedOnce(t *testing.T) {
++	f := newDarwinTestFinder(t, darwinTestSocket(t, 10, 10), map[uint32]string{})
++	path, _ := f.owner(t)
++	if path != "" || !equalPIDs(f.lookups, []uint32{10}) {
++		t.Errorf("path %q lookups %v", path, f.lookups)
++	}
++}
++
++func TestDarwinOwnerAfterRefreshUsesOnlyTheFreshSocket(t *testing.T) {
++	cached := darwinTestSocket(t, 10, 20)
++	paths := map[uint32]string{10: "/usr/libexec/nsurlsessiond", 30: "/Applications/Other.app/Contents/MacOS/Other"}
++	for _, c := range []struct {
++		name    string
++		fresh   func() (darwinSnapshot, error)
++		want    string
++		fails   bool
++		lookups []uint32
++	}{
++		{"socket now someone else's", func() (darwinSnapshot, error) {
++			return darwinSnapshot{createdAt: time.Now(), entries: []darwinConnectionEntry{darwinTestSocket(t, 40, 30)}}, nil
++		}, paths[30], false, []uint32{20, 30}},
++		{"socket gone", func() (darwinSnapshot, error) {
++			return darwinSnapshot{createdAt: time.Now()}, nil
++		}, "", true, []uint32{20}},
++		{"snapshot fails", func() (darwinSnapshot, error) {
++			return darwinSnapshot{}, errors.New("sysctl")
++		}, "", true, []uint32{20}},
++	} {
++		f := newDarwinTestFinder(t, cached, paths)
++		f.owner(t)
++		f.lookups = nil
++		f.builder = func(string) (darwinSnapshot, error) { f.builds++; return c.fresh() }
++		owner, err := f.find(N.NetworkTCP, netip.MustParseAddrPort("10.0.0.2:50000"), netip.MustParseAddrPort("203.0.113.5:443"))
++		if c.fails {
++			if err == nil {
++				t.Errorf("%s: owner %v", c.name, owner)
++			}
++		} else if err != nil || owner.ProcessPath != c.want {
++			t.Errorf("%s: owner %v err %v", c.name, owner, err)
++		}
++		// The cached socket's last pid never stands in once a fresh snapshot says otherwise.
++		if !equalPIDs(f.lookups, c.lookups) || f.builds != 2 {
++			t.Errorf("%s: lookups %v builds %d", c.name, f.lookups, f.builds)
++		}
++	}
++}

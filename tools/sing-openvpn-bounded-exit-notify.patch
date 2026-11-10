@@ -1,0 +1,203 @@
+Changes to github.com/sagernet/sing-openvpn v0.1.1-0.20261020061838-432d37b47c92 (GNU GPL v3.0 or later), made by
+the unbraid authors, last on 2026-11-10:
+OpenVPN's exit notifications are bounded, and filters of pushed options also match an
+option written in capitals or quotes.
+Applied by tools/build-libbox.sh; git apply skips these lines.
+
+diff --git a/client_control.go b/client_control.go
+index 9415e2a..6fe2c5b 100644
+--- a/client_control.go
++++ b/client_control.go
+@@ -206,14 +206,34 @@ func (c *tlsClient) sendExplicitExitNotifyIfRequested() {
+ 	// re-stamps occ_op with OCC_EXIT on every one-second tick until the
+ 	// notification window closes, so a notification the link refuses costs that
+ 	// tick alone and the remaining ones are still sent.
+-	for retry := range notifyCount {
++	notifyExplicitExit(notifyCount, func(tick time.Duration) {
++		c.writeDataPacketWithinTick(openVPNDataChannelExitNotifyPayload, tick)
++	})
++}
++
++// Unbraid: the count comes from the server (a pushed explicit-exit-notify) and a stop waits for this loop, so it is
++// bounded: one notification per one-second tick within two seconds, whatever was asked.
++func notifyExplicitExit(notifyCount int, send func(tick time.Duration)) {
++	start := time.Now()
++	deadline := start.Add(explicitExitNotifyWindow)
++	for retry := range min(notifyCount, explicitExitNotifyMaxTries) {
+ 		if retry > 0 {
+-			time.Sleep(time.Second)
++			time.Sleep(time.Until(start.Add(time.Duration(retry) * explicitExitNotifyInterval)))
++		}
++		tick := min(explicitExitNotifyInterval, time.Until(deadline))
++		if tick <= 0 {
++			return
+ 		}
+-		c.writeDataPacketWithinTick(openVPNDataChannelExitNotifyPayload, time.Second)
++		send(tick)
+ 	}
+ }
+ 
++const (
++	explicitExitNotifyInterval = time.Second
++	explicitExitNotifyWindow   = 2 * time.Second
++	explicitExitNotifyMaxTries = int(explicitExitNotifyWindow / explicitExitNotifyInterval)
++)
++
+ func tlsPreferredCipher(options ClientOptions) string {
+ 	for _, dataCipher := range tlsAdvertisedDataCiphers(options.DataChannel.Ciphers) {
+ 		if dataCipher != "" {
+diff --git a/pull_options.go b/pull_options.go
+index df25018..8c1ca9f 100644
+--- a/pull_options.go
++++ b/pull_options.go
+@@ -148,7 +148,7 @@ func decodePushReplyOptionLines(commandName string, optionLines []string, remote
+ 	var pullFilterRejection string
+ 	for _, payloadLine := range optionLines {
+ 		optionLine := strings.TrimLeft(payloadLine, " \t\r\n\v\f")
+-		allowed, rejected := applyPullFilters(filters, optionLine)
++		allowed, rejected := applyPullFilters(filters, optionLine, canonicalPushedOptionLine(payloadLine))
+ 		if rejected {
+ 			pullFilterRejection = optionLine
+ 			break
+@@ -344,9 +344,31 @@ func parsePushedSecondCount(value string) time.Duration {
+ 	return time.Duration(parsePushedPositiveInteger(value)) * time.Second
+ }
+ 
+-func applyPullFilters(filters []PullFilter, optionLine string) (bool, bool) {
++// Unbraid: options are read by their parsed name, lowercased (see decodePushReplyOptionLines), so a filter must also see
++// a pushed line that way, or "ROUTE ..." and a quoted "route" would slip past a filter on "route". A filter matches the
++// line as written (as upstream does) or its canonical form: the name lowercased and the arguments, unquoted, one space
++// apart; the filter's own name is compared without regard to case and its arguments exactly. Filters still apply in
++// order, the first that matches deciding.
++func canonicalPushedOptionLine(line string) string {
++	parameters, parsed := parsePushedOptionLine(line)
++	if !parsed || len(parameters) == 0 {
++		return ""
++	}
++	return strings.Join(append([]string{strings.ToLower(parameters[0])}, parameters[1:]...), " ")
++}
++
++func canonicalPullFilterText(text string) string {
++	text = strings.TrimLeft(text, " \t")
++	end := strings.IndexAny(text, " \t")
++	if end < 0 {
++		return strings.ToLower(text)
++	}
++	return strings.ToLower(text[:end]) + " " + strings.TrimLeft(text[end:], " \t")
++}
++
++func applyPullFilters(filters []PullFilter, optionLine string, canonicalLine string) (bool, bool) {
+ 	for _, filter := range filters {
+-		if !strings.HasPrefix(optionLine, filter.Text) {
++		if !strings.HasPrefix(optionLine, filter.Text) && (canonicalLine == "" || !strings.HasPrefix(canonicalLine, canonicalPullFilterText(filter.Text))) {
+ 			continue
+ 		}
+ 		switch filter.Action {
+diff --git a/unbraid_test.go b/unbraid_test.go
+new file mode 100644
+index 0000000..1b3b02a
+--- /dev/null
++++ b/unbraid_test.go
+@@ -0,0 +1,102 @@
++package openvpn
++
++import (
++	"net/netip"
++	"testing"
++	"time"
++)
++
++// Unbraid: a server can't hold a stop with explicit-exit-notify, nor get a filtered option past a pull filter by its case
++// or quoting.
++
++func TestExplicitExitNotifyIsBounded(t *testing.T) {
++	for _, c := range []struct {
++		count, sent int
++		slow        bool
++	}{
++		{count: 0, sent: 0},
++		{count: 1, sent: 1},
++		{count: 3600, sent: explicitExitNotifyMaxTries},
++		{count: 1 << 30, sent: explicitExitNotifyMaxTries, slow: true},
++	} {
++		start := time.Now()
++		sent := 0
++		notifyExplicitExit(c.count, func(tick time.Duration) {
++			if tick <= 0 || tick > explicitExitNotifyInterval {
++				t.Errorf("count %d: tick %v", c.count, tick)
++			}
++			sent++
++			if c.slow {
++				time.Sleep(tick)
++			}
++		})
++		elapsed := time.Since(start)
++		if sent != c.sent {
++			t.Errorf("count %d: sent %d", c.count, sent)
++		}
++		if elapsed > explicitExitNotifyWindow+200*time.Millisecond {
++			t.Errorf("count %d: took %v", c.count, elapsed)
++		}
++	}
++}
++
++func decodeFiltered(line string, filters []PullFilter) pushedOptions {
++	options, _ := decodePushReplyOptionLines("PUSH_REPLY", []string{line}, netip.Addr{}, filters)
++	return options
++}
++
++func TestPullFiltersIgnoreCaseAndQuoting(t *testing.T) {
++	filters := []PullFilter{{Action: "ignore", Text: "explicit-exit-notify"}, {Action: "accept", Text: "route 10.8."}, {Action: "ignore", Text: "route"}, {Action: "reject", Text: "dhcp-option"}}
++	for _, line := range []string{"explicit-exit-notify 3600", "EXPLICIT-EXIT-NOTIFY 3600", `"explicit-exit-notify" 3600`, `'Explicit-Exit-Notify' 3600`, "  explicit-exit-notify\t3600"} {
++		options := decodeFiltered(line, filters)
++		if options.ExplicitExitNotifySet || options.pullFilterRejection != "" {
++			t.Errorf("%q: set %v, rejection %q", line, options.ExplicitExitNotifySet, options.pullFilterRejection)
++		}
++	}
++	for _, c := range []struct {
++		line   string
++		routes int
++	}{
++		{"route 10.8.0.0 255.255.0.0", 1},
++		{`"route" 10.8.0.0 255.255.0.0`, 1},
++		{"ROUTE\t10.8.0.0 255.255.0.0", 1},
++		{"ROUTE 0.0.0.0 0.0.0.0", 0},
++		{`"Route" 192.168.1.0 255.255.255.0`, 0},
++		{"route 192.168.1.0 255.255.255.0 # comment", 0},
++	} {
++		options := decodeFiltered(c.line, filters)
++		if len(options.Routes) != c.routes || options.pullFilterRejection != "" {
++			t.Errorf("%q: routes %v, rejection %q", c.line, options.Routes, options.pullFilterRejection)
++		}
++	}
++	for _, line := range []string{"dhcp-option DNS 1.1.1.1", "DHCP-OPTION DNS 1.1.1.1", `"dhcp-option" DNS 1.1.1.1`} {
++		if decodeFiltered(line, filters).pullFilterRejection == "" {
++			t.Errorf("%q: not rejected", line)
++		}
++	}
++	if options := decodeFiltered("topology subnet", filters); options.Topology != "subnet" {
++		t.Errorf("unfiltered option lost: %q", options.Topology)
++	}
++}
++
++// What a filter's own arguments say is kept exactly, and the first filter that matches still decides.
++func TestPullFiltersKeepTheirOrderAndArguments(t *testing.T) {
++	user := []PullFilter{{Action: "accept", Text: "auth-token-user Alice"}, {Action: "reject", Text: "auth-token-user"}}
++	if decodeFiltered("auth-token-user alice", user).pullFilterRejection == "" {
++		t.Error("an argument in another case matched the accept")
++	}
++	if decodeFiltered("AUTH-TOKEN-USER Alice", user).pullFilterRejection != "" {
++		t.Error("the accept didn't match its own argument")
++	}
++	tabbed := []PullFilter{{Action: "ignore", Text: "dhcp-option\tDNS"}}
++	if options := decodeFiltered("DHCP-OPTION\tDNS 1.1.1.1", tabbed); len(options.DHCPOptions) != 0 {
++		t.Errorf("a filter with a tab didn't match: %v", options.DHCPOptions)
++	}
++	spaced := []PullFilter{{Action: "accept", Text: "route  10.8."}, {Action: "reject", Text: "route"}}
++	if options := decodeFiltered("route  10.8.0.0 255.255.0.0", spaced); options.pullFilterRejection != "" || len(options.Routes) != 1 {
++		t.Errorf("the accept written for the raw line no longer matched it: %q", options.pullFilterRejection)
++	}
++	if decodeFiltered("route 192.168.1.0 255.255.255.0", spaced).pullFilterRejection == "" {
++		t.Error("the reject no longer applies")
++	}
++}
