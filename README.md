@@ -73,8 +73,8 @@ Each release lists the DMG's SHA-256 checksum and is signed with a Developer ID 
 unbraid is a VPN app, not a VPN service. It has no servers, so you need an account with a supported provider
 (the free Proton VPN plan works) or a server of your own.
 
-While unbraid is connected, it is the Mac's VPN. Turn off your provider's own app first, since two VPN apps on one
-Mac get in each other's way.
+While unbraid is connected, it is the Mac's VPN. Turn off your provider's own VPN app before you connect unbraid:
+running them together can cause routing conflicts.
 
 Your provider's limits still apply. Providers with a connection limit count each route in use as a connection,
 while Mullvad counts unbraid as one device. The default route stays connected while unbraid is on. Other routes
