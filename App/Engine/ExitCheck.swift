@@ -19,6 +19,11 @@ import Observation
 
     private init() { changes.start() }
 
+    #if DEBUG
+    /// How many views say they show exit addresses (tools/debug.sh watchers).
+    var visibleCount: Int { visible.count }
+    #endif
+
     func watch(_ id: UUID, visible: Bool) {
         let wasVisible = !self.visible.isEmpty
         if visible { self.visible.insert(id) } else { self.visible.remove(id) }

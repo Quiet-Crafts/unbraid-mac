@@ -49,6 +49,10 @@ final class Stats {
     }
     @ObservationIgnored private var visibleViews: Set<UUID> = []
     @ObservationIgnored private var cooling: Task<Void, Never>?
+    #if DEBUG
+    /// How many views say they are on screen (tools/debug.sh watchers).
+    var visibleCount: Int { visibleViews.count }
+    #endif
     func watch(_ id: UUID, visible: Bool) {
         if visible { visibleViews.insert(id) } else { visibleViews.remove(id) }
         cooling?.cancel()

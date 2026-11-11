@@ -108,6 +108,21 @@ enum DebugHooks {
         case "appearance":
             NSApp.appearance = arg == "dark" ? NSAppearance(named: .darkAqua) : arg == "light" ? NSAppearance(named: .aqua) : nil
             out("appearance \(arg)")
+        case "mini":
+            // Minimizes the main window, to check what a minimized window keeps (the Dock icon).
+            NSApp.windows.first { $0.identifier?.rawValue == "main" || $0.title == "unbraid" }?.miniaturize(nil)
+            try? await Task.sleep(for: .milliseconds(600))
+            out("minimized, policy \(NSApp.activationPolicy() == .accessory ? "accessory" : "regular")")
+        case "closeother":
+            // Closes the frontmost visible window that isn't the main one (Settings), as its red button does.
+            NSApp.orderedWindows.first { $0.isVisible && $0.title != "unbraid" && $0.canBecomeKey && !($0 is NSPanel) }?.performClose(nil)
+            try? await Task.sleep(for: .milliseconds(600))
+            out("closed other, policy \(NSApp.activationPolicy() == .accessory ? "accessory" : "regular")")
+        case "panelroute":
+            // What a route row in the menu bar panel does: choose the page, then open the window.
+            Presentation.shared.page = .apps(arg.isEmpty ? nil : arg)
+            AppDelegate.openMain()
+            out("panelroute \(arg)")
         case "page":
             AppDelegate.openMain()
             if !arg.isEmpty { NotificationCenter.default.post(name: pageNote, object: arg) }
@@ -215,6 +230,14 @@ enum DebugHooks {
             do { try rep.representation(using: .png, properties: [:])?.write(to: url); out("snap \(url.path)") } catch { out("snap failed") }
         case "win":
             out(NSApp.windows.filter(\.isVisible).map { "\($0.title) frame=\($0.frame.size) min=\($0.minSize) cmin=\($0.contentMinSize) max=\($0.maxSize)" }.joined(separator: "\n"))
+        case "watchers":
+            // Who asks for live data now: views on screen for statistics and exit addresses, the Dock icon, and the
+            // app's windows. For checking that a closed panel or window lets go.
+            let wins = NSApp.windows.filter { $0.isVisible || $0.isMiniaturized }.map {
+                "\($0.className)\($0.title.isEmpty ? "" : " '\($0.title)'") visible=\($0.isVisible) mini=\($0.isMiniaturized) key=\($0.isKeyWindow)"
+            }
+            out("stats views=\(Stats.shared.visibleCount) watching=\(Stats.shared.watching) exit views=\(ExitCheck.shared.visibleCount) "
+                + "policy=\(NSApp.activationPolicy() == .regular ? "regular" : "accessory")\n" + wins.joined(separator: "\n"))
         case "close":
             // Closes the main window as its red button does, to check what brings it back and that the Dock icon goes with it.
             NSApp.windows.first(where: { $0.isVisible && $0.canBecomeMain })?.performClose(nil)

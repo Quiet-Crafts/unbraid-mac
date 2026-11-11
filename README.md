@@ -25,17 +25,18 @@ providers.
 
 ## Highlights
 
-- Give any app its own exit country or server, let it skip the VPN with Direct, or block it from the network. Several
-  exits stay connected at once.
+- Give any app its own exit country or server, let it skip the VPN with Direct, or block its internet access.
+  Several exits stay connected at once.
 - Use the VPN accounts you already have. One route can go through Mullvad while another uses NordVPN.
 - Reach your home network through Tailscale, Headscale or a home WireGuard tunnel, or send chosen apps out through a
   Tailscale exit node.
-- Connection checks notice a server that stopped answering and move its route to another port or server.
-- A DNS filter of your choice, per route and for Direct traffic, plus the provider's own ad and tracker blocking
+- Connection checks watch each provider tunnel and, after repeated failures, try another port or server.
+- A DNS filter of your choice for VPN routes and Direct traffic, plus the provider's own ad and tracker blocking
   where it has one.
 - Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets and Control Center
   controls.
-- Stats on this Mac: data per route and app, live speed, and speed tests through several exits at once.
+- Stats on this Mac: data per route and app, live speed and connected time, and M-Lab speed tests through one exit
+  or several at once.
 - No ads, no unbraid account and no analytics. Free software under the GPL.
 
 ## What it works with
@@ -97,8 +98,8 @@ paste a Shadowsocks key, or use only Tailscale, for example with an exit node at
 
 ### Can I reach my home network while I use a VPN?
 
-Yes. With Tailscale, or with your router's WireGuard config added as a home tunnel, apps can reach devices at home
-and still use their VPN exit for everything else.
+Yes. With Tailscale (plus a subnet router for devices that aren't on your tailnet), or with your router's WireGuard
+config added as a home tunnel, apps can reach devices at home and still use their VPN exit for everything else.
 
 ### Does it have a kill switch?
 

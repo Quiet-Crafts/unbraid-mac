@@ -162,6 +162,9 @@ struct SearchField: NSViewRepresentable {
         f.placeholderString = prompt
         f.sendsSearchStringImmediately = true
         f.delegate = context.coordinator
+        // The clear button and Escape empty the field without a text-change notification; they send the action.
+        f.target = context.coordinator
+        f.action = #selector(Coordinator.changed(_:))
         context.coordinator.observe(f)
         return f
     }
@@ -175,7 +178,13 @@ struct SearchField: NSViewRepresentable {
         private weak var field: NSSearchField?
         init(text: Binding<String>) { self.text = text }
 
-        func controlTextDidChange(_ n: Notification) { text.wrappedValue = (n.object as? NSSearchField)?.stringValue ?? "" }
+        func controlTextDidChange(_ n: Notification) { take(n.object as? NSSearchField) }
+        @objc func changed(_ sender: NSSearchField) { take(sender) }
+        func searchFieldDidEndSearching(_ sender: NSSearchField) { take(sender) }
+        private func take(_ f: NSSearchField?) {
+            let value = f?.stringValue ?? ""
+            if text.wrappedValue != value { text.wrappedValue = value }
+        }
 
         /// ⌘F (the Find command) focuses the field. Selector observers go away with the coordinator.
         func observe(_ f: NSSearchField) {

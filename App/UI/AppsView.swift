@@ -13,6 +13,8 @@ struct AppsView: View {
     @State private var query = ""
     @State private var showSystem = false
     @State private var selection = Set<String>()
+    /// An app added from a route's page, shown once All Apps has reset (see `add`).
+    @State private var pendingReveal: String?
     @State private var sort = AppsSort()
     /// Bytes per app this week, from the statistics. Outlives the page, so coming back shows the numbers at once.
     private let week = WeekBytes.shared
@@ -71,6 +73,7 @@ struct AppsView: View {
         .onDisappear { ExitCheck.shared.watch(exitWatch, visible: false) }
         .onChange(of: route) {
             selection = []; query = ""
+            if let key = pendingReveal { pendingReveal = nil; reveal(key) }
             ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK)
         }
         // Only what is on screen stays selected, so Move To never acts on apps the search or a move has hidden.
@@ -211,13 +214,16 @@ struct AppsView: View {
         p.directoryURL = URL(fileURLWithPath: "/Applications")
         guard p.runModal() == .OK, let url = p.url else { return }
         let key = model.apps.add(url)
-        let show = {
-            // A listed system app stays one; without a route it is listed only with system apps, so show them.
-            if model.apps.app(key)?.system == true, model.setup.apps[key] == nil { showSystem = true }
-            query = model.apps.app(key)?.name ?? ""; selection = [key]
-        }
-        // From a route's page, open All Apps first; the selection follows once that page has reset.
-        if route != nil { navigate(.apps(nil)); Task { @MainActor in show() } } else { show() }
+        // From a route's page, open All Apps first; the page's reset (onChange of route) then shows the app, so the
+        // search and selection come after it whatever order SwiftUI runs them in.
+        if route != nil { pendingReveal = key; navigate(.apps(nil)) } else { reveal(key) }
+    }
+
+    /// Finds an added app in the list and selects it.
+    private func reveal(_ key: String) {
+        // A listed system app stays one; without a route it is listed only with system apps, so show them.
+        if model.apps.app(key)?.system == true, model.setup.apps[key] == nil { showSystem = true }
+        query = model.apps.app(key)?.name ?? ""; selection = [key]
     }
 }
 

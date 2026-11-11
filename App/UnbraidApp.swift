@@ -172,8 +172,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let atLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
         if !atLogin || !AppModel.shared.signedIn { Task { try? await Task.sleep(for: .milliseconds(200)); Self.openMain() } }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
-            // The Dock icon goes with the last regular window: unbraid lives on in the menu bar.
-            DispatchQueue.main.async { if !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) { NSApp.setActivationPolicy(.accessory) } }
+            // The Dock icon goes with the last regular window: unbraid lives on in the menu bar. A minimized window
+            // still counts, since the Dock is how it comes back.
+            DispatchQueue.main.async {
+                if !NSApp.windows.contains(where: { $0.isMiniaturized || $0.isVisible && $0.canBecomeMain }) {
+                    NSApp.setActivationPolicy(.accessory)
+                }
+            }
         }
     }
 
