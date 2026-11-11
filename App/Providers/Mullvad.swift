@@ -31,6 +31,9 @@ nonisolated let rawSession: URLSession = {
 /// POSTs JSON and returns status + body without throwing on 4xx: Mullvad and IVPN report why a sign-in failed in the
 /// error body, which [Http] discards. A URLError therefore means no HTTP status was seen.
 @concurrent nonisolated func postJSONRaw(_ url: String, _ body: String, headers: [String: String] = [:]) async throws -> (Int, Data) {
+    #if DEBUG
+    try PerfFake.offline()
+    #endif
     guard let u = URL(string: url), u.scheme == "https" else { throw Fail("HTTPS only") }
     var r = URLRequest(url: u)
     r.httpMethod = "POST"

@@ -248,7 +248,15 @@ final class FrontApp {
         }
     }
 
+    #if DEBUG
+    /// Pictures from the test copy show a made-up app, never the one really in front.
+    func perfShow(_ shown: AppInfo?) { app = shown }
+    #endif
+
     private func update(_ a: NSRunningApplication?) {
+        #if DEBUG
+        if PerfHost.active { return }
+        #endif
         guard let a, a.bundleIdentifier != Bundle.main.bundleIdentifier, let id = a.bundleIdentifier else { return }
         app = AppCatalog.shared.app(id) ?? a.bundleURL.map { AppInfo(id: id, name: a.localizedName ?? $0.lastPathComponent, path: $0.path, system: false) }
     }

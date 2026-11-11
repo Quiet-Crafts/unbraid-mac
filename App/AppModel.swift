@@ -30,6 +30,8 @@ final class AppModel {
     #if DEBUG
     func acceptDisclosureForPerf() { disclosure = false; refreshApps() }
     func refreshAppsForPerf() { refreshApps(changed: true) }
+    /// The test copy's made-up server lists: it never asks a provider for one.
+    func seedCountriesForPerf(_ provider: String, _ list: [Country]) { countries[provider] = list }
     #endif
 
     func closeProviderForm(_ id: String) {
@@ -258,6 +260,9 @@ final class AppModel {
     }
 
     func refreshCountries(_ provider: String) {
+        #if DEBUG
+        if PerfHost.active { return }
+        #endif
         guard !refreshing.contains(provider), let p = Providers.get(provider), let acc = accounts[provider] else { return }
         refreshing.insert(provider)
         let opts = setup.opts[provider] ?? [:]

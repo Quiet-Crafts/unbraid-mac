@@ -6,7 +6,10 @@
 #   tools/perf.sh debug               as the Debug install was: unoptimized
 #   ONLY=switch,search tools/perf.sh  only those measurements
 #   SAMPLE=switch.all tools/perf.sh   also a call graph of that step (path printed as [Sample])
-#   SHOTS=<folder> tools/perf.sh      no timing: a picture of each page, to compare looks before and after
+#   SHOTS=<folder> tools/perf.sh      no timing: pictures for the README and the website, made-up data only (Apple's own
+#                                     apps, four made-up routes and accounts, no network): All Apps, a route, the location
+#                                     picker, Traffic and the menu bar panel, light and dark, as macOS draws the window
+#   FAKE=1 HOLD=1 tools/perf.sh       stays open with that same made-up setup
 #   HOLD=1 tools/perf.sh              no timing: stays open with the fake data, to try things by hand
 #   HOLD=1 UNBRAID_PERF_SELECT=4 tools/perf.sh   the same, with the first four rows already selected
 #                                     (UNBRAID_PERF_DARK=1 too for dark mode)
@@ -29,5 +32,5 @@ plutil -replace CFBundleIdentifier -string app.unbraid.perf "$APP/Contents/Info.
 codesign -f -s - "$APP" 2>/dev/null
 PERF_HOME=$(mktemp -d "${TMPDIR:-/tmp}/unbraid-perf-home/XXXXXX" 2>/dev/null || { mkdir -p "${TMPDIR:-/tmp}/unbraid-perf-home"; mktemp -d "${TMPDIR:-/tmp}/unbraid-perf-home/XXXXXX"; })
 trap 'rm -rf "$PERF_HOME"' EXIT
-env UNBRAID_PERF=1 CFFIXED_USER_HOME="$PERF_HOME" ${ONLY:+UNBRAID_PERF_ONLY=$ONLY} ${SAMPLE:+UNBRAID_PERF_SAMPLE=$SAMPLE} ${REPS:+UNBRAID_PERF_REPS=$REPS} ${SHOTS:+UNBRAID_PERF_SHOTS=$SHOTS} ${HOLD:+UNBRAID_PERF_HOLD=1} ${STRESS:+UNBRAID_PERF_STRESS=1} ${CHECKS:+UNBRAID_PERF_CHECKS=1 UNBRAID_PERF_CHECK_SHOTS=$CHECKS} \
+env UNBRAID_PERF=1 CFFIXED_USER_HOME="$PERF_HOME" ${ONLY:+UNBRAID_PERF_ONLY=$ONLY} ${SAMPLE:+UNBRAID_PERF_SAMPLE=$SAMPLE} ${REPS:+UNBRAID_PERF_REPS=$REPS} ${SHOTS:+UNBRAID_PERF_SHOTS=$SHOTS} ${HOLD:+UNBRAID_PERF_HOLD=1} ${FAKE:+UNBRAID_PERF_FAKE=1} ${STRESS:+UNBRAID_PERF_STRESS=1} ${CHECKS:+UNBRAID_PERF_CHECKS=1 UNBRAID_PERF_CHECK_SHOTS=$CHECKS} \
   caffeinate -d -u -t 300 "$APP/Contents/MacOS/unbraid" 2>&1 | tee "$DD.out" | grep -E "^\[(Perf|Sample|Check)\]|refused"

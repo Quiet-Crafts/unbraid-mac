@@ -20,6 +20,26 @@ all at the same time. If you use Tailscale, your home network stays reachable to
   &nbsp;·&nbsp; <a href="https://github.com/quiet-crafts/unbraid-mac/issues">Report a bug</a>
 </p>
 
+<table align="center">
+  <tr>
+    <td align="center" width="38%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/apps-dark.png"><img src=".github/screenshots/apps.png" alt="All Apps: each app with its route, TV, Safari and Podcasts in the United States, Music in Japan, Maps and Weather in Italy, Photos Direct and most others on the default exit in the Netherlands, with this week's data per app" width="260"></picture></td>
+    <td align="center" width="38%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/route-dark.png"><img src=".github/screenshots/route.png" alt="The United States route on Mullvad in New York: live download speed, this week's total and the five apps that use it" width="260"></picture></td>
+    <td align="center" rowspan="4" width="24%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/panel-dark.png"><img src=".github/screenshots/panel.png" alt="The menu bar panel: connected with four VPN exits, live speed, the app in front with its route one click away, a profile menu and the download speed of each route" width="150"></picture><br><sub>The app in front, one click from another route</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Each app gets its own exit</sub></td>
+    <td align="center"><sub>Every route with its apps and live speed</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/picker-dark.png"><img src=".github/screenshots/picker.png" alt="Choosing the location for the Italy route: NordVPN, favourite countries and the list of all countries with their server counts" width="260"></picture></td>
+    <td align="center"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/traffic-dark.png"><img src=".github/screenshots/traffic.png" alt="Traffic for this week: data down and up, each route's share, data per day by route and the apps behind each route" width="260"></picture></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>Mix providers and countries</sub></td>
+    <td align="center"><sub>Data per route and app, by day</sub></td>
+  </tr>
+</table>
+
 There is also [unbraid for Android](https://github.com/quiet-crafts/unbraid), with the same idea and the same
 providers.
 

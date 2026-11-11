@@ -56,6 +56,9 @@ nonisolated enum Http {
     }
 
     private static func once(_ method: String, _ url: String, _ headers: [String: String], _ body: Data?, _ pin: Pin?, _ credentials: Bool) async throws -> Data {
+        #if DEBUG
+        try PerfFake.offline()
+        #endif
         guard let u = URL(string: url), u.scheme == "https" else { throw Fail("HTTPS only") }
         var r = URLRequest(url: u)
         r.httpMethod = method

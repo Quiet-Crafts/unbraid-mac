@@ -94,6 +94,13 @@ final class AppCatalog {
     /// Scans off the main thread; a second call refreshes (new installs, removals). Returns the routed apps missing for
     /// long enough to lose their route (see `AppPresence`), with the route they had; the caller drops them.
     func load() async -> [String: String] {
+        #if DEBUG
+        // Pictures from the test copy: a fixed made-up list, never what is installed here.
+        if PerfHost.active, let fake = PerfFake.apps {
+            if !loaded || apps != fake { apps = fake; loaded = true; invalidate() }
+            return [:]
+        }
+        #endif
         let own = Bundle.main.bundleIdentifier
         // Where every copy of the apps listed, added, routed or kept really is: LaunchServices, what runs and links are
         // read here, not each time the patterns are asked for (see `NestedApps`).

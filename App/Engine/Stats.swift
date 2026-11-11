@@ -130,11 +130,16 @@ final class Stats {
 
     #if DEBUG
     /// The smoothness matrix: a month of traffic in the throwaway copy's own file.
-    func seedForPerf(apps: [String], routes: [String]) {
-        Task { await StatsWriter.shared.seedForPerf(apps: apps, routes: routes) }
+    /// `exits`: the route each app's traffic went through, in the order of `apps` (else they take turns).
+    func seedForPerf(apps: [String], routes: [String], exits: [String]? = nil) {
+        // Kept under each route's statistics id, as real traffic is.
+        let setup = Store.shared.setup
+        let id = { (r: String) in StatsMath.idOf(r, setup: setup) }
+        Task { await StatsWriter.shared.seedForPerf(apps: apps, routes: routes.map(id), exits: exits?.map(id)) }
         var l = Live()
         for r in routes { l.down[r] = (0..<60).map { Float(($0 * 37) % 90) * 100_000 } }
         l.downNow = 2_000_000
+        l.upNow = 240_000
         live = l
     }
 
@@ -248,14 +253,14 @@ actor StatsWriter {
     private static func wall() -> Int64 { Int64(Date.now.timeIntervalSince1970 * 1000) }
 
     #if DEBUG
-    func seedForPerf(apps: [String], routes: [String]) {
+    func seedForPerf(apps: [String], routes: [String], exits: [String]? = nil) {
         guard let d = try? db() else { return }
         let today = StatsMath.dayOf(Int64(Date.now.timeIntervalSince1970 * 1000))
         let now = Int64(Date.now.timeIntervalSince1970 * 1000)
         for offset in 0..<30 {
             let day = today - Int64(offset)
             for (i, a) in apps.enumerated() {
-                let exit = routes[i % routes.count]
+                let exit = exits?[i] ?? routes[i % routes.count]
                 try? d.run("INSERT OR REPLACE INTO daily VALUES(?,?,?,?,?)", [day, a, exit, Int64((i + 1) * 40_000 + offset * 900), Int64((i + 1) * 1_500_000)])
             }
             for (i, r) in routes.enumerated() {

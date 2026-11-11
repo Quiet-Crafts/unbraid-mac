@@ -12,6 +12,38 @@ private nonisolated final class MenuBox: @unchecked Sendable {
     init(menu: NSMenu) { self.menu = menu }
 }
 
+/// Pictures for the README and the website (`SHOTS=<folder>`, or `UNBRAID_PERF_FAKE=1` with HOLD): made-up data only.
+/// The apps are macOS's own, at their usual places, so the icons are real and nothing installed here shows.
+nonisolated enum PerfFake {
+    static let apps: [AppInfo]? = {
+        let env = ProcessInfo.processInfo.environment
+        guard env["UNBRAID_PERF"] != nil, env["UNBRAID_PERF_SHOTS"] != nil || env["UNBRAID_PERF_FAKE"] != nil else { return nil }
+        let s = "/System/Applications/"
+        let list: [(String, String, String)] = [
+            ("com.apple.Safari", "Safari", "/Applications/Safari.app"), ("com.apple.mail", "Mail", s + "Mail.app"),
+            ("com.apple.MobileSMS", "Messages", s + "Messages.app"), ("com.apple.FaceTime", "FaceTime", s + "FaceTime.app"),
+            ("com.apple.Maps", "Maps", s + "Maps.app"), ("com.apple.Music", "Music", s + "Music.app"),
+            ("com.apple.TV", "TV", s + "TV.app"), ("com.apple.podcasts", "Podcasts", s + "Podcasts.app"),
+            ("com.apple.news", "News", s + "News.app"), ("com.apple.Photos", "Photos", s + "Photos.app"),
+            ("com.apple.AppStore", "App Store", s + "App Store.app"), ("com.apple.iBooksX", "Books", s + "Books.app"),
+            ("com.apple.iCal", "Calendar", s + "Calendar.app"), ("com.apple.Notes", "Notes", s + "Notes.app"),
+            ("com.apple.weather", "Weather", s + "Weather.app"), ("com.apple.stocks", "Stocks", s + "Stocks.app"),
+            ("com.apple.freeform", "Freeform", s + "Freeform.app"), ("com.apple.Home", "Home", s + "Home.app"),
+            ("com.apple.reminders", "Reminders", s + "Reminders.app"), ("com.apple.Preview", "Preview", s + "Preview.app"),
+            ("com.apple.QuickTimePlayerX", "QuickTime Player", s + "QuickTime Player.app"),
+            ("com.apple.systempreferences", "System Settings", s + "System Settings.app"),
+            ("com.apple.Terminal", "Terminal", s + "Utilities/Terminal.app"),
+        ]
+        return list.map { AppInfo(id: $0.0, name: $0.1, path: $0.2, system: false) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }()
+
+    /// The test copy never reaches a provider: its accounts are made up.
+    static func offline() throws {
+        if getenv("UNBRAID_PERF") != nil { throw Fail("No network in the test copy") }
+    }
+}
+
 enum PerfCount {
     nonisolated(unsafe) static var ring = 0
     nonisolated(unsafe) static var curve = 0
@@ -92,7 +124,7 @@ private final class Meter: NSObject {
 
     func run() async {
         activity = ProcessInfo.processInfo.beginActivity(options: [.latencyCritical, .userInitiated, .idleSystemSleepDisabled], reason: "perf matrix")
-        seed()
+        if PerfFake.apps != nil { seedShots() } else { seed() }
         NSApp.setActivationPolicy(.regular)
         for _ in 0..<200 where AppDelegate.openWindow == nil { try? await Task.sleep(for: .milliseconds(20)) }
         AppDelegate.openWindow?()
@@ -110,7 +142,7 @@ private final class Meter: NSObject {
         let launched = Meter.now - ProcessInfo.processStartMs
         report(String(format: "[Perf] launch-to-first-list %.0f ms, apps %d", launched, model.apps.apps.count))
         appKeys = model.apps.apps.map(\.id)
-        await seedTraffic()
+        if PerfFake.apps != nil { seedShotTraffic() } else { await seedTraffic() }
         Connection.shared.perfConnected()
         if let dir = ProcessInfo.processInfo.environment["UNBRAID_PERF_SHOTS"] { await shots(dir); exit(0) }
         // Stay open with the fake data, to try things by hand in this copy.
@@ -165,14 +197,111 @@ private final class Meter: NSObject {
         Stats.shared.seedForPerf(apps: keys, routes: routes)
     }
 
-    /// The window as drawn, per page, to compare against what it looked like before a change.
-    private func shots(_ dir: String) async {
-        for (name, target) in [("all", "apps"), ("route", "route:b"), ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")] {
-            go(target); await meter.frames(90)
-            guard let v = window.contentView?.superview, let rep = v.bitmapImageRepForCachingDisplay(in: v.bounds) else { continue }
-            v.cacheDisplay(in: v.bounds, to: rep)
-            try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: "\(dir)/\(name).png"))
+    // MARK: Pictures (SHOTS)
+
+    /// Made-up routes on made-up accounts, as in the Android screenshots: a free Proton default and three other providers.
+    private static let shotRoutes: [(id: String, provider: String, code: String, country: String, city: String, hue: Int)] = [
+        ("nl", "proton-free", "NL", "Netherlands", "Amsterdam", 0), ("us", "mullvad", "US", "United States", "New York", 4),
+        ("it", "nord", "IT", "Italy", "Milan", 2), ("jp", "airvpn", "JP", "Japan", "Tokyo", 1),
+    ]
+    /// App → route; the rest follow the default.
+    private static let shotApps: [String: String] = [
+        "com.apple.Safari": "us", "com.apple.TV": "us", "com.apple.podcasts": "us", "com.apple.news": "us", "com.apple.stocks": "us",
+        "com.apple.Maps": "it", "com.apple.weather": "it", "com.apple.Music": "jp", "com.apple.iBooksX": "jp",
+        "com.apple.Photos": DIRECT, "com.apple.FaceTime": DIRECT,
+    ]
+    private static let shotCountries: [(code: String, name: String, cities: [String])] = [
+        ("AU", "Australia", ["Sydney", "Melbourne"]), ("AT", "Austria", ["Vienna"]), ("BE", "Belgium", ["Brussels"]),
+        ("BR", "Brazil", ["São Paulo"]), ("CA", "Canada", ["Toronto", "Montreal", "Vancouver"]), ("DK", "Denmark", ["Copenhagen"]),
+        ("FI", "Finland", ["Helsinki"]), ("FR", "France", ["Paris", "Marseille"]), ("DE", "Germany", ["Frankfurt", "Berlin"]),
+        ("IE", "Ireland", ["Dublin"]), ("IT", "Italy", ["Milan", "Rome", "Palermo"]), ("JP", "Japan", ["Tokyo", "Osaka"]),
+        ("NL", "Netherlands", ["Amsterdam"]), ("NO", "Norway", ["Oslo"]), ("PL", "Poland", ["Warsaw"]), ("PT", "Portugal", ["Lisbon"]),
+        ("SG", "Singapore", ["Singapore"]), ("ES", "Spain", ["Madrid", "Barcelona"]), ("SE", "Sweden", ["Stockholm", "Gothenburg"]),
+        ("CH", "Switzerland", ["Zurich"]), ("GB", "United Kingdom", ["London", "Manchester"]),
+        ("US", "United States", ["New York", "Los Angeles", "Chicago", "Miami"]),
+    ]
+    private static func cityKey(_ code: String, _ city: String) -> String { "\(code.lowercased())-\(city.lowercased().filter(\.isLetter).prefix(3))" }
+
+    private func seedShots() {
+        for p in Set(Self.shotRoutes.map(\.provider)) {
+            // A free account has a few countries only.
+            let list = Self.shotCountries.filter { p != "proton-free" || ["NL", "US", "JP", "PL", "CH"].contains($0.code) }
+            model.seedCountriesForPerf(p, list.enumerated().map { i, c in
+                Country(id: stableId("\(p)-\(c.code)"), name: c.name, code: c.code, serverCount: 6 + (i * 37 + c.name.count * 11) % 90,
+                        cities: c.cities.map { City(id: stableId("\(p)-\(c.code)-\($0)"), name: $0, key: Self.cityKey(c.code, $0)) })
+            })
+            Store.shared.account(p, "perf-\(p)")
         }
+        Store.shared.update { s in
+            s.routes = Self.shotRoutes.map { r in
+                var route = Route(id: r.id)
+                route.hue = r.hue
+                route.loc = Location(provider: r.provider, countryId: stableId("\(r.provider)-\(r.code)"), countryCode: r.code, country: r.country,
+                                     cityId: stableId("\(r.provider)-\(r.code)-\(r.city)"), city: r.city, region: Self.cityKey(r.code, r.city))
+                return route
+            }
+            s.defaultRoute = "nl"
+            s.apps = Self.shotApps
+            s.prefs.stats = true
+        }
+        Store.shared.disclosed = true
+        Store.shared.termsAccepted = true
+        Store.shared.tourPending = false
+        model.acceptDisclosureForPerf()
+    }
+
+    /// A month of traffic: video and music heaviest, each app through its own route.
+    private func seedShotTraffic() {
+        let heavy = ["com.apple.TV", "com.apple.Music", "com.apple.Safari", "com.apple.Photos", "com.apple.podcasts", "com.apple.Maps", "com.apple.news", "com.apple.AppStore", "com.apple.mail"]
+        let keys = appKeys.filter { !heavy.contains($0) } + heavy.reversed()
+        let exits = keys.map { Self.shotApps[$0] ?? "nl" }
+        Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id), exits: exits)
+    }
+
+    /// Each page in light and dark, the location picker, and the menu bar panel: the real window as macOS draws it.
+    private func shots(_ dir: String) async {
+        window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true)
+        NSApp.activate()
+        window.makeKeyAndOrderFront(nil)
+        FrontApp.shared.perfShow(model.apps.app("com.apple.TV"))
+        for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) }
+        go("traffic"); await meter.frames(20)
+        for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
+            NSApp.appearance = NSAppearance(named: look); await meter.frames(30)
+            Connection.shared.perfConnected()
+            for (name, target) in [("apps", "apps"), ("route", "route:us"), ("traffic", "traffic")] {
+                go(target); await meter.frames(90)
+                await shoot(window, "\(dir)/\(name)\(suffix).png")
+            }
+            go("route:it"); await meter.frames(40)
+            Presentation.shared.picker = PickerTarget(id: "it"); await meter.frames(120)
+            // The window's picture holds its sheet. No blinking caret or focus ring in the search field.
+            if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet") }
+            await shoot(window, "\(dir)/picker\(suffix).png")
+            Presentation.shared.picker = nil; await meter.frames(45)
+            openPanel(solid: true); await meter.frames(50)
+            if let panel { await shoot(panel, "\(dir)/panel\(suffix).png") }
+            closePanel()
+        }
+        NSApp.appearance = nil
+        report("[Perf] shots in \(dir)")
+    }
+
+    /// With nothing really connected, the copy drifts back to connecting now and then: shown connected, with a fresh
+    /// reading on the live graphs, for the picture.
+    private func shoot(_ w: NSWindow, _ path: String) async {
+        Connection.shared.perfConnected()
+        Stats.shared.perfPokeLive()
+        await meter.frames(15)
+        capture(w, path)
+    }
+
+    /// One window as macOS draws it (`cacheDisplay` leaves the glass sidebar blank), without its shadow.
+    private func capture(_ w: NSWindow, _ path: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        p.arguments = ["-x", "-o", "-l", String(w.windowNumber), path]
+        try? p.run(); p.waitUntilExit()
     }
 
     // MARK: The apps list, driven with real events
@@ -706,9 +835,25 @@ private final class Meter: NSObject {
 
     private var panel: NSPanel?
     /// The menu bar panel's contents in a window of their own: the status item can't be clicked from here.
-    private func openPanel() {
+    /// `solid`: for a picture, sized to the panel with its rounded corners on a plain background (nothing from behind it).
+    private func openPanel(solid: Bool = false) {
         let p = NSPanel(contentRect: NSRect(x: 1100, y: 120, width: 340, height: 500), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-        p.contentView = NSHostingView(rootView: MenuBarPanel().environment(model))
+        let host = NSHostingView(rootView: MenuBarPanel().environment(model))
+        if solid {
+            let size = host.fittingSize
+            p.setContentSize(size)
+            p.setFrameOrigin(NSPoint(x: window.frame.maxX - size.width - 20, y: window.frame.maxY - size.height - 40))
+            p.isOpaque = false
+            p.backgroundColor = .clear
+            host.wantsLayer = true
+            p.appearance = NSApp.appearance
+            NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { host.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+            host.layer?.cornerRadius = 14
+            host.layer?.masksToBounds = true
+            host.layer?.borderWidth = 1
+            NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { host.layer?.borderColor = NSColor.separatorColor.cgColor }
+        }
+        p.contentView = host
         p.orderFrontRegardless()
         panel = p
     }
