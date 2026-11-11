@@ -77,7 +77,9 @@ struct AppsView: View {
             ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK)
         }
         // Only what is on screen stays selected, so Move To never acts on apps the search or a move has hidden.
-        .onChange(of: rows.map(\.id)) { _, ids in selection.formIntersection(ids) }
+        // Pruned against the rows as they are now, not the ids this update captured: a reveal made in the same
+        // update (see `add`) would otherwise be undone by the previous page's rows.
+        .onChange(of: rows.map(\.id)) { selection.formIntersection(shown(model.setup).map(\.id)) }
         // Keyed on the page too: one AppsView serves every route, and a task started on All Apps must not keep its nil.
         .task(id: "\(model.setup.prefs.stats)|\(route ?? "")") {
             // Every 15 s, like the writer's own sampling while nobody watches.
