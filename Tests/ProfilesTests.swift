@@ -95,7 +95,7 @@ final class ProfilesTests: XCTestCase {
         XCTAssertEqual(s.profileName("👨‍👩‍👧 Casa"), "👨‍👩‍👧 Casa")
         let data = Data(#"{"profiles":[{"name":" Home ","defaultRoute":"gone","apps":{"a":"gone"}},{"name":"home","defaultRoute":"nl"}],"profile":"missing"}"#.utf8)
         let repaired = try JSONDecoder().decode(Setup.self, from: data)
-        XCTAssertEqual(repaired.profiles, [Profile(name: "Home", defaultRoute: "nl")])
+        XCTAssertEqual(repaired.profiles, [Profile(name: "Home", defaultRoute: "nl", apps: ["a": BLOCK])])
         XCTAssertNil(repaired.profile)
     }
 

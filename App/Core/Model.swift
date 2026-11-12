@@ -306,6 +306,9 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     /// Private to this user's sealed setup; keeps profile requests valid across an unchanged relaunch.
     var profileSalt: String? = nil
     var testing: Set<String> = []
+    /// Set when the setup was read: how many apps were blocked because their route couldn't be read. Not saved and not
+    /// part of the setup's identity; the app tells the user once.
+    var blockedForLostRoute = 0
 
     enum CodingKeys: String, CodingKey { case routes, defaultRoute, apps, favorites, home, prefs, servers, opts, profiles, profile, pendingSwitch, profileSalt }
 
@@ -459,7 +462,12 @@ nonisolated extension Setup {
         // An app on a route that is gone (one left out above, or lost in a downgrade) is blocked, not sent wherever the
         // default goes: that is visible in the list, and the user moves it to a route they choose.
         let known = Set(routes.map(\.id))
-        for (app, route) in apps where route != DIRECT && route != BLOCK && !known.contains(route) { apps[app] = BLOCK }
+        for (app, route) in apps where route != DIRECT && route != BLOCK && !known.contains(route) { apps[app] = BLOCK; blockedForLostRoute += 1 }
+        // The same for each saved profile, before `repairProfiles` would let such an app follow that profile's default.
+        // (A profile whose own default names no route is still repaired to the first route.)
+        for i in profiles.indices {
+            for (app, route) in profiles[i].apps where route != DIRECT && route != BLOCK && !known.contains(route) { profiles[i].apps[app] = BLOCK }
+        }
         repairProfiles()
         requireKillSwitchForBlocks()
     }
@@ -483,7 +491,13 @@ nonisolated extension Prefs {
         testAllRoutes = try c.saved(.testAllRoutes, p.testAllRoutes)
         filter = try c.saved(.filter, customDns.first.map { Filter(id: "own", value: $0, routes: true) } ?? Filter())
         if !c.contains(.filter), !customDns.isEmpty { customDns = [] }
-        stats = try c.saved(.stats, p.stats); killSwitch = try c.saved(.killSwitch, p.killSwitch); alwaysOn = try c.saved(.alwaysOn, p.alwaysOn)
+        // Protection that is there but can't be read stays on: falling back to off would open what the user closed.
+        func safer(_ key: CodingKeys, _ fallback: Bool) throws -> Bool {
+            guard !SavedDecoding.strict else { return try c.saved(key, fallback) }
+            guard c.contains(key) else { return fallback }
+            return (try? c.decode(Bool.self, forKey: key)) ?? true
+        }
+        stats = try c.saved(.stats, p.stats); killSwitch = try safer(.killSwitch, p.killSwitch); alwaysOn = try safer(.alwaysOn, p.alwaysOn)
         killSwitchHome = try c.saved(.killSwitchHome, p.killSwitchHome)
     }
 }

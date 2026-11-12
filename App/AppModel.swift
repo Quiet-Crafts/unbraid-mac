@@ -77,6 +77,8 @@ final class AppModel {
         // at launch (taking over a running tunnel) rarely waits for that. Best effort.
         Task.detached(priority: .utility) { _ = try? Catalog.Source.proton.pinned(); _ = try? Catalog.Source.express.pinned() }
         disclosure = !store.disclosed || !store.termsAccepted
+        let lost = store.setup.blockedForLostRoute
+        if lost > 0 { warn("\(lost) app\(lost == 1 ? " was" : "s were") blocked because their route could not be read. Choose a route for them.") }
         NotificationCenter.default.addObserver(forName: AirVpn.cleanupRefused, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { AppModel.shared.warn("AirVPN didn't accept the API key for a device unbraid added. Remove it in the AirVPN Client Area.") }
         }
@@ -609,7 +611,7 @@ final class AppModel {
 
     func setDefault(_ id: String) {
         guarded({ s in
-            guard id == DIRECT || id == BLOCK || s.route(id) != nil else { return }
+            guard id == DIRECT || s.route(id) != nil else { return }
             s.defaultRoute = id
         }, targets: [.defaultRoute])
     }

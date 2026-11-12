@@ -202,8 +202,8 @@ nonisolated enum Compiler {
             // same server with the same credentials share one tunnel: two with one key would fight over it.
             shared = try Compiler.shared(s, i.links, blocked: i.blocked)
             var byRoute: [(id: String, patterns: [String])] = []
-            // The setup keeps no entry for an app on the default route: one nested in a bundle routed elsewhere is
-            // grouped with the default route here (`nestedDefaults`).
+            // An app with no entry follows the default route (one the user chose for it is an entry, even when it is the
+            // default); a follower nested in a bundle routed elsewhere is grouped with the default route here (`nestedDefaults`).
             let routeOf = { (key: String) in s.apps[key] ?? s.defaultRoute }
             for (id, keys) in Dictionary(grouping: Array(s.apps.keys) + Compiler.nestedDefaults(s, i.apps), by: { routeOf($0) == DIRECT && s.prefs.effectiveFilter.through($0) ? Compiler.filteredDirect : routeOf($0) }).sorted(by: { $0.key < $1.key })
             where id == DIRECT || id == Compiler.filteredDirect || id == BLOCK || s.activeRoutes.contains(where: { $0.id == id }) {

@@ -708,6 +708,16 @@ final class StoreTests: XCTestCase {
         let partial = try JSONDecoder().decode(Setup.self, from: Data(brokenWg.utf8))
         XCTAssertEqual(partial.routes.map(\.id), ["nl"])
         XCTAssertEqual(partial.apps, ["com.a": BLOCK, "com.b": "nl"])
+        XCTAssertEqual(partial.blockedForLostRoute, 1)
+        // A saved profile's apps on that route are blocked too, not left to follow the profile's default.
+        let withProfile = #"{"routes":[{"id":"nl"},{"id":"w","wg":{"name":"x"}}],"defaultRoute":"nl","profiles":[{"name":"Work","defaultRoute":"nl","apps":{"com.a":"w","com.b":"nl"}}]}"#
+        let profiled = try JSONDecoder().decode(Setup.self, from: Data(withProfile.utf8))
+        XCTAssertEqual(profiled.profiles.first?.apps, ["com.a": BLOCK, "com.b": "nl"])
+        // Protection that can't be read stays on; one that is simply missing takes its default.
+        let unreadable = try JSONDecoder().decode(Setup.self, from: Data(#"{"prefs":{"killSwitch":"yes","alwaysOn":null}}"#.utf8))
+        XCTAssertTrue(unreadable.prefs.killSwitch)
+        XCTAssertTrue(unreadable.prefs.alwaysOn)
+        XCTAssertFalse(try JSONDecoder().decode(Setup.self, from: Data(#"{"prefs":{}}"#.utf8)).prefs.killSwitch)
         XCTAssertEqual(old.routes[1].loc.pinned?.name, "us1")
         XCTAssertEqual(old.routes[2].wg?.allowedIps, ["0.0.0.0/0"])
         XCTAssertEqual(old.apps, ["com.a": "us", "com.b": "w"])
