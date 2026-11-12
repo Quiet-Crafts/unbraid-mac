@@ -401,11 +401,23 @@ nonisolated enum StatsMath {
         return candidates.contains(own) ? own : tag == Compiler.tsTag ? home : candidates[0]
     }
 
+    /// The row for programs that run from temporary or cache folders (a build's executable, an npx or updater helper):
+    /// each run starts from a new folder, so they are counted together rather than as a new row each time.
+    static let otherPrograms = "?other"
+
     /// The key a process's traffic is counted under: the listed app or added tool that holds it, else the app bundle it
     /// sits in, else its own path (a program outside any app, such as ssh or a background service of macOS, named after
-    /// its file and the same key it gets once added as a tool), else "?" when the engine didn't say.
-    static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, toolPatterns: [String: [String]] = [:], bundleId: (String) -> String?) -> String {
-        appKey(path: path, bundles: bundles, tools: tools, toolPatterns: toolPatterns) ?? outerApp(path).flatMap(bundleId) ?? (path.hasPrefix("/") ? path : "?")
+    /// its file), with the home folder written as "~" so the account's name isn't kept, else `otherPrograms` for a
+    /// program in a temporary or cache folder, else "?" when the engine didn't say.
+    static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, toolPatterns: [String: [String]] = [:], home: String = NSHomeDirectory(), bundleId: (String) -> String?) -> String {
+        if let k = appKey(path: path, bundles: bundles, tools: tools, toolPatterns: toolPatterns) ?? outerApp(path).flatMap(bundleId) { return k }
+        guard path.hasPrefix("/") else { return "?" }
+        let h = home.hasSuffix("/") ? String(home.dropLast()) : home
+        let volatile = ["/private/var/folders/", "/var/folders/", "/private/tmp/", "/tmp/", "/private/var/tmp/", "/var/tmp/"]
+            + (h.count > 1 ? [h + "/Library/Caches/", h + "/.cache/", h + "/.npm/"] : [])
+        if volatile.contains(where: { path.hasPrefix($0) }) { return otherPrograms }
+        if h.count > 1, path.hasPrefix(h + "/") { return "~" + path.dropFirst(h.count) }
+        return path
     }
 
     /// The path of the outermost app bundle a process lives in ("/Applications/Foo.app" for a helper deep inside it).

@@ -428,7 +428,7 @@ final class StatsMathTests: XCTestCase {
     func testAProgramOutsideAnyAppIsCountedUnderItsOwnPath() {
         let bundles = [(prefix: "/Applications/Safari.app", id: "com.apple.Safari")]
         let ids = ["/Applications/Other.app": "com.example.other"]
-        let key = { (path: String, tools: Set<String>) in StatsMath.ownerKey(path: path, bundles: bundles, tools: tools) { ids[$0] } }
+        let key = { (path: String, tools: Set<String>) in StatsMath.ownerKey(path: path, bundles: bundles, tools: tools, home: "/Users/me") { ids[$0] } }
         XCTAssertEqual(key("/Applications/Safari.app/Contents/MacOS/Safari", []), "com.apple.Safari")
         XCTAssertEqual(key("/Applications/Other.app/Contents/MacOS/Other", []), "com.example.other")
         XCTAssertEqual(key("/usr/bin/ssh", []), "/usr/bin/ssh")
@@ -445,6 +445,19 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(key("/opt/homebrew/Cellar/curl/8.11.0/bin/curl"), tool)
         XCTAssertEqual(key("/opt/homebrew/Cellar/curl/8.12.1/bin/curl"), tool) // after `brew upgrade`
         XCTAssertEqual(key("/opt/homebrew/Cellar/wget/1.0/bin/wget"), "/opt/homebrew/Cellar/wget/1.0/bin/wget") // another tool stays apart
+    }
+
+    func testProgramsInTheHomeFolderAreKeptWithATildeAndTemporaryOnesTogether() {
+        let key = { (path: String) in StatsMath.ownerKey(path: path, bundles: [], tools: [], home: "/Users/me") { _ in nil } }
+        XCTAssertEqual(key("/Users/me/Projects/x/bin/tool"), "~/Projects/x/bin/tool")
+        XCTAssertEqual(key("/Users/meagain/bin/tool"), "/Users/meagain/bin/tool") // another folder that starts alike
+        XCTAssertEqual(key("/private/var/folders/ab/cd/T/go-build123/b001/exe/main"), StatsMath.otherPrograms)
+        XCTAssertEqual(key("/Users/me/Library/Caches/Vendor/1.2/helper"), StatsMath.otherPrograms)
+        XCTAssertEqual(key("/Users/me/.npm/_npx/abc/node_modules/.bin/x"), StatsMath.otherPrograms)
+        XCTAssertEqual(key("/tmp/x"), StatsMath.otherPrograms)
+        XCTAssertEqual(key("/opt/homebrew/bin/jq"), "/opt/homebrew/bin/jq")
+        // A tool the user added keeps its own key, wherever it lives.
+        XCTAssertEqual(StatsMath.ownerKey(path: "/tmp/t", bundles: [], tools: ["/tmp/t"], home: "/Users/me") { _ in nil }, "/tmp/t")
     }
 
     func testAClosingOnlyExitIsDrawn() {
