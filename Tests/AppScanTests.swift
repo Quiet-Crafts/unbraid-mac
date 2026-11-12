@@ -45,6 +45,13 @@ final class AppScanTests: XCTestCase {
         XCTAssertTrue(r.complete)
     }
 
+    func testAnUpperCaseExtensionIsStillAnApp() throws {
+        try app("/A/Foo.APP", id: "com.foo")
+        try app("/A/Vendor/Bar.App", id: "com.bar")
+        let r = AppScan.scan([(root + "/A", false)], skip: "")
+        XCTAssertEqual(r.apps.map(\.id).sorted(), ["com.bar", "com.foo"])
+    }
+
     func testAFolderThatCantBeReadMakesTheScanIncomplete() throws {
         try app("/A/Foo.app", id: "com.foo")
         try app("/A/Vendor/Bar.app", id: "com.bar")

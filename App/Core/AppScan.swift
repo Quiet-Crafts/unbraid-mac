@@ -44,10 +44,10 @@ nonisolated enum AppScan {
             for item in items.sorted() {
                 let url = URL(fileURLWithPath: root).appending(path: item)
                 var candidates = [url]
-                if !item.hasSuffix(".app") {
+                if !item.lowercased().hasSuffix(".app") {
                     guard AppPaths.isFolder(url.path) else { continue }
                     guard let inner = list(url.path) else { continue }
-                    candidates = inner.filter { $0.hasSuffix(".app") }.sorted().map { url.appending(path: $0) }
+                    candidates = inner.filter { $0.lowercased().hasSuffix(".app") }.sorted().map { url.appending(path: $0) }
                     if !system, !candidates.isEmpty { out.vendors.append(url.path) }
                 }
                 for c in candidates {
@@ -63,7 +63,7 @@ nonisolated enum AppScan {
     /// The app at `url` as it is on disk now (see `id(at:)`), or nil while its id can't be read; its name localised when
     /// the cached bundle is still that app.
     static func bundle(_ url: URL, system: Bool) -> AppInfo? {
-        guard url.pathExtension == "app", let plist = info(url.path), let id = plist["CFBundleIdentifier"] as? String else { return nil }
+        guard url.pathExtension.lowercased() == "app", let plist = info(url.path), let id = plist["CFBundleIdentifier"] as? String else { return nil }
         let b = Bundle(url: url)
         let same = b?.bundleIdentifier == id
         let name = ((same ? b?.localizedInfoDictionary?["CFBundleDisplayName"] : nil) ?? plist["CFBundleDisplayName"] ?? plist["CFBundleName"]
