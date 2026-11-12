@@ -146,12 +146,12 @@ nonisolated struct AirVpn: KeyProvider {
             catch is AuthError { throw AuthError("AirVPN didn't accept that API key. Check it in the Client Area under API", url: "https://airvpn.org/apisettings/") }
             catch {
                 // The reply may have been lost after AirVPN made the device: look for it rather than leave it behind.
-                if await removeStray(key, before: Set(rows.map(\.id))) { throw Fail("AirVPN didn't answer while adding a device, and the one it may have added was removed. Try again") }
+                if await removeStray(key, before: rows) { throw Fail("AirVPN didn't answer while adding a device, and the one it may have added was removed. Try again") }
                 throw Fail("AirVPN didn't answer while adding a device. If a new device appeared in the Client Area, remove it, then try again")
             }
             if result.error == nil {
                 guard let id = result.id, !id.isEmpty else {
-                    if await removeStray(key, before: Set(rows.map(\.id))) { throw Fail("AirVPN didn't identify the new device, and it was removed. Try again") }
+                    if await removeStray(key, before: rows) { throw Fail("AirVPN didn't identify the new device, and it was removed. Try again") }
                     throw Fail("AirVPN didn't identify the new device. Check the Client Area, then try again")
                 }
                 let item = AirCleanup.Record(key: key, id: id)
@@ -190,25 +190,27 @@ nonisolated struct AirVpn: KeyProvider {
         else { throw Challenge(message: "AirVPN didn't add a device for unbraid. Choose one of yours: \(all.map { String($0.name.prefix(40)) }.joined(separator: ", ")).", field: Field(key: "device", label: "Device name", secret: false)) }
         return try await signed(key, d, own: false)
     }
-    /// After an add whose answer was lost or unusable: removes the devices that weren't listed before and still have no
-    /// name (or AirVPN's default one), the signature of one just created and not yet renamed, never one the user made.
-    /// True when there was at least one and all are gone. Each is journaled before its removal, as a normal add is.
-    private func removeStray(_ key: String, before: Set<String>) async -> Bool {
+    /// After an add whose answer was lost or unusable: removes the device it may have made, but only when it can be told
+    /// from anything else: exactly one device is new, it has no name yet (or AirVPN's default one), and every other
+    /// device is exactly as it was. Anything less certain is left alone (a device made at the same moment by the user
+    /// or another app must never be deleted), and the user is told to look. True when that one device was removed.
+    private func removeStray(_ key: String, before: [DeviceInfo]) async -> Bool {
         guard let now = try? await allDevices(key) else { return false }
-        let strays = now.filter {
-            let name = $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
-            return !$0.id.isEmpty && !before.contains($0.id) && (name.isEmpty || name.caseInsensitiveCompare("New device") == .orderedSame)
+        let known = Dictionary(before.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let added = now.filter { known[$0.id] == nil }
+        guard added.count == 1, let d = added.first, !d.id.isEmpty, now.count == before.count + 1 else { return false }
+        let name = d.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard name.isEmpty || name.caseInsensitiveCompare("New device") == .orderedSame else { return false }
+        guard now.allSatisfy({ n in n.id == d.id || known[n.id].map { $0.name == n.name && $0.key == n.key } == true }) else { return false }
+        let item = AirCleanup.Record(key: key, id: d.id)
+        do { try await journal.add(item) } catch { return false }
+        if await remove(key, d.id) == .removed {
+            do { try await journal.remove(item) } catch { await journal.release(item) }
+            return true
         }
-        guard !strays.isEmpty else { return false }
-        var all = true
-        for d in strays {
-            let item = AirCleanup.Record(key: key, id: d.id)
-            do { try await journal.add(item) } catch { all = false; continue }
-            if await remove(key, d.id) == .removed {
-                do { try await journal.remove(item) } catch { await journal.release(item) }
-            } else { all = false }
-        }
-        return all
+        // Still owed: kept in the journal, and free to be retried.
+        await journal.release(item)
+        return false
     }
     private func readyDevice(_ key: String, _ id: String, _ name: String) async throws -> DeviceInfo {
         try await withThrowingTaskGroup(of: DeviceInfo.self) { group in

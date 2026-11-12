@@ -44,6 +44,7 @@ private actor FakeAir {
     }
     func returnWrongAddress() { wrongAddress = true }
     func names() -> [String] { devices.map(\.name) }
+    func addAnonymousDevice() { devices.append(("other", "New device", "10.0.0.9", "otherkey")) }
     func addUserDevice() { devices.append(("phone", "Phone", "10.0.0.3", "phonekey")) }
     func rekey() { if devices.count > 1 { devices[devices.count - 1].key = "changed" } }
     func reject(_ key: String) { refusedKey = key }
@@ -123,17 +124,43 @@ final class AirApiTests: XCTestCase {
         let fake = FakeAir(); var (p, journal, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
         p.api = { service, key, query in
             let reply = try await fake.call(service, key, query)
-            if query["action"] == "add" {
-                // AirVPN made the device, and a device of the user's appeared meanwhile; the answer never arrived.
-                await fake.addUserDevice()
-                throw URLError(.networkConnectionLost)
-            }
+            if query["action"] == "add" { throw URLError(.networkConnectionLost) }
             return reply
         }
         do { _ = try await p.signIn(["key": key]); XCTFail("accepted") } catch {
             XCTAssertFalse(error.localizedDescription.contains("remove it"), error.localizedDescription)
         }
-        let names = await fake.names(); XCTAssertEqual(names, ["Default", "Phone"])
+        let names = await fake.names(); XCTAssertEqual(names, ["Default"])
+        let left = try await journal.records(); XCTAssertTrue(left.isEmpty)
+    }
+
+    /// Two new unnamed devices after a lost reply: one is ours, one is not, and nothing says which. Neither is deleted.
+    func testLostAddWithAnotherNewDeviceDeletesNothing() async throws {
+        let fake = FakeAir(); var (p, journal, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        p.api = { service, key, query in
+            let reply = try await fake.call(service, key, query)
+            if query["action"] == "add" { await fake.addAnonymousDevice(); throw URLError(.networkConnectionLost) }
+            return reply
+        }
+        do { _ = try await p.signIn(["key": key]); XCTFail("accepted") } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Client Area"), error.localizedDescription)
+        }
+        let names = await fake.names(); XCTAssertEqual(names, ["Default", "New device", "New device"])
+        let left = try await journal.records(); XCTAssertTrue(left.isEmpty)
+    }
+
+    /// A device of the user's that appeared (or changed) during the add makes the picture ambiguous: nothing is deleted.
+    func testLostAddWithAUserDeviceAppearingDeletesNothing() async throws {
+        let fake = FakeAir(); var (p, journal, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        p.api = { service, key, query in
+            let reply = try await fake.call(service, key, query)
+            if query["action"] == "add" { await fake.addUserDevice(); throw URLError(.networkConnectionLost) }
+            return reply
+        }
+        do { _ = try await p.signIn(["key": key]); XCTFail("accepted") } catch {
+            XCTAssertTrue(error.localizedDescription.contains("Client Area"), error.localizedDescription)
+        }
+        let names = await fake.names(); XCTAssertEqual(names, ["Default", "New device", "Phone"])
         let left = try await journal.records(); XCTAssertTrue(left.isEmpty)
     }
 

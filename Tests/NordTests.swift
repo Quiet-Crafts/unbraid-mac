@@ -130,6 +130,10 @@ final class NordTests: XCTestCase {
             let tampered = original.replacingOccurrences(of: "remote 89.238.150.123 1231", with: "remote \(remote)")
             XCTAssertThrowsError(try Nord.profile(tampered, sv, user: "u", pass: "p"), remote)
         }
+        // The parser also reads a directive spelled with leading dashes; the check sees what the parser sees.
+        for extra in ["--remote 127.0.0.1 1194", "\tremote 192.168.1.1 1194", "remote \"10.0.0.1\" 1194"] {
+            XCTAssertThrowsError(try Nord.profile(original + "\n" + extra + "\n", sv, user: "u", pass: "p"), extra)
+        }
         // A profile with no remote at all is refused here too, not left to the parser.
         let none = original.split(separator: "\n").filter { !$0.hasPrefix("remote ") }.joined(separator: "\n")
         XCTAssertThrowsError(try Nord.profile(none, sv, user: "u", pass: "p"))

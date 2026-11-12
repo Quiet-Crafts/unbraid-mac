@@ -71,12 +71,12 @@ nonisolated struct Nord: Provider {
     /// The downloaded profile, parsed. The tunnel dials whatever `remote` lines it holds, so each must be a public
     /// address, as every other path requires of its endpoint; a host name, private or loopback address is refused.
     static func profile(_ text: String, _ sv: Server, user: String, pass: String) throws -> OvpnProfile {
-        let hosts = text.split(whereSeparator: \.isNewline).compactMap { line -> String? in
-            let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
-            return words.first == "remote" ? (words.count > 1 ? String(words[1]) : "") : nil
-        }
+        let parsed = try Manual.parseOvpn(withLegacyCiphers(text), name: sv.name, username: user, password: pass)
+        // Read from what the parser made of it, not from the text: the parser accepts spellings a text scan would miss.
+        let endpoint = try Manual.ovpnEndpoint("check", parsed)
+        let hosts = endpoint["servers"]?.list?.compactMap { $0["server"]?.str } ?? endpoint["server"]?.str.map { [$0] } ?? []
         guard !hosts.isEmpty, hosts.allSatisfy(Catalog.Entry.publicIPv4) else { throw Fail("\(sv.name) can't be reached right now") }
-        return try Manual.parseOvpn(withLegacyCiphers(text), name: sv.name, username: user, password: pass)
+        return parsed
     }
 
     /// Servers by Nord's name for them; tests replace it.
