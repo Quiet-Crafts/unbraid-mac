@@ -450,8 +450,10 @@ nonisolated enum StatsMath {
         let (from, to) = p.range(today: today)
         let stored = source.exits()
         var exits: [String: ExitInfo] = [:]
-        for id in Set(stored.keys).union(setup.routes.map(idOf)).union([DIRECT]) {
-            if let r = matchingRoute(id, setup: setup) { exits[id] = ExitInfo(id: id, code: r.code, name: r.name, via: r.source, tone: .route(r.hue)) }
+        // Each route's id is worked out once (it reads a whole OpenVPN config), not once per stored exit.
+        let byId = Dictionary(setup.routes.map { (idOf($0), $0) }, uniquingKeysWith: { first, _ in first })
+        for id in Set(stored.keys).union(byId.keys).union([DIRECT]) {
+            if let r = byId[id] { exits[id] = ExitInfo(id: id, code: r.code, name: r.name, via: r.source, tone: .route(r.hue)) }
             else if id == DIRECT { exits[id] = ExitInfo(id: id, code: "··", name: "Direct", via: "outside the VPN", tone: .direct) }
             // The home network as reached now, even before its next traffic rewrites the stored label.
             else if id == home, let h = capturedLabel(id, setup: setup, tsNames: [:]) {
