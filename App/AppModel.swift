@@ -36,6 +36,7 @@ final class AppModel {
 
     func closeProviderForm(_ id: String) {
         forms.close(id)
+        refusedSecrets.removeValue(forKey: id)?.forEach { clearClipboardIf($0) }
         formError[id] = nil
         formErrorURL[id] = nil
         challenges[id] = nil
@@ -63,6 +64,9 @@ final class AppModel {
     @ObservationIgnored private var releases: [String: Task<Bool, Never>] = [:]
     /// Accounts (their blobs) whose sign-out is under way.
     @ObservationIgnored private var signingOut: Set<String> = []
+    @ObservationIgnored private var signOutTasks: [String: Task<Void, Never>] = [:]
+    /// The secrets of a sign-in attempt that didn't succeed, per provider: taken off the clipboard when the form closes.
+    @ObservationIgnored private var refusedSecrets: [String: [String]] = [:]
 
     /// Signed in to at least one provider, or holding something else to route through (Home WireGuard included).
     var signedIn: Bool { setup.hasExit(signedIn: !accounts.isEmpty) }
@@ -149,12 +153,12 @@ final class AppModel {
                 let undone = "You signed out of everything while signing in to \(provider.name), so that sign-in was undone. Sign in again to use it."
                 showError(undone)
                 warn(undone)
-                if !(await release(provider, blob)) { unreleased([provider.name]) }
+                if !(await release(provider, blob)) { unreleased([provider.name], device: deviceName(provider.id, blob)) }
                 return
             }
             challenges[id] = nil
             guard forms.version(id) == formVersion else {
-                if !(await release(provider, blob)) { unreleased([provider.name]) }
+                if !(await release(provider, blob)) { unreleased([provider.name], device: deviceName(provider.id, blob)) }
                 return
             }
             store.afterSave("accounts") { [weak self] in
@@ -176,10 +180,20 @@ final class AppModel {
             refreshCountries(id)
         } catch let challenge as Challenge {
             if forms.version(id) == formVersion { challenges[id] = challenge }
+            refuseSecrets(provider, input)
         } catch {
             if forms.version(id) == formVersion { challenges[id] = nil }
+            refuseSecrets(provider, input)
             showError(signInFailure(error, provider.name), url: (error as? AuthError)?.url)
         }
+    }
+
+    /// A sign-in that didn't go through: its secrets come off the clipboard now, and again when the form closes, if the
+    /// user copies one back meanwhile.
+    private func refuseSecrets(_ provider: any Provider, _ input: [String: String]) {
+        let secrets = provider.fields.filter(\.secret).compactMap { input[$0.key] }
+        secrets.forEach { clearClipboardIf($0) }
+        refusedSecrets[provider.id] = secrets
     }
 
     /// Forgets one provider's account; routes and app choices stay (its routes wait for a sign-in). The last way out:
@@ -198,8 +212,8 @@ final class AppModel {
         let last = signing.isEmpty && !setup.hasExit(signedIn: accounts.keys.contains { $0 != provider })
         // Recorded before any wait, so a quit meanwhile still erases before the next start.
         if last { vpn.requestErase() }
-        Task {
-            defer { signingOut.remove(blob) }
+        signOutTasks[blob] = Task {
+            defer { signingOut.remove(blob); signOutTasks[blob] = nil }
             if last { await vpn.disconnect() }
             // Only the account this sign-out was for: one signed in again meanwhile stays.
             if accounts[provider] == blob { store.account(provider, nil) }
@@ -210,12 +224,18 @@ final class AppModel {
             }
             resetIfEmpty()
             if !(await released.value) {
-                unreleased([Providers.get(provider)?.name ?? provider])
+                unreleased([Providers.get(provider)?.name ?? provider], device: deviceName(provider, blob))
                 if provider == "airvpn" {
                     Task { try? await Task.sleep(for: .seconds(60)); retryAirCleanup() }
                 }
             }
         }
+    }
+
+    /// Quitting: a sign-out still waiting for the VPN to stop is let finish (the caller bounds the wait), so the account
+    /// isn't left signed in and its device slot held.
+    func settleSignOuts() async {
+        for task in Array(signOutTasks.values) { await task.value }
     }
 
     /// Signs out of everything and forgets every route: back to the first-run screen. The app's own credentials go
@@ -375,10 +395,11 @@ final class AppModel {
 
     /// Runs a setup change against the current setup, including after a question has been answered.
     private func guarded(_ change: @escaping (inout Setup) -> Void, targets: Set<RouteEdits.Target>,
-                         after: @escaping (Setup, Setup) -> Void = { _, _ in }, valid: @escaping () -> Bool = { true }) {
+                         after: @escaping (Setup, Setup) -> Void = { _, _ in }, valid: @escaping () -> Bool = { true },
+                         finished: @escaping (Bool) -> Void = { _ in }) {
         let ticket = routeEdits.begin(targets)
         nextLimitAsk()
-        checkLimit(change, ticket: ticket, after: after, accepted: nil, valid: valid)
+        checkLimit(change, ticket: ticket, after: after, accepted: nil, valid: valid, finished: finished)
     }
 
     private func checkLimit(_ change: @escaping (inout Setup) -> Void, ticket: RouteEdits.Ticket,
@@ -555,12 +576,15 @@ final class AppModel {
     }
 
     /// Points route `id` at a provider location, dropping any imported source it had.
-    func setLocation(_ id: String, _ loc: Location) {
+    /// `filter`, when given, is set in the same change (`.some(nil)` = as set for the provider in Settings): nothing
+    /// changes if the limit question is answered with Cancel. `completion` says whether the change was made.
+    func setLocation(_ id: String, _ loc: Location, filter: Bool?? = nil, completion: @escaping (Bool) -> Void = { _ in }) {
         guarded({ s in
             guard let i = s.routes.firstIndex(where: { $0.id == id }) else { return }
             let r = s.routes[i]
             s.routes[i] = Route(id: r.id, loc: loc, hue: r.hue, filter: !r.imported && r.loc.provider == loc.provider ? r.filter : nil)
-        }, targets: [.location(id)])
+            if let filter { s.routes[i].filter = filter }
+        }, targets: [.location(id)], finished: completion)
     }
 
     func renameRoute(_ id: String, _ name: String) {
@@ -586,18 +610,19 @@ final class AppModel {
     func setDefault(_ id: String) {
         guarded({ s in
             guard id == DIRECT || id == BLOCK || s.route(id) != nil else { return }
-            s.defaultRoute = id; s.apps = s.apps.filter { $0.value != id }
+            s.defaultRoute = id
         }, targets: [.defaultRoute])
     }
 
-    /// `routeId` nil or equal to the default: the app follows the default.
+    /// `routeId` nil: the app follows the default. Any route, the default included, is the app's own choice, which a
+    /// later change of the default never moves.
     func assign(_ app: String, _ routeId: String?) {
         #if DEBUG
         Log.info("assign", detail: "\(app) -> \(routeId ?? "default")") // traces unexpected changes while testing
         #endif
         guarded({ s in
             guard routeId == nil || routeId == DIRECT || routeId == BLOCK || s.route(routeId!) != nil else { return }
-            s.apps[app] = routeId == nil || routeId == s.defaultRoute ? nil : routeId
+            s.apps[app] = routeId
             s.requireKillSwitchForBlocks()
         }, targets: [.app(app)], after: { [weak self] old, _ in
             self?.apps.reassigned([app])
@@ -610,7 +635,7 @@ final class AppModel {
             let id = self.newId("r", taken: s.routes.map(\.id))
             let route = s.routes.first(where: { !$0.imported && $0.loc.ident == loc.ident })?.id ?? id
             if s.route(route) == nil { s.routes.append(Route(id: route, loc: loc, hue: s.nextHue)) }
-            s.apps[app] = route == s.defaultRoute ? nil : route
+            s.apps[app] = route
             s.requireKillSwitchForBlocks()
         }, targets: [.app(app)], after: { [weak self] _, _ in self?.apps.reassigned([app]) })
     }
@@ -635,22 +660,22 @@ final class AppModel {
     static let blockScopeAsked = "blockScopeAsked"
 
     /// Moves apps to a route (nil = follow the default) in one change that Edit > Undo takes back, and Redo repeats.
-    func move(_ apps: [String], to routeId: String?, undo: UndoManager?) {
+    func move(_ apps: [String], to routeId: String?, undo: UndoManager?, completion: @escaping (Bool) -> Void = { _ in }) {
         let keys = Array(Set(apps))
-        guard !keys.isEmpty else { return }
+        guard !keys.isEmpty else { completion(false); return }
         let change = Dictionary(uniqueKeysWithValues: keys.map { ($0, routeId) })
         let name = keys.count == 1 ? "Move App" : "Move \(keys.count) Apps"
-        apply(change) { [weak self, weak undo] before, after, keys in
+        apply(change, after: { [weak self, weak undo] before, after, keys in
             guard let self, let undo, before.apps != after.apps else { return }
             _ = MoveHistory(before: AppMove.assignments(keys, in: before), after: AppMove.assignments(keys, in: after),
                 undo: undo, name: name, submit: { [weak self] change, completed in
                     guard let self else { completed(false); return }; self.replay(change, completed: completed)
                 })
-        }
+        }, finished: completion)
     }
 
     /// Checks the remaining apps before saving them. The undo snapshot comes from the actual commit.
-    private func apply(_ change: AppMove.Assignments, after: @escaping (Setup, Setup, [String]) -> Void) {
+    private func apply(_ change: AppMove.Assignments, after: @escaping (Setup, Setup, [String]) -> Void, finished: @escaping (Bool) -> Void = { _ in }) {
         let ticket = routeEdits.begin(Set(change.keys.map { .app($0) }), move: true)
         nextLimitAsk()
         checkLimit({ [self] in AppMove.apply(routeEdits.remaining(change, in: ticket), to: &$0) }, ticket: ticket, after: { [weak self] old, new in
@@ -659,7 +684,7 @@ final class AppModel {
             self.apps.reassigned(keys)
             self.askBlockScope(old.apps.values.contains(BLOCK))
             after(old, new, keys)
-        }, accepted: nil, valid: { true })
+        }, accepted: nil, valid: { true }, finished: finished)
     }
 
     private func replay(_ change: AppMove.Assignments, completed: @escaping (Bool) -> Void) {
@@ -922,9 +947,15 @@ final class AppModel {
     /// session twice) is forgotten then, so its next sign-out releases it again.
     private func releaseKey(_ provider: String, _ blob: String) -> String { provider + ":" + Running.fingerprint(blob) }
 
-    private func unreleased(_ names: [String]) {
+    /// The name a provider gave this Mac's device, when it names them at random (Mullvad): the one to remove by hand.
+    private func deviceName(_ provider: String, _ blob: String) -> String? {
+        provider == "mullvad" ? (try? Mullvad.account(blob))?.deviceName.flatMap { $0.isEmpty ? nil : $0 } : nil
+    }
+
+    private func unreleased(_ names: [String], device: String? = nil) {
         let list = names.joined(separator: ", ")
-        warn("Couldn't release this Mac's device slot at \(list). Remove it in your \(list) account\(names.count > 1 ? "s" : "").")
+        let which = device.map { " The device is named \($0)." } ?? ""
+        warn("Couldn't release this Mac's device slot at \(list). Remove it in your \(list) account\(names.count > 1 ? "s" : "").\(which)")
     }
 
     private func retryAirCleanup() {

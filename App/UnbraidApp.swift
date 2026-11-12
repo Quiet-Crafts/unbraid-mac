@@ -9,7 +9,15 @@ import WidgetKit
 @main
 struct UnbraidApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var model = AppModel.shared
+    @State private var model: AppModel
+
+    init() {
+        // Before the saved setup is loaded: a second copy must not read it, let alone write it.
+        #if !DEBUG
+        SingleCopy.handOverIfRunning()
+        #endif
+        _model = State(wrappedValue: AppModel.shared)
+    }
 
     var body: some Scene {
         Window("unbraid", id: "main") {
@@ -30,6 +38,47 @@ struct UnbraidApp: App {
             SettingsView().environment(model)
         }
         .windowToolbarStyle(.unifiedCompact)
+    }
+}
+
+/// One unbraid at a time: two would overwrite each other's saved setup and accounts, count every statistic twice and
+/// both steer the one tunnel. A copy that finds another one with the better claim (see `InstallPlace.outranks`) asks it
+/// to show its window and quits.
+enum SingleCopy {
+    static func handOverIfRunning() {
+        guard let id = Bundle.main.bundleIdentifier else { return }
+        let me = NSRunningApplication.current
+        let mine = InstallPlace.Copy(path: Bundle.main.bundleURL.path, launched: me.launchDate, pid: me.processIdentifier)
+        let winner = NSRunningApplication.runningApplications(withBundleIdentifier: id).first { other in
+            !other.isTerminated && InstallPlace.outranks(InstallPlace.Copy(path: other.bundleURL?.path ?? "", launched: other.launchDate, pid: other.processIdentifier), mine)
+        }
+        guard let winner else { return }
+        // Opening the running copy by its own path reopens its window; no second copy starts.
+        if let url = winner.bundleURL {
+            let open = Process()
+            open.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            open.arguments = [url.path]
+            if (try? open.run()) == nil { winner.activate() }
+        } else {
+            winner.activate()
+        }
+        exit(0)
+    }
+
+    /// A copy that macOS can't install the VPN extension for (a disk image, Downloads): said plainly, then it quits.
+    @MainActor static func refuseOutsideApplications() -> Bool {
+        #if DEBUG
+        return false
+        #else
+        guard !InstallPlace.isInApplications(Bundle.main.bundleURL.path) else { return false }
+        let alert = NSAlert()
+        alert.messageText = "unbraid needs to be in your Applications folder"
+        alert.informativeText = "Move unbraid to the Applications folder, then open it from there."
+        alert.addButton(withTitle: "Quit")
+        NSApp.activate()
+        alert.runModal()
+        return true
+        #endif
     }
 }
 
@@ -60,7 +109,7 @@ struct UnbraidCommands: Commands {
 
     var body: some Commands {
         CommandGroup(after: .newItem) {
-            Button("Open unbraid") { openWindow(id: "main"); NSApp.activate() }.keyboardShortcut("o")
+            Button("Open unbraid") { NSApp.setActivationPolicy(.regular); openWindow(id: "main"); NSApp.activate() }.keyboardShortcut("o")
             // From any page of the window: the route picker belongs to the window, not to a page.
             Button("New Route…") { Presentation.shared.picker = PickerTarget(id: "") }.keyboardShortcut("n").disabled(goTo == nil)
             Button("Add App…") { actions?.addApp?() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(actions?.addApp == nil)
@@ -154,10 +203,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if PerfHost.active { PerfHost.start(); return }
         #endif
+        if SingleCopy.refuseOutsideApplications() { NSApp.terminate(nil); return }
         Connection.shared.tunnel.installExtension()
         Task { await Connection.shared.restorePause() }
         LoginItem.shared.watch()
-        WidgetActions.listen()
+        let widgetRequest = WidgetActions.listen()
         Stats.shared.follow()
         #if DEBUG
         DebugHooks.install()
@@ -170,7 +220,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Snapshot.startPublishing()
         // Show the window on a first launch (nothing set up yet) or when opened by hand rather than at login.
         let atLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
-        if !atLogin || !AppModel.shared.signedIn { Task { try? await Task.sleep(for: .milliseconds(200)); Self.openMain() } }
+        // Started to act on a widget, Control or Shortcut request: it runs without taking the screen, unless there is
+        // nothing set up yet or a question waits in the window.
+        let model = AppModel.shared
+        if (!atLogin && !widgetRequest) || !model.signedIn || model.disclosure { Task { try? await Task.sleep(for: .milliseconds(200)); Self.openMain() } }
         NotificationCenter.default.addObserver(forName: NSWindow.willCloseNotification, object: nil, queue: .main) { _ in
             // The Dock icon goes with the last regular window: unbraid lives on in the menu bar. A minimized window
             // still counts, since the Dock is how it comes back.
@@ -195,6 +248,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Snapshot.retire()
         WidgetActions.stop()
         Task {
+            // A sign-out still waiting for the VPN to stop finishes first, bounded.
+            _ = await bounded(10) { await AppModel.shared.settleSignOuts() }
             // A Tailscale speed test leaves the routed apps on its test node until put back: bounded, the rest is done at
             // the next launch.
             await SpeedTest.shared.settle(within: .seconds(4))
@@ -213,6 +268,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// unbraid:// only opens the window: a link in a web page must never change the protection state.
     func application(_ application: NSApplication, open urls: [URL]) {
         if urls.contains(where: { $0.scheme == "unbraid" }) { Self.openMain() }
+    }
+
+    /// Settings, with the Dock icon and the app menu a window needs: from the menu bar panel the app may be an accessory.
+    static func openSettingsWindow() {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate()
+        openSettings?()
     }
 
     /// Static, and not reached through NSApp.delegate: that is SwiftUI's own delegate, which only forwards to this one,
@@ -272,16 +334,19 @@ enum WidgetActions {
     private static var stopped = false
     private static var lastProfileSwitch: (action: String, at: ContinuousClock.Instant)?
 
-    static func listen() {
+    /// True when the launch itself took a request (the app was started to act on it).
+    @discardableResult
+    static func listen() -> Bool {
         CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), nil, { _, _, _, _, _ in
             Task { @MainActor in WidgetActions.handle() }
         }, WidgetAction.note as CFString, nil, .deliverImmediately)
-        handle()
+        return handle(atLaunch: true)
     }
 
-    /// Both ways in, one at a time: the launch and the notification can't both act on one request.
-    private static func handle() {
-        guard !stopped, let action = WidgetAction.take() else { return }
+    /// Both ways in, one at a time: the launch and the notification can't both act on one request. True if there was one.
+    @discardableResult
+    private static func handle(atLaunch: Bool = false) -> Bool {
+        guard !stopped, let action = WidgetAction.take() else { return false }
         waiting?.cancel()
         waiting = nil
         switch action {
@@ -299,16 +364,36 @@ enum WidgetActions {
                 AppModel.shared.pause(15)
             }
         default:
+            // The profile in use pauses a running tunnel and connects an off one. At launch a running tunnel is taken
+            // over a moment later: until then it reads as off, so the request waits a little for it.
             let model = AppModel.shared
-            switch WidgetAction.profileDecision(action, generation: model.profileGeneration, names: model.setup.profiles.map(\.name), current: model.setup.profile, connected: model.vpn.state.phase == .on,
-                lastSwitch: lastProfileSwitch.flatMap { ContinuousClock.now - $0.at < .seconds(2) ? $0.action : nil }) {
-            case .reject: break
-            case .pause: model.pause(15)
-            case .connect: model.connect()
-            case .switchTo(let name):
-                lastProfileSwitch = (action, .now)
-                model.switchProfile(name, connectIfOff: true, offeredGeneration: model.profileGeneration)
+            if atLaunch, WidgetAction.profileRequest(action)?.name == model.setup.profile, Connection.shared.state.phase == .off {
+                waiting = Task {
+                    let deadline = ContinuousClock.now + .seconds(6)
+                    while Connection.shared.state.phase == .off, ContinuousClock.now < deadline {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        if Task.isCancelled { return }
+                    }
+                    guard !Task.isCancelled, !stopped else { return }
+                    profileRequest(action)
+                }
+            } else {
+                profileRequest(action)
             }
+        }
+        return true
+    }
+
+    private static func profileRequest(_ action: String) {
+        let model = AppModel.shared
+        switch WidgetAction.profileDecision(action, generation: model.profileGeneration, names: model.setup.profiles.map(\.name), current: model.setup.profile, connected: model.vpn.state.phase == .on,
+            lastSwitch: lastProfileSwitch.flatMap { ContinuousClock.now - $0.at < .seconds(2) ? $0.action : nil }) {
+        case .reject: break
+        case .pause: model.pause(15)
+        case .connect: model.connect()
+        case .switchTo(let name):
+            lastProfileSwitch = (action, .now)
+            model.switchProfile(name, connectIfOff: true, offeredGeneration: model.profileGeneration)
         }
     }
 
