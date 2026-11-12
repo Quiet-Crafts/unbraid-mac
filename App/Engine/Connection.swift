@@ -458,9 +458,14 @@ final class Connection {
         // A pause that survives a failure or cancellation keeps its deadline (a teardown ends it). An expired one retries
         // after a wait that grows with each failure (`Retry`), without a busy loop.
         defer { if g == generation, store.pause != nil { armResume(retry: true, growing: true) } }
+        var reconcileOn = false
         do {
             try await exclusive {
-                guard g == generation, state.phase != .on else { return }
+                guard g == generation else { return }
+                if state.phase == .on {
+                    reconcileOn = true
+                    return
+                }
                 let paused = state
                 var applying = false
                 // A blocking pause this session applied, still standing: one never applied (at launch) or a pause that
@@ -548,6 +553,14 @@ final class Connection {
                             await teardown(error: "Could not restore pause: \(message(error, failure))", g)
                         }
                     } else { await teardown(error: failure, g) }
+                }
+            }
+            // Already On: this Connect cancelled any change being applied, so look again, apart from this call (a reload
+            // can take a while, and this call's own settle must not wait for it).
+            if reconcileOn, g == generation, state.phase == .on {
+                Task { [weak self] in
+                    guard let self, g == self.generation, self.state.phase == .on else { return }
+                    await self.reconcile()
                 }
             }
         } catch is CancellationError {} catch { state.error = message(error, "Could not connect") }
