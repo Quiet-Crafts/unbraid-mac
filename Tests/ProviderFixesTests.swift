@@ -36,7 +36,10 @@ final class ProviderFixesTests: XCTestCase {
     func testClipboardMatchesOnlyTheSecretStillPresent() {
         XCTAssertTrue(clipboardContains("secret", secret: "secret"))
         XCTAssertFalse(clipboardContains("another", secret: "secret"))
-        XCTAssertFalse(clipboardContains("secret ", secret: "secret"))
+        XCTAssertTrue(clipboardContains("secret\n", secret: "secret"))
+        XCTAssertTrue(clipboardContains("secret ", secret: "secret"))
+        XCTAssertTrue(clipboardContains("secret", secret: " secret\n"))
+        XCTAssertFalse(clipboardContains("secret more", secret: "secret"))
         XCTAssertFalse(clipboardContains(" ", secret: " "))
         XCTAssertFalse(clipboardContains(nil, secret: "secret"))
     }

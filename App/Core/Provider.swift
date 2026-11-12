@@ -26,9 +26,11 @@ nonisolated struct SignInForms {
     mutating func close(_ id: String) { versions[id, default: 0] += 1 }
 }
 
-/// Only clear the exact nonempty secret that was saved; a newer clipboard value belongs to its owner.
+/// Only clear the nonempty secret that was saved; a newer clipboard value belongs to its owner. A secret copied with a
+/// trailing newline or space still counts: whitespace around either side is ignored.
 nonisolated func clipboardContains(_ clipboard: String?, secret: String) -> Bool {
-    !secret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && clipboard == secret
+    let secret = secret.trimmingCharacters(in: .whitespacesAndNewlines)
+    return !secret.isEmpty && clipboard?.trimmingCharacters(in: .whitespacesAndNewlines) == secret
 }
 
 /// Provider DNS protection is replaced while unbraid's filter covers VPN routes.
