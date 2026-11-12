@@ -60,7 +60,7 @@ struct CopyDiagnosticsButton: View {
         .help("Shows what would be copied: versions, the connection's state and what last failed, for a message to support.")
         .sheet(isPresented: Binding(get: { report != nil }, set: { if !$0 { report = nil } })) {
             if let report {
-                SheetFrame(title: "Copy Diagnostics", subtitle: "Keys, addresses, host names and your setup's own values are hidden. It lists your app and macOS versions, your providers' names and what last failed.") {
+                SheetFrame(title: "Copy Diagnostics", subtitle: "Keys, addresses, host names and your setup's own values are hidden where unbraid recognises them. Read it before you share it. It lists your app and macOS versions, your providers' names and what last failed.") {
                     ScrollView {
                         Text(report).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                             .frame(maxWidth: .infinity, alignment: .leading).padding(Layout.gutter)
