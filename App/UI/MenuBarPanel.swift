@@ -179,7 +179,7 @@ private struct FrontRoute: View {
 
     /// Follow Default first, then routes in sidebar order; the app's own route is always among them.
     private func quick(_ s: Setup, _ current: String?, _ n: Int) -> [String?] {
-        var ids: [String?] = Array(([nil] + s.sidebarRoutes.filter { $0 != s.defaultRoute && $0 != BLOCK }.map { $0 }).prefix(n))
+        var ids: [String?] = Array(([nil] + s.sidebarRoutes.filter { $0 != BLOCK }.map { $0 }).prefix(n))
         if let current, !ids.contains(current) { ids[ids.count - 1] = current }
         return ids
     }
@@ -226,7 +226,7 @@ struct RouteMenuItems: View {
         Picker("Route", selection: Binding(get: { current ?? "" }, set: { v in if v != (current ?? "") { model.move([app], to: v.isEmpty ? nil : v, undo: nil) } })) {
             Text(s.defaultLabel).tag("")
             Divider()
-            ForEach(s.sidebarRoutes.filter { $0 != s.defaultRoute }, id: \.self) { Text(s.label($0)).tag($0) }
+            ForEach(s.sidebarRoutes, id: \.self) { Text(s.label($0)).tag($0) }
         }
         .pickerStyle(.inline).labelsHidden()
         Divider()

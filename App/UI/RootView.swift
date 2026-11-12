@@ -155,7 +155,10 @@ struct RootView: View {
         } message: {
             let n = presentation.removing.map(model.apps.count(on:)) ?? 0
             let profiles = model.setup.saved.filter { p in p.defaultRoute == presentation.removing || p.apps.values.contains(presentation.removing ?? "") }.map(\.name)
-            let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(model.setup.label(model.setup.defaultRoute)))."
+            // Removing the default hands the default to the first route left, or to Direct.
+            let s = model.setup
+            let after = presentation.removing == s.defaultRoute ? s.label(s.routes.first { $0.id != presentation.removing }?.id ?? DIRECT) : s.label(s.defaultRoute)
+            let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(after))."
             Text(apps + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
         }
         .sheet(item: $presentation.picker, onDismiss: {

@@ -233,7 +233,7 @@ struct AppsTable: NSViewRepresentable {
             }
             choice(s.defaultLabel, "")
             menu.addItem(.separator())
-            for id in s.sidebarRoutes where id != s.defaultRoute { choice(s.label(id), id) }
+            for id in s.sidebarRoutes { choice(s.label(id), id) }
             if current == DIRECT, s.prefs.effectiveFilter.server != nil {
                 menu.addItem(.separator())
                 menu.addItem(filterItem(app))
@@ -549,7 +549,7 @@ private final class RouteCell: DrawnCell {
         if new.inherited { selected.append(attributed(" · Default", font, selectionInk.withAlphaComponent(0.75))) }
         selectedText = selected
         wordsWidth = textWidth(words) + 1
-        toolTip = current == nil ? "Follows the default route" : "Its own route"
+        toolTip = current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
         setAccessibilityElement(true)
         setAccessibilityRole(.popUpButton)
         setAccessibilityLabel("Route for \(AppModel.shared.appName(app))")

@@ -384,10 +384,10 @@ private struct ServerRow: View {
         if n == 0 { return "It isn't used by any route." }
         let s = model.setup
         let current = s.route(s.defaultRoute)
-        guard current?.own == server.id else { return "The routes using it are removed too; their apps follow the default route." }
+        guard current?.own == server.id else { return "The routes using it are removed too; apps set to them follow the default route." }
         let next = s.routes.first { $0.own != server.id }
         return "\(current?.name ?? "This route") is your default route. Everything that follows the default will "
-            + (next.map { "use \($0.name)." } ?? "go Direct.") + " The routes using \(server.name) are removed too."
+            + (next.map { "use \($0.name)." } ?? "go Direct.") + " The routes using \(server.name) are removed too, and apps set to them follow the default."
     }
 
     var body: some View {
