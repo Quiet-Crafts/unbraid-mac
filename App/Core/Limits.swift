@@ -89,7 +89,7 @@ nonisolated enum AppMove {
         for (app, route) in change {
             // Undo may outlive a removed route. Resolve the default at commit, not at submission.
             let gone = route.map { $0 != DIRECT && $0 != BLOCK && setup.route($0) == nil } ?? false
-            setup.apps[app] = route == setup.defaultRoute || gone ? nil : route
+            setup.apps[app] = gone ? nil : route
         }
         setup.requireKillSwitchForBlocks()
     }

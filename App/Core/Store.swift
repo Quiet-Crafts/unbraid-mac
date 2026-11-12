@@ -221,15 +221,19 @@ final class Store {
         Self.persist(forgetting, defaults)
     }
 
-    // MARK: Server catalogues (public data, plain files)
+    // MARK: Server catalogues (public data, sealed so that nothing else can plant one)
 
     nonisolated private struct CountryCache: Codable {
         var countries: [Country]
         var published: Int64?
     }
 
+    /// A same-user process can write any plain file here, and a location is saved by its country id: a list it planted
+    /// could pair a name with another country. Sealed like the rest, an unsealed (older, plain) file is never read.
+    nonisolated private static func countryFile(_ provider: String) -> String { "countries-\(provider).bin" }
+
     private func countryCache(_ provider: String) -> CountryCache? {
-        guard let data = try? Data(contentsOf: dir.appending(path: "countries-\(provider).json")) else { return nil }
+        guard let data = vault.read(Self.countryFile(provider)) else { return nil }
         if let cache = try? JSONDecoder().decode(CountryCache.self, from: data) { return cache }
         return (try? JSONDecoder().decode([Country].self, from: data)).map { CountryCache(countries: $0, published: nil) }
     }
@@ -237,17 +241,19 @@ final class Store {
     func countries(_ provider: String) -> [Country] { countryCache(provider)?.countries ?? [] }
     func catalogDate(_ provider: String) -> Int64? { countryCache(provider)?.published }
 
-    /// True when the provider's cached catalogue is under a day old.
+    /// True when the provider's cached catalogue is under a day old (and can be read: with the keychain locked it can't).
     func countriesFresh(_ provider: String) -> Bool {
-        let date = try? dir.appending(path: "countries-\(provider).json").resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        guard vault.keyAvailable else { return false }
+        let date = try? dir.appending(path: Self.countryFile(provider)).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
         // A date ahead of the clock (it was wrong when the file was written) says nothing about its age: not fresh.
         return date.map { let age = -$0.timeIntervalSinceNow; return age >= 0 && age < 86_400 } ?? false
     }
 
     func countries(_ provider: String, _ list: [Country], published: Int64? = nil) {
         let cache = CountryCache(countries: list, published: published)
-        FileWork.shared.submit { [dir] in
-            try? JSONEncoder().encode(cache).write(to: dir.appending(path: "countries-\(provider).json"), options: .atomic)
+        FileWork.shared.submit { [dir, vault] in
+            guard let data = try? JSONEncoder().encode(cache), vault.write(Self.countryFile(provider), data) else { return }
+            try? FileManager.default.removeItem(at: dir.appending(path: "countries-\(provider).json")) // the plain file of older builds
         }
     }
 

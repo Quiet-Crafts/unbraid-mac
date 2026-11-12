@@ -190,7 +190,8 @@ final class StoreTests: XCTestCase {
     func testCountryCacheReadsOldFormatAndPersistsPublication() async throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let old = Data("[]".utf8)
-        try old.write(to: dir.appending(path: "countries-proton.json"))
+        let sealedWithTheStoresKey = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        XCTAssertTrue(sealedWithTheStoresKey.write("countries-proton.bin", old))
         let s = store()
         XCTAssertEqual(s.countries("proton"), [])
         XCTAssertNil(s.catalogDate("proton"))
@@ -199,6 +200,21 @@ final class StoreTests: XCTestCase {
         let reopened = store()
         XCTAssertEqual(reopened.countries("proton"), [])
         XCTAssertEqual(reopened.catalogDate("proton"), 1_785_990_858)
+    }
+
+    /// A plain file another process planted is never read as the list; the list is fetched again instead.
+    func testAPlantedCountryListIsNotOffered() async throws {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let planted = Data(#"{"countries":[{"id":"1","name":"Netherlands","code":"NL","cities":[],"serverCount":1}],"published":1}"#.utf8)
+        try planted.write(to: dir.appending(path: "countries-nord.json"))
+        try planted.write(to: dir.appending(path: "countries-nord.bin"))
+        let s = store()
+        XCTAssertEqual(s.countries("nord"), [])
+        XCTAssertNil(s.catalogDate("nord"))
+        s.countries("nord", [])
+        await settle()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appending(path: "countries-nord.json").path))
+        XCTAssertEqual(store().countries("nord"), [])
     }
 
     func testPendingProfileSwitchSurvivesSealedStoreRelaunch() async {
@@ -680,6 +696,12 @@ final class StoreTests: XCTestCase {
             + #""prefs":{"threatProtection":true,"customDns":[],"lan":true,"stats":false,"killSwitch":false,"alwaysOn":false},"servers":[]}"#
         let old = try JSONDecoder().decode(Setup.self, from: Data(first.utf8))
         XCTAssertEqual(old.routes.map(\.id), ["nl", "us", "w"])
+        // A route whose server source can't be read is left out on its own, not turned into "Nord, Fastest"; the apps
+        // that were on it are blocked until the user moves them, and the other routes are kept.
+        let brokenWg = #"{"routes":[{"id":"nl"},{"id":"w","wg":{"name":"x"}}],"defaultRoute":"nl","apps":{"com.a":"w","com.b":"nl"}}"#
+        let partial = try JSONDecoder().decode(Setup.self, from: Data(brokenWg.utf8))
+        XCTAssertEqual(partial.routes.map(\.id), ["nl"])
+        XCTAssertEqual(partial.apps, ["com.a": BLOCK, "com.b": "nl"])
         XCTAssertEqual(old.routes[1].loc.pinned?.name, "us1")
         XCTAssertEqual(old.routes[2].wg?.allowedIps, ["0.0.0.0/0"])
         XCTAssertEqual(old.apps, ["com.a": "us", "com.b": "w"])
@@ -713,7 +735,7 @@ final class StoreTests: XCTestCase {
         let s = store()
         s.countries("nord", [])
         await settle()
-        let file = dir.appending(path: "countries-nord.json").path
+        let file = dir.appending(path: "countries-nord.bin").path
         XCTAssertTrue(s.countriesFresh("nord"))
         for (age, fresh) in [(-3_600.0, false), (-60.0, false), (90_000.0, false), (3_600.0, true)] {
             try FileManager.default.setAttributes([.modificationDate: Date.now.addingTimeInterval(-age)], ofItemAtPath: file)

@@ -415,6 +415,20 @@ extension KeyedDecodingContainer {
     }
 }
 
+extension KeyedDecodingContainer {
+    /// A value that must read when it is there: absent or null is nil, anything else that can't be read throws.
+    nonisolated func source<T: Decodable>(_ key: Key) throws -> T? {
+        guard contains(key), !(try decodeNil(forKey: key)) else { return nil }
+        return try decode(T.self, forKey: key)
+    }
+}
+
+/// One element of a list read on its own: nil when it can't be read, so the others still are.
+nonisolated struct Unreadable<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws { value = try? T(from: decoder) }
+}
+
 /// How what unbraid saves is read (see `KeyedDecodingContainer.saved`).
 nonisolated enum SavedDecoding {
     @TaskLocal static var strict = false
@@ -424,7 +438,10 @@ nonisolated extension Setup {
     nonisolated init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         let s = Setup()
-        routes = try c.saved(.routes, s.routes); defaultRoute = try c.saved(.defaultRoute, s.defaultRoute); apps = try c.saved(.apps, s.apps)
+        // Read leniently, a route that can't be read is left out on its own, not the whole list (see `Route.init`).
+        if SavedDecoding.strict || !c.contains(.routes) { routes = try c.saved(.routes, s.routes) }
+        else { routes = (try? c.decode([Unreadable<Route>].self, forKey: .routes))?.compactMap(\.value) ?? s.routes }
+        defaultRoute = try c.saved(.defaultRoute, s.defaultRoute); apps = try c.saved(.apps, s.apps)
         profiles = try c.saved(.profiles, []); profile = try c.saved(.profile, nil); pendingSwitch = try c.saved(.pendingSwitch, nil)
         profileSalt = try c.saved(.profileSalt, nil)
         favorites = try c.saved(.favorites, s.favorites); home = try c.saved(.home, s.home); prefs = try c.saved(.prefs, s.prefs); servers = try c.saved(.servers, s.servers); opts = try c.saved(.opts, [:])
@@ -439,6 +456,10 @@ nonisolated extension Setup {
         if apps.values.contains(BLOCK), (try? c.decode(Saved.self, forKey: .prefs))?.killSwitchHome == nil {
             prefs.killLevel = .home
         }
+        // An app on a route that is gone (one left out above, or lost in a downgrade) is blocked, not sent wherever the
+        // default goes: that is visible in the list, and the user moves it to a route they choose.
+        let known = Set(routes.map(\.id))
+        for (app, route) in apps where route != DIRECT && route != BLOCK && !known.contains(route) { apps[app] = BLOCK }
         repairProfiles()
         requireKillSwitchForBlocks()
     }
@@ -515,7 +536,9 @@ nonisolated extension Route {
     nonisolated init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         id = try c.decode(String.self, forKey: .id)
-        loc = try c.saved(.loc, Location()); wg = try c.saved(.wg, nil); ovpn = try c.saved(.ovpn, nil); ss = try c.saved(.ss, nil); tsExit = try c.saved(.tsExit, nil)
+        // A server source that is there but can't be read fails the route: without it the route would silently turn into
+        // the provider route that `loc` defaults to. The setup then leaves this route out (see `Unreadable`).
+        loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); tsExit = try c.source(.tsExit)
         tsName = try c.saved(.tsName, nil); hue = try c.saved(.hue, 0); filter = try c.saved(.filter, nil); own = try c.saved(.own, nil)
     }
 }
@@ -579,7 +602,7 @@ nonisolated extension Setup {
         let valid = Set(routes.map(\.id) + [DIRECT, BLOCK])
         for index in profiles.indices {
             if !valid.contains(profiles[index].defaultRoute) { profiles[index].defaultRoute = routes.first?.id ?? DIRECT }
-            profiles[index].apps = profiles[index].apps.filter { valid.contains($0.value) && $0.value != profiles[index].defaultRoute }
+            profiles[index].apps = profiles[index].apps.filter { valid.contains($0.value) }
         }
     }
 
@@ -617,7 +640,7 @@ nonisolated extension Setup {
         profiles = saved
         profile = same?.name
         defaultRoute = valid.contains(ran.defaultRoute) ? ran.defaultRoute : (routes.first?.id ?? DIRECT)
-        apps = ran.apps.filter { valid.contains($0.value) && $0.value != defaultRoute }
+        apps = ran.apps.filter { valid.contains($0.value) }
         prefs.killSwitch = ran.prefs.killSwitch
         prefs.killSwitchHome = ran.prefs.killSwitchHome
         requireKillSwitchForBlocks()

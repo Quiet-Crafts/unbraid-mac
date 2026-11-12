@@ -190,6 +190,11 @@ nonisolated enum Compiler {
             self.s = s; self.i = i; self.active = active; self.deny = deny
             // Block is an app's choice, not a default: everything else would go Direct, or to tunnels that don't exist.
             guard s.defaultRoute != BLOCK else { throw Fail("Block can't be the default route. Make Direct or a VPN route the default.") }
+            // A default that names no route (a damaged or older saved setup) would send everything Direct when nothing else
+            // is in use, and name a tunnel that doesn't exist otherwise: refused either way, never silently Direct.
+            guard deny || s.defaultRoute == DIRECT || s.route(s.defaultRoute) != nil else {
+                throw Fail("The default route is no longer one of your routes. Choose a default route in unbraid, then connect again.")
+            }
             guard Set(active.compactMap(\.tsExit)).count <= 1 else {
                 throw Fail("Tailscale allows one exit node at a time. Use the same node for every Tailscale route.")
             }

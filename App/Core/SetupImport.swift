@@ -31,8 +31,8 @@ nonisolated extension Setup {
             apps = apps.filter { !dead.contains($0.value) }
         }
         let app = target.hasPrefix("app:") ? String(target.dropFirst(4)) : nil
-        if !usable, app == nil { defaultRoute = id; apps = apps.filter { $0.value != id } }
-        if let app { apps[app] = id == defaultRoute ? nil : id }
+        if !usable, app == nil { defaultRoute = id }
+        if let app { apps[app] = id }
         return id
     }
 }

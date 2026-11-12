@@ -110,11 +110,11 @@ final class SetupImportTests: XCTestCase {
         let id = s.addImported("app:com.a", id: "r1", signedIn: []) { $0.wg = self.wg }
         XCTAssertEqual(s.defaultRoute, DIRECT)
         XCTAssertEqual(s.apps, ["com.a": id, "com.x": DIRECT])
-        // On a setup whose default is still a dead placeholder, the import takes its place and the app just follows it.
+        // On a setup whose default is still a dead placeholder, the import takes its place and the app is put on it.
         var fresh = Setup()
         fresh.addImported("app:com.a", id: "r1", signedIn: []) { $0.wg = self.wg }
         XCTAssertEqual(fresh.defaultRoute, "r1")
-        XCTAssertNil(fresh.apps["com.a"])
+        XCTAssertEqual(fresh.apps["com.a"], "r1")
     }
 
     func testReplacingARouteSourceKeepsItsIdAndHue() {
@@ -125,11 +125,11 @@ final class SetupImportTests: XCTestCase {
         XCTAssertNil(s.route("x")?.ss)
         XCTAssertEqual(s.defaultRoute, "w")
         XCTAssertEqual(s.apps, ["com.a": "x"])
-        // A dead placeholder given a source on an empty setup becomes the default; its apps then follow the default.
+        // A dead placeholder given a source on an empty setup becomes the default; its apps keep it.
         var dead = Setup(routes: [provider("main")], defaultRoute: DIRECT, apps: ["com.b": "main"])
         dead.addImported("main", id: "unused", signedIn: []) { $0.wg = self.wg }
         XCTAssertEqual(dead.defaultRoute, "main")
-        XCTAssertEqual(dead.apps, [:])
+        XCTAssertEqual(dead.apps, ["com.b": "main"])
     }
 
     func testNewRoutesGetUnusedHues() {

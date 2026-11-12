@@ -360,4 +360,26 @@ final class ProfilesTests: XCTestCase {
         XCTAssertNil(WidgetAction.profileSlot(2, names: snapshot.profiles, generation: snapshot.profileGeneration))
     }
 
+    func testAnAppsOwnRouteSticksWhenItBecomesTheDefault() {
+        var s = Setup(routes: [Route(id: "r1"), Route(id: "r2")], defaultRoute: "r1", apps: ["pinned": "r2", "onDefault": "r1"])
+        // Moving to the default route is the app's own choice, not "follow the default".
+        AppMove.apply(["a": "r1", "b": nil, "c": "r2"], to: &s)
+        XCTAssertEqual(s.apps["a"], "r1")
+        XCTAssertNil(s.apps["b"])
+        // Making r2 the default doesn't take the choice away from the apps on it, nor move the ones on r1.
+        s.defaultRoute = "r2"
+        XCTAssertEqual(s.apps["pinned"], "r2")
+        XCTAssertEqual(s.apps["onDefault"], "r1")
+        XCTAssertEqual(s.routeOf("pinned"), "r2")
+        XCTAssertEqual(s.routeOf("follower"), "r2")
+        // Tidying and importing keep it too.
+        s.profiles = [Profile(name: "Trip", defaultRoute: "r2", apps: ["x": "r2", "y": "gone"])]
+        s.tidyProfiles()
+        XCTAssertEqual(s.profiles[0].apps, ["x": "r2"])
+        _ = s.addImported("app:tool", id: "r3", signedIn: ["nord"]) { $0.tsExit = "100.64.0.1" }
+        XCTAssertEqual(s.apps["tool"], "r3")
+        s.defaultRoute = "r3"
+        XCTAssertEqual(s.apps["tool"], "r3")
+    }
+
 }

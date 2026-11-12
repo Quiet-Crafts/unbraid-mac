@@ -66,8 +66,7 @@ final class LimitsTests: XCTestCase {
         XCTAssertEqual(proposed.apps, ["browser": "a", "mail": "b"])
         old.defaultRoute = "b"
         let committed = Store.edited(old) { AppMove.apply(change, to: &$0) }
-        XCTAssertEqual(committed.apps, ["browser": "a"])
-        XCTAssertNil(committed.apps["mail"])
+        XCTAssertEqual(committed.apps, ["browser": "a", "mail": "b"])
     }
 
     func testBatchRemovedRoutesAndBlockHardening() {

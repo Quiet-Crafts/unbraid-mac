@@ -1810,7 +1810,7 @@ final class CompilerTests: XCTestCase {
         var s = example
         s.home = Home()
         AppMove.apply(["xcode": DIRECT, "sim": "us"], to: &s)
-        AppMove.apply(["sim": "nl"], to: &s)
+        AppMove.apply(["sim": nil], to: &s)
         XCTAssertNil(s.apps["sim"])
         XCTAssertEqual(s.routeOf("sim"), "nl")
         XCTAssertEqual(Compiler.nestedDefaults(s, apps), ["sim"])
@@ -1830,7 +1830,7 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(Compiler.nestedDefaults(s, apps), [])
         XCTAssertEqual(action(try XCTUnwrap(rules(try compile(s, apps: apps)).first { paths($0) != nil })), "reject")
         // Outer on the default too: no rule needed.
-        AppMove.apply(["xcode": "nl"], to: &s)
+        AppMove.apply(["xcode": nil], to: &s)
         XCTAssertEqual(Compiler.nestedDefaults(s, apps), [])
         // A change that failed twice: with a VPN default, Simulator is refused with the VPN apps, not let out with Xcode.
         AppMove.apply(["xcode": DIRECT], to: &s)
@@ -1905,7 +1905,7 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(leaves(try compile(s, apps: routing(s, n, known)), process), "r-nl")
         AppMove.apply(["test.outer": BLOCK], to: &s)
         XCTAssertEqual(leaves(try compile(s, apps: routing(s, n, known)), process), "reject")
-        AppMove.apply(["test.outer": "nl"], to: &s)
+        AppMove.apply(["test.outer": nil], to: &s)
         XCTAssertEqual(routing(s, n, known), [:])
     }
 
@@ -1927,7 +1927,7 @@ final class CompilerTests: XCTestCase {
         var n = NestedApps()
         rescan(&n, s, root, ls: ls)
         XCTAssertEqual(n.candidates(s), [])
-        AppMove.apply(["test.tool": "nl"], to: &s)
+        AppMove.apply(["test.tool": nil], to: &s)
         XCTAssertNil(s.apps["test.tool"])
         n.returned(["test.tool"], s) { _ in [] }
         let process = copy + "/Contents/MacOS/Tool"
@@ -1966,7 +1966,7 @@ final class CompilerTests: XCTestCase {
         AppMove.apply(["test.outer": DIRECT, "test.sim": "us"], to: &s)
         var n = NestedApps()
         rescan(&n, s, root, ls: ls)
-        AppMove.apply(["test.sim": "nl"], to: &s)
+        AppMove.apply(["test.sim": nil], to: &s)
         n.returned(["test.sim"], s) { _ in [] }
         XCTAssertEqual(n.kept, ["test.sim"])
         let process = sim + "/Contents/MacOS/Sim"
@@ -2049,7 +2049,7 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(leaves(try compile(s, apps: routing(s, n, known)), inner + "/Contents/MacOS/Inner"), "r-us")
         XCTAssertNil(leaves(try compile(s, apps: routing(s, n, known)), root + "/Plain.app/Contents/MacOS/Plain"))
         // Routed on its own and put back: no different from never routed.
-        AppMove.apply(["test.inner": "nl"], to: &s)
+        AppMove.apply(["test.inner": nil], to: &s)
         n.returned(["test.inner"], s) { _ in [] }
         rescan(&n, s, root)
         XCTAssertEqual(n.kept, [])
@@ -2565,6 +2565,32 @@ extension CompilerTests {
         let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(config.utf8)) as? [String: Any])
         let rules = try XCTUnwrap((json["dns"] as? [String: Any])?["rules"] as? [[String: Any]])
         XCTAssertTrue(rules.contains { ($0["query_type"] as? [String]) == ["HTTPS", "SVCB"] && $0["rcode"] as? String == "NOERROR" })
+    }
+
+    func testAnAppChosenOnTheDefaultRouteCompilesLikeOneFollowingIt() throws {
+        var following = example
+        following.apps = [:]
+        var chosen = following
+        chosen.apps = ["com.x": following.defaultRoute]
+        let apps = ["com.x": [Compiler.pattern(forPath: "/Applications/X.app")]]
+        XCTAssertEqual(try raw(chosen, apps: apps), try raw(following, apps: apps))
+    }
+
+    func testADefaultRouteThatNamesNoRouteIsRefusedNotSentDirect() throws {
+        // A saved setup whose routes list couldn't be read keeps its default and apps, but the routes fall back to the built-in one.
+        let json = #"{"routes":[{"hue":1}],"defaultRoute":"r1","apps":{"com.a":"r2","com.b":"block"}}"#
+        let damaged = try JSONDecoder().decode(Setup.self, from: Data(json.utf8))
+        XCTAssertNil(damaged.route(damaged.defaultRoute))
+        XCTAssertThrowsError(try raw(damaged))
+        // With another route in use the tunnel it names doesn't exist either: refused the same way.
+        var other = example
+        other.defaultRoute = "gone"
+        XCTAssertThrowsError(try raw(other))
+        // Direct stays valid, and so does a default that is one of the routes.
+        var direct = example
+        direct.defaultRoute = DIRECT
+        XCTAssertNoThrow(try raw(direct))
+        XCTAssertNoThrow(try raw(example))
     }
 
     func testCompiledConfigsMatchTheGoldenFixtures() throws {
