@@ -42,7 +42,11 @@ check_module_layout
 # ZERO_AR_DATE: libtool would stamp the archive's symbol table with the time of the build.
 export GOTOOLCHAIN=go1.26.10 GOFLAGS=-mod=readonly GOWORK=off GOSUMDB=sum.golang.org \
   GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GONOSUMCHECK= GOPRIVATE= GOINSECURE= GONOPROXY= ZERO_AR_DATE=1
-export PATH="$(go env GOPATH)/bin:$PATH"
+# The pinned gomobile and gobind are installed into a folder of this build's own, first on PATH: whatever GOBIN or an older
+# copy in GOPATH/bin says, neither can stand in for them (gomobile finds gobind by PATH).
+export GOBIN="$OVPN_ROOT/bin"
+mkdir -m 700 "$GOBIN"
+export PATH="$GOBIN:$PATH"
 # sing-openvpn at the version sing-box pins (go.sum checks the download), with unbraid's patches, built in its place.
 go mod download github.com/sagernet/sing-openvpn
 go mod verify
@@ -51,6 +55,8 @@ chmod -R u+w "$OVPN"
 (cd "$OVPN" && git init -q && git apply "$ROOT"/tools/sing-openvpn-*.patch)
 go mod edit -replace github.com/sagernet/sing-openvpn="$OVPN"
 go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13 github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+[ "$(command -v gomobile)" = "$GOBIN/gomobile" ] && [ "$(command -v gobind)" = "$GOBIN/gobind" ] \
+  || { echo "gomobile or gobind is not the one just installed"; exit 1; }
 rm -rf Libbox.xcframework
 gomobile bind -o Libbox.xcframework -target macos -macosversion=26.0 -libname=box -trimpath -buildvcs=false \
   -ldflags "-X github.com/sagernet/sing-box/constant.Version=1.14.4 -X runtime.godebugDefault=multipathtcp=0,tlssha1=1 -checklinkname=0 -s -w -buildid=" \

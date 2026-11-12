@@ -121,8 +121,9 @@ Go ${GO#go}, gomobile $GOMOBILE and XcodeGen. The licences of everything here ar
    another Go can't download this one from there. The Go standard library and runtime in the engine are that release's;
    their source is part of the Go download.
      export GOTOOLCHAIN=$GO GOPROXY=file://\$PWD/goproxy GOFLAGS=-mod=mod GOWORK=off ZERO_AR_DATE=1
+     export GOBIN=\$PWD/gobin; mkdir -p "\$GOBIN"
      (cd gomobile-$GOMOBILE && go install ./cmd/gomobile ./cmd/gobind)
-     export PATH=\$(go env GOPATH)/bin:\$PATH
+     export PATH=\$GOBIN:\$PATH        # first, so no older gomobile or gobind elsewhere is used
      cd sing-box
 $(sed 's/^/     /' <<< "$BIND_CMD")
    unbraid/tools/build-libbox.sh is the same build from a fresh clone; it also builds the OpenVPN module from a fixed
