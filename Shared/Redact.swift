@@ -18,7 +18,7 @@ nonisolated enum Redact {
         var scan = Scan(Array(s))
         let logins = scan.logins()
         let found = Scan.merged(scan.assignments(logins: logins) + logins.map(\.all))
-        let spans = Scan.merged(found + scan.spaced(around: found) + scan.blobs())
+        let spans = Scan.merged(found + scan.spaced(around: found) + scan.blobs() + scan.invalidPorts())
         guard !spans.isEmpty else { return s }
         var out: [UInt8] = []
         out.reserveCapacity(s.utf8.count)
@@ -49,6 +49,8 @@ nonisolated enum Redact {
 
     private static let authorization = Array("authorization")
     private static let key = Array("key")
+    /// Names whose unquoted value, written after `:` or `=`, may hold blanks: it goes to the end of the line.
+    private static let wholeLine: [[Character]] = ["password", "passwd", "secret", "passphrase"].map { Array($0) }
 
     /// One character as the text may quote it: itself, or escaped by a run of backslashes (at any depth of quoting).
     private enum Read: Equatable {
@@ -221,7 +223,8 @@ nonisolated enum Redact {
                 // Never less than the earlier pattern took. It didn't see a name inside a login it had hidden first, and
                 // saw logins as hidden: their characters never ended its value.
                 if !earlierLogin, let b = earlierValueStart(i) { e = max(e, earlierEnd(b, earlier)) }
-                out.append(i..<e)
+                // An Authorization header keeps its name: "Authorization: [hidden]".
+                out.append((matches(Redact.authorization, at: i).flatMap { separator(after: $0) } ?? i)..<e)
                 if e >= n { break }
             }
             return out
@@ -237,14 +240,17 @@ nonisolated enum Redact {
             }
             guard let (first, _) = read(i), let c = letter(first), c == "p" || c == "a" || c == "c" || c == "s" || c == "t" || c == "k" || c == "u" else { return nil }
             for name in Redact.names where name[0] == c {
-                if let j = matches(name, at: i), let v = separator(after: j) { return valueEnd(v) }
+                if let j = matches(name, at: i), let v = separator(after: j) {
+                    let (end, quoted) = valueEnd(v)
+                    return Redact.wholeLine.contains(name) && !quoted ? (lineEnd(v), false) : (end, quoted)
+                }
             }
             for (name, whole) in Redact.moreNames where name[0] == c {
                 guard let j = matches(name, at: i), !whole || !wordCharacter(before: i), let v = separator(after: j) else { continue }
                 let (end, quoted) = valueEnd(v)
                 // "key" is also an ordinary word ("invalid key: x"): only a value long enough to be a key counts.
                 if name == Redact.key, end - v < 16 { continue }
-                return name == Redact.authorization && !quoted ? (lineEnd(v), false) : (end, quoted)
+                return (name == Redact.authorization || Redact.wholeLine.contains(name)) && !quoted ? (lineEnd(v), false) : (end, quoted)
             }
             return nil
         }
@@ -275,7 +281,8 @@ nonisolated enum Redact {
                 var ends = [Int](repeating: n, count: n + 1)
                 var k = n - 1
                 while k >= 0 {
-                    ends[k] = t[k].isNewline || (a[k] == 92 && k + 1 < n && (a[k + 1] == 110 || a[k + 1] == 114)) ? k : ends[k + 1]
+                    let continued = k > 0 && a[k - 1] == 92  // A line break after a backslash goes on.
+                    ends[k] = (t[k].isNewline && !continued) || (a[k] == 92 && k + 1 < n && (a[k + 1] == 110 || a[k + 1] == 114)) ? k : ends[k + 1]
                     k -= 1
                 }
                 lineEnds = ends
@@ -412,6 +419,25 @@ nonisolated enum Redact {
         }
 
         private static let passwords: [[Character]] = [Array("password"), Array("passwd"), Array("bearer")]
+
+        // MARK: Go's URL errors
+
+        /// `invalid port ":abc" after host`: Go quotes what follows the host's colon, which is the start of a password
+        /// that holds a "/".
+        mutating func invalidPorts() -> [Range<Int>] {
+            let phrase = Array("invalid port ".utf8)
+            var out: [Range<Int>] = []
+            let count = phrase.count
+            for i in 0..<n {
+                guard a[i] == 105 || a[i] == 73, i + count < n, a[i + count] == 34 else { continue }
+                var same = true
+                for k in 0..<count where a[i + k] != phrase[k] && a[i + k] != phrase[k] &- 32 { same = false; break }
+                guard same else { continue }
+                let q = i + count
+                out.append(q..<quoted(from: q + 1, "\"", 0))
+            }
+            return out
+        }
 
         // MARK: URL logins
 

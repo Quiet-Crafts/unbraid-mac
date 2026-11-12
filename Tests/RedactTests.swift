@@ -258,6 +258,11 @@ final class RedactTests: XCTestCase {
             ("parse \"https://FAKEUSER:FAKEPA/SS@192.0.2.1/\": invalid port", ["FAKEUSER", "SS@"]),
             ("dial ss://YWVzLTI1Ni1nY206cHc/Png=@192.0.2.1:8388 failed", ["YWVzLTI1Ni1nY206cHc", "Png="]),
             ("password is FAKESECRET1", ["FAKESECRET1"]),
+            (#"parse "https://u:FAKEPA@h": invalid port ":FAKEPA" after host"#, ["FAKEPA"]),
+            (#"parse "https://u:FAKEPA/SS@h/": Invalid port ":FAKEPA" after host"#, ["FAKEPA"]),
+            ("password=Fake Pass/w@rd#9 end", ["Pass", "w@rd"]),
+            ("password: Fake Pass/w@rd#9 end", ["Pass", "w@rd"]),
+            ("secret=Fake Pass end", ["Pass"]),
             (#"password is "FakeFirst7 FakeLast9""#, ["FakeFirst7", "FakeLast9"]),
             (#"Authorization: Digest username="FakeUser", response="0123456789abcdef0123456789abcdef""#, ["0123456789abcdef"]),
             (#"Authorization: B\u0061sic RmFrZTpTZWNyZXQ="#, ["RmFrZTpTZWNyZXQ="]),
@@ -274,6 +279,8 @@ final class RedactTests: XCTestCase {
             let out = Redact.hiding(input)
             for leak in leaks { XCTAssertFalse(out.contains(leak), "\(input.debugDescription) -> \(out.debugDescription)") }
         }
+        XCTAssertEqual(Redact.hiding("Authorization: Bearer FAKESHORT7"), "Authorization: [hidden]")
+        XCTAssertEqual(Redact.hiding("password field is empty"), "[hidden] is empty")  // (Only the next word: as before.)
         // The words on the line after a key stay.
         let blob = "Abcd0123Abcd0123Abcd0123Abcd0123Abcd0123"
         for rest in ["/etc/hosts missing", "api.example.invalid failed", "12ms remaining"] {
@@ -328,8 +335,31 @@ final class RedactTests: XCTestCase {
             let start = Date()
             _ = Redact.hiding(text)
             let seconds = Date().timeIntervalSince(start)
-            // (Debug build on a busy machine: about 0.5-2.5 s; a scan that rereads the text for each place takes 10 s or more.)
-            XCTAssertLessThan(seconds, 4,String(text.prefix(20)))
+            // (Debug build on a busy machine: only a guard against a hang; the ratio test below catches a scan that rereads the text for each place.)
+            XCTAssertLessThan(seconds, 15,String(text.prefix(20)))
+        }
+    }
+
+    /// Twice the text takes less than three times as long (best of three, so a busy machine doesn't matter).
+    func testTwiceTheTextTakesLessThanThreeTimesAsLong() {
+        func best(_ text: String) -> Double {
+            (0..<3).map { _ -> Double in
+                let start = Date()
+                _ = Redact.hiding(text)
+                return Date().timeIntervalSince(start)
+            }.min()!
+        }
+        let makers: [(Int) -> String] = [
+            { String(repeating: "x://", count: $0 / 4) + "/" }, { String(repeating: #"a\u003a\u002f\u002f"#, count: $0 / 19) + "/ " },
+            { String(repeating: "ss://xx", count: $0 / 7) + "/" }, { String(repeating: "Authorization: ", count: $0 / 14) },
+            { String(repeating: "authorization=", count: $0 / 28) + String(repeating: "X", count: $0 / 2) + " " },
+            { String(repeating: "AbC1dEf2GhI3jKl4\n", count: $0 / 17) }, { String(repeating: "AAAA=", count: $0 / 5) },
+            { String(repeating: "password=a b ", count: $0 / 12) }, { String(repeating: #"invalid port ""#, count: $0 / 14) },
+            { String(repeating: "password is ", count: $0 / 12) }, { String(repeating: "FAKE", count: $0 / 4) },
+        ]
+        for make in makers {
+            let small = best(make(100_000)), large = best(make(200_000))
+            if small > 0.05 { XCTAssertLessThan(large / small, 3, String(make(40).prefix(20))) }
         }
     }
 
