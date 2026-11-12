@@ -128,6 +128,31 @@ final class CompilerTests: XCTestCase {
         XCTAssertTrue(rules(c).contains { action($0) == "reject" && AppPaths.matches(strings($0["process_path_regex"]), image) })
     }
 
+    /// An app put on a route keeps it when that route becomes the default and stays on it when the default goes back
+    /// to Direct, while an app that follows the default moves with it. ("Make Default" in the app model only sets the
+    /// default route of the setup, so this drives that same change on the setup and compiles the result.)
+    func testAnAppsOwnRouteSurvivesTheDefaultComingAndGoing() throws {
+        var s = Setup(routes: [Route(id: "us", loc: Location(countryId: 228, countryCode: "US", country: "United States"))],
+                      defaultRoute: DIRECT, apps: [:])
+        AppMove.apply(["com.a": "us"], to: &s)
+        XCTAssertEqual(s.routeOf("com.a"), "us")
+        XCTAssertEqual(s.routeOf("com.b"), DIRECT)
+
+        s.defaultRoute = "us"
+        XCTAssertEqual(s.routeOf("com.a"), "us")
+        XCTAssertEqual(s.routeOf("com.b"), "us")
+
+        s.defaultRoute = DIRECT
+        XCTAssertEqual(s.routeOf("com.a"), "us", "the app's own choice stays")
+        XCTAssertEqual(s.routeOf("com.b"), DIRECT, "a follower moves with the default")
+        XCTAssertEqual(s.apps["com.a"], "us")
+        XCTAssertNil(s.apps["com.b"])
+
+        let c = try compile(s)
+        XCTAssertTrue(rules(c).contains { on($0, "com.a") && outbound($0) == "r-us" })
+        XCTAssertEqual(final(c), "direct")
+    }
+
     private func raw(_ s: Setup, links: [String: Link]? = nil, apps: [String: [String]]? = nil, remembered: Set<String> = [], tsSuffix: String? = nil,
                      probe: (port: Int, password: String)? = nil, ownerless: Compiler.Ownerless = .refusedWhileSplit, login: Bool = false) throws -> String {
         let config = try Compiler.compile(Compiler.Input(setup: s, links: links ?? self.links(s), apps: apps ?? patterns(s), remembered: remembered,
