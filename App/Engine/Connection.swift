@@ -3173,8 +3173,11 @@ final class Connection {
                 // No fallback to the last good tunnels: they aren't tied to an account, and these are sealed as the current
                 // account's. A provider that can't be reached leaves the tunnel as it is, and taking over is retried.
                 removedPins.update(store.setup, accounts: store.accounts)
-                let r = try await LinkPicker.pick(s, keep: record?.links ?? [:], applied: record?.setup, appliedAccounts: made, accounts: accounts,
-                                                  last: [:], gone: removedPins, providers: Providers.get)
+                // Through `lookUp`: a newer operation (a Disconnect) cancels slow providers instead of waiting behind them.
+                let r = try await lookUp(nil) {
+                    try await LinkPicker.pick(s, keep: record?.links ?? [:], applied: record?.setup, appliedAccounts: made, accounts: accounts,
+                                              last: [:], gone: self.removedPins, providers: Providers.get)
+                }
                 try Task.checkCancellation()
                 guard g == generation else { return }
                 guard s == store.setup, accounts == store.accounts else { continue }
