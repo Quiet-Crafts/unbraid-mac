@@ -24,14 +24,18 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
 
     /// Retried only once the inputs differ.
     mutating func refuse(_ k: Key) {
+        // The same inputs keep their count of disruptions: refusing does not wipe what was spent.
+        let spent = k == key ? disruptions : 0
         self = Retry()
         key = k
         refused = true
+        disruptions = spent
     }
 
     /// A passing failure of [k]: the wait before trying it again, or nil when it is refused from now on.
     mutating func failed(_ k: Key, disrupted: Bool, now: ContinuousClock.Instant) -> Duration? {
-        if k != key || refused { self = Retry(); key = k }
+        if k != key { self = Retry(); key = k }
+        else if refused { refused = false; failures = 0; due = nil }
         if disrupted { disruptions += 1 }
         if disruptions >= Self.limit { refuse(k); return nil }
         let wait = Self.delays[min(failures, Self.delays.count - 1)]

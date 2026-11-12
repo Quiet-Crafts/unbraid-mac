@@ -41,6 +41,17 @@ final class RetryTests: XCTestCase {
         XCTAssertEqual(r.failed(2, disrupted: false, now: t0), .seconds(10), "a passing failure of refused inputs is tried again")
     }
 
+    func testChangeRefusedAfterDisruptionsStaysRefused() {
+        var r = Retry<Int>()
+        for _ in 0..<Retry<Int>.limit { _ = r.failed(1, disrupted: true, now: t0) }
+        XCTAssertTrue(r.refuses(1))
+        XCTAssertNil(r.failed(1, disrupted: true, now: t0))
+        XCTAssertTrue(r.refuses(1))
+        XCTAssertFalse(r.allows(1, now: t0))
+        XCTAssertNil(r.failed(1, disrupted: false, now: t0), "the count of disruptions is not reset")
+        XCTAssertTrue(r.allows(2, now: t0))
+    }
+
     func testFailuresThatInterruptedTheTunnelAreGivenUp() {
         var r = Retry<Int>()
         XCTAssertNotNil(r.failed(1, disrupted: true, now: t0))
