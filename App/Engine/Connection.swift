@@ -755,7 +755,17 @@ final class Connection {
             }
             // "Off" only once macOS says so: a status update in between would otherwise see a live tunnel while the
             // state says off, adopt it, and a setup change right after would start it again.
-            if stopped { try? await tunnel.waitStopped() }
+            if stopped {
+                do { try await tunnel.waitStopped() } catch is CancellationError {} catch {
+                    // Never confirmed: no clean Off. Nothing is restarted; the record stays, as after a failed stop, and the
+                    // real status is read again once the queue is free.
+                    guard g == generation else { return }
+                    off(forget: false)
+                    state.error = "The VPN hasn't confirmed that it stopped. Check System Settings, VPN."
+                    Task { await statusChanged() }
+                    return
+                }
+            }
             off()
             if !stopped { recordRun { $0.foreign() } }
             // Connect on Demand is off: a fallback left from before goes.
