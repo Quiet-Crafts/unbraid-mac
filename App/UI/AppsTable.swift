@@ -616,7 +616,7 @@ private final class WeekRowCell: DrawnCell {
         plain = attributed(new.text, CellFont.number, Palette.nsDim)
         selected = attributed(new.text, CellFont.number, selectionInk)
         width = textWidth(plain)
-        toolTip = bytes.map { "\($0.formatted()) bytes" } ?? "No recorded data"
+        toolTip = bytes.map { "\(Units.bytes($0)) this week" } ?? "No recorded data"
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
         setAccessibilityLabel(bytes == nil ? "No data this week" : new.text)

@@ -151,7 +151,7 @@ struct PickerSheet: View {
 
     private var subtitle: String {
         if route?.tsExit != nil { return "Tailscale exit node" }
-        if route?.imported == true { return "Your own server" }
+        if route?.imported == true { return "My Servers" }
         guard let c = current else { return "Pick where this route exits" }
         return [Providers.get(c.provider)?.name ?? route?.source, c.pinned?.name ?? c.city, c.pinned == nil ? (hasLoad ? "fastest server" : "automatic server") : nil].compactMap { $0 }.joined(separator: " · ")
     }
@@ -300,12 +300,9 @@ struct PickerSheet: View {
     @ViewBuilder private var locations: some View {
         if catalog.isEmpty {
             VStack(spacing: 10) {
-                if catalogFailed, let p = provider {
-                    Text("Couldn't get \(p.name)'s server list.").foregroundStyle(.secondary)
+                if catalogFailed || timedOut {
+                    Text(provider.map { "Couldn't get \($0.name)'s server list." } ?? "Couldn't get the server list.").foregroundStyle(.secondary)
                     Button("Retry") { retrying = true; Task { await load() } }
-                } else if timedOut {
-                    Text("Server list unavailable. Check the connection.").foregroundStyle(.secondary)
-                    Button("Retry") { Task { await load() } }
                 } else { ProgressView("Loading locations") }
             }.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {

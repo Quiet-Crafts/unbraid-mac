@@ -39,8 +39,8 @@ struct ConnectionDock: View {
                 Image(systemName: "checkmark.circle.fill").foregroundStyle(Ink.connected)
                 // No running clock: a ticking timer costs a redraw a second and says little. The time it began is in help.
                 let exits = Set(model.vpn.tags.values).count
-                Text("\(v.runState.protection(blocked: Set(v.blocked.keys)).map { $0 ? "Protected" : "Connected" } ?? "Connected") · \(exits) VPN exit\(exits == 1 ? "" : "s")").foregroundStyle(.secondary)
-                    .help("\(v.runState.protection(blocked: Set(v.blocked.keys)).map { $0 ? "Protected" : "Connected" } ?? "Connected") · \(exits) VPN exit\(exits == 1 ? "" : "s"). Connected since \(v.since.formatted(date: .omitted, time: .shortened))")
+                Text("\(v.runState.protection(blocked: Set(v.blocked.keys)).map { $0 ? "Protected" : "Connected" } ?? "Connected") · \(exits) route\(exits == 1 ? "" : "s")").foregroundStyle(.secondary)
+                    .help("\(v.runState.protection(blocked: Set(v.blocked.keys)).map { $0 ? "Protected" : "Connected" } ?? "Connected") · \(exits) route\(exits == 1 ? "" : "s"). Connected since \(v.since.formatted(date: .omitted, time: .shortened))")
             case .paused:
                 Image(systemName: "pause.circle.fill").foregroundStyle(Ink.paused)
                 Text(v.pausedUntil.map { "Resumes at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Paused until resumed")

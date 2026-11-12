@@ -124,7 +124,7 @@ struct AppsView: View {
     /// One line on what a route is: where it leaves and through which server, or what Direct and Blocked mean.
     private func about(_ id: String, _ s: Setup) -> String {
         switch id {
-        case DIRECT: return "No VPN: these apps use your own connection"
+        case DIRECT: return "No VPN: these apps use your normal connection"
         case BLOCK: return s.blockedReach
         default:
             guard let r = s.route(id) else { return "" }

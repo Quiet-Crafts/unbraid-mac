@@ -96,7 +96,7 @@ final class ProviderFixesTests: XCTestCase {
         p.nodeHosts = { ["us-central-117.whiskergalaxy.com"] }
         _ = try await p.signIn(["config": F.wsConf()])
         for endpoint in ["203.0.113.5:443", "static-1.whiskergalaxy.com:443", "unlisted-1.whiskergalaxy.com:443"] {
-            await F.rejects("This looks like a Static IP config, which is tied to one server. Import it under \"Your own servers\" instead.") {
+            await F.rejects("This looks like a Static IP config, which is tied to one server. Import it under \"My Servers\" instead.") {
                 _ = try await p.signIn(["config": F.wsConf(endpoint: endpoint)])
             }
         }

@@ -193,7 +193,7 @@ struct SpeedTestView: View {
                     RouteBadge(route: route, id: s.defaultRoute, size: 24)
                     VStack(alignment: .leading, spacing: 4) {
                         Text("Default route").overline()
-                        Text([s.label(s.defaultRoute), route.map { place($0, [:]) } ?? "Your own connection"].joined(separator: " · "))
+                        Text([s.label(s.defaultRoute), route.map { place($0, [:]) } ?? "Your normal connection"].joined(separator: " · "))
                             .font(.system(size: 13, weight: .semibold))
                     }
                 }

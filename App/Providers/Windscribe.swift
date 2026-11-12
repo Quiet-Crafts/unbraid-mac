@@ -1,7 +1,7 @@
 import Foundation
 
 /// A generated paid-plan config supplies the private key, address and preshared key shared across ordinary servers.
-/// Build-a-Plan keys only work at purchased locations; Static IP configs belong under Your own servers.
+/// Build-a-Plan keys only work at purchased locations; Static IP configs belong under My Servers.
 /// The public list uses each node's `ip3` and its group's `wg_pubkey`, as gluetun does. Allowed ports and fallback
 /// 1194 come from gluetun. It is unverified that `health` is load or every ip3 accepts every port, so health only
 /// orders nodes and isn't advertised as a percentage. No Windscribe account was available for a live tunnel test.
@@ -12,7 +12,7 @@ nonisolated struct Windscribe: Provider {
     let help = "A paid plan is needed. Sign in at windscribe.com, open My Account, Config Generator, WireGuard tab, pick any location "
         + "and a port (443 if unsure), keep \"Generate new keypair\", then Download Config. Open the file in a text editor and paste all of it here. "
         + "The key works for every location your plan covers. Build-a-Plan accounts can only connect to the locations they paid for. "
-        + "Static IP configs are tied to one server: import those under \"Your own servers\" instead."
+        + "Static IP configs are tied to one server: import those under \"My Servers\" instead."
 
     struct Account: Codable, Hashable, Sendable {
         var privateKey: String
@@ -115,7 +115,7 @@ nonisolated struct Windscribe: Provider {
         let text = (input["config"] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let p = try WgConf.parse(text.hasPrefix("\u{feff}") ? String(text.dropFirst()) : text, name: name)
         guard await !isStatic(p.endpoint) else {
-            throw Fail("This looks like a Static IP config, which is tied to one server. Import it under \"Your own servers\" instead.")
+            throw Fail("This looks like a Static IP config, which is tied to one server. Import it under \"My Servers\" instead.")
         }
         guard let psk = p.presharedKey else {
             throw Fail("This config has no PresharedKey. Generate a WireGuard config at windscribe.com and paste that")
