@@ -468,6 +468,17 @@ nonisolated extension Setup {
         for i in profiles.indices {
             for (app, route) in profiles[i].apps where route != DIRECT && route != BLOCK && !known.contains(route) { profiles[i].apps[app] = BLOCK }
         }
+        // And for the selections a pending profile switch keeps to roll back to.
+        func blockingLost(_ profile: Profile?) -> Profile? {
+            guard var p = profile else { return nil }
+            for (app, route) in p.apps where route != DIRECT && route != BLOCK && !known.contains(route) { p.apps[app] = BLOCK }
+            return p
+        }
+        if var pending = pendingSwitch {
+            pending.before = blockingLost(pending.before)
+            pending.previous = blockingLost(pending.previous)
+            pendingSwitch = pending
+        }
         repairProfiles()
         requireKillSwitchForBlocks()
     }
@@ -654,7 +665,8 @@ nonisolated extension Setup {
         profiles = saved
         profile = same?.name
         defaultRoute = valid.contains(ran.defaultRoute) ? ran.defaultRoute : (routes.first?.id ?? DIRECT)
-        apps = ran.apps.filter { valid.contains($0.value) }
+        // An app whose route is gone is blocked, as at load, not left out (it would follow the default).
+        apps = ran.apps.mapValues { valid.contains($0) ? $0 : BLOCK }
         prefs.killSwitch = ran.prefs.killSwitch
         prefs.killSwitchHome = ran.prefs.killSwitchHome
         requireKillSwitchForBlocks()

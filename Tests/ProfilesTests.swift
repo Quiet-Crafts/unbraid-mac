@@ -292,6 +292,24 @@ final class ProfilesTests: XCTestCase {
         XCTAssertEqual(s.prefs.killLevel, .home)
     }
 
+    func testRollbackBlocksAnAppWhoseRouteIsGone() {
+        var s = switchingSetup()
+        let ran = { var r = s; r.apps = ["tool": "gone", "kept": "r2", "free": DIRECT]; return r }()
+        s.back(to: ran)
+        XCTAssertEqual(s.apps, ["tool": BLOCK, "kept": "r2", "free": DIRECT])
+    }
+
+    func testLoadBlocksLostRoutesInPendingSwitchSnapshots() throws {
+        var s = switchingSetup()
+        let id = UUID()
+        s.pendingSwitch = ProfileSwitch(id: id, target: "Trip", from: "Home", when: .now, switched: Profile(name: "Trip", defaultRoute: DIRECT),
+                                        previous: Profile(name: "Home", defaultRoute: "r1", apps: ["a": "gone", "b": "r2"]),
+                                        before: Profile(name: "Home", defaultRoute: "r1", apps: ["c": "gone"]))
+        let copy = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(copy.pendingSwitch?.previous?.apps, ["a": BLOCK, "b": "r2"])
+        XCTAssertEqual(copy.pendingSwitch?.before?.apps, ["c": BLOCK])
+    }
+
     func testRollbackRestoresHiddenHomeSettingAndPreservesLaterChange() {
         var before = switchingSetup()
         before.prefs.killSwitchHome = true
