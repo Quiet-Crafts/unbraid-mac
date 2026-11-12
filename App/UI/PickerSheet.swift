@@ -31,7 +31,8 @@ private func validNode(_ s: String) -> Bool {
 }
 
 /// Where a route, or an app's new route, leaves: a provider place, one of the user's servers, or a Tailscale device.
-/// Locations apply on "Use"; a current Nord route's protocol and provider blocking apply at once.
+/// Nothing changes until "Use": the place, a Nord route's protocol and provider blocking are all applied together, so
+/// Cancel leaves the route as it was.
 struct PickerSheet: View {
     let target: String
 
@@ -51,6 +52,11 @@ struct PickerSheet: View {
     /// Countries offering the chosen Nord server type; nil while unknown.
     @State private var allowed: Set<String>?
     @State private var timedOut = false
+    /// Provider blocking chosen for this route in the sheet (nil = untouched; then nil = as set in Settings), applied on "Use".
+    @State private var filterChoice: Bool??
+    /// A retry is under way: the earlier failure is not shown again until the new try has ended.
+    @State private var retrying = false
+    private var catalogFailed: Bool { !retrying && (provider.map { model.catalogFailures.contains($0.id) } ?? false) }
 
     init(target: String) {
         self.target = target
@@ -109,7 +115,7 @@ struct PickerSheet: View {
             status
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
-            Button("Use \(picked ?? "…")") { apply() }
+            Button(existingRoute != nil ? "Show \(picked ?? "…")" : "Use \(picked ?? "…")") { apply() }
                 .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil)
         }
         .frame(height: 620)
@@ -133,6 +139,7 @@ struct PickerSheet: View {
         // Cancelled by a switch to another provider: that one's own wait decides, not this late wake-up.
         guard (try? await Task.sleep(for: .seconds(10))) != nil else { return }
         timedOut = true
+        retrying = false
     }
 
     private var title: String {
@@ -144,19 +151,28 @@ struct PickerSheet: View {
         if route?.tsExit != nil { return "Tailscale exit node" }
         if route?.imported == true { return "Your own server" }
         guard let c = current else { return "Pick where this route exits" }
-        return [route?.source, c.pinned?.name ?? c.city, c.pinned == nil ? (hasLoad ? "fastest server" : "automatic server") : nil].compactMap { $0 }.joined(separator: " · ")
+        return [Providers.get(c.provider)?.name ?? route?.source, c.pinned?.name ?? c.city, c.pinned == nil ? (hasLoad ? "fastest server" : "automatic server") : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
     private var sourceRow: some View {
         HStack {
             Spacer()
-            Picker("Source", selection: Binding(get: { mine }, set: { mine = $0; query = "" })) {
+            Picker("Source", selection: Binding(get: { mine }, set: { mine = $0; query = ""; keepSelection(mine: $0, provider: provider?.id) })) {
                 Text("Providers").tag(false)
                 Text("My Servers").tag(true)
             }
             .pickerStyle(.segmented).labelsHidden().fixedSize()
         }
         .padding(.horizontal, Layout.gutter).padding(.bottom, 12)
+    }
+
+    /// Only a choice that belongs to the list now on show stays selected, so "Use" never applies one that is out of sight.
+    private func keepSelection(mine: Bool, provider: String?) {
+        switch selection {
+        case .loc(let l): if mine || l.provider != provider { selection = nil }
+        case .own, .ts: if !mine { selection = nil }
+        case nil: break
+        }
     }
 
     private var searchRow: some View {
@@ -174,7 +190,7 @@ struct PickerSheet: View {
             HStack(spacing: 12) {
                 if let p = provider {
                     Menu {
-                        Picker("Provider", selection: Binding(get: { p.id }, set: { chosen = $0; expanded = [] })) {
+                        Picker("Provider", selection: Binding(get: { p.id }, set: { chosen = $0; expanded = []; keepSelection(mine: false, provider: $0) })) {
                             ForEach(signed, id: \.id) { Text($0.name).tag($0.id) }
                         }.pickerStyle(.inline)
                         Divider()
@@ -201,20 +217,21 @@ struct PickerSheet: View {
             if optionsOpen, provider?.id == "nord" { nordOptions }
             HStack {
                 if let r = route, !r.imported, r.loc.provider == provider?.id, let p = provider, p.protection != nil {
+                    let shown: Bool? = filterChoice ?? r.filter
                     Menu(providerProtectionAvailable(model.setup.prefs.effectiveFilter) ? "\(p.name) blocking" : "Off while unbraid’s filter is on for VPN routes") {
-                        Button { model.setFilter(r.id, nil) } label: { Label("As Set for \(p.name) in Settings", systemImage: r.filter == nil ? "checkmark" : "") }
-                        Button { model.setFilter(r.id, true) } label: { Label("On for This Route", systemImage: r.filter == true ? "checkmark" : "") }
-                        Button { model.setFilter(r.id, false) } label: { Label("Off for This Route", systemImage: r.filter == false ? "checkmark" : "") }
+                        Button { filterChoice = .some(nil) } label: { Label("As Set for \(p.name) in Settings", systemImage: shown == nil ? "checkmark" : "") }
+                        Button { filterChoice = .some(true) } label: { Label("On for This Route", systemImage: shown == true ? "checkmark" : "") }
+                        Button { filterChoice = .some(false) } label: { Label("Off for This Route", systemImage: shown == false ? "checkmark" : "") }
                     }.disabled(!providerProtectionAvailable(model.setup.prefs.effectiveFilter))
                 }
                 Spacer()
-                Button("App Settings") { openSettings() }.buttonStyle(.link)
+                Button("\(provider?.name ?? "Provider") Settings…") { Presentation.shared.settingsTab = 0; openSettings() }.buttonStyle(.link)
             }
         }
         .padding(.horizontal, Layout.gutter).padding(.bottom, 10)
     }
 
-    /// Protocol changes the current route too; server type only narrows the next place picked.
+    /// The protocol rides on the pending place; server type only narrows the next place picked.
     private var nordOptions: some View {
         let openVpnOnly = group.map(Nord.openVpnOnly.contains) ?? false
         return HStack(alignment: .top, spacing: 24) {
@@ -258,14 +275,9 @@ struct PickerSheet: View {
 
     private func setProtocol(_ p: String?) {
         protocolChoice = p
+        // Double VPN and Onion only run over OpenVPN: NordLynx goes back to standard servers.
+        if p == nil, groupChoice.map(Nord.openVpnOnly.contains) == true { groupChoice = nil }
         retag()
-        guard var l = current, l.provider == "nord" else { return }
-        l.proto = p
-        if p == nil {
-            if l.group.map(Nord.openVpnOnly.contains) == true { l.group = nil }
-            if l.pinned?.publicKey.isEmpty == true { l.pinned = nil }
-        }
-        model.setLocation(target, l)
     }
 
     private func setGroup(_ g: String?) { groupChoice = g; retag() }
@@ -286,7 +298,10 @@ struct PickerSheet: View {
     @ViewBuilder private var locations: some View {
         if catalog.isEmpty {
             VStack(spacing: 10) {
-                if timedOut {
+                if catalogFailed, let p = provider {
+                    Text("Couldn't get \(p.name)'s server list.").foregroundStyle(.secondary)
+                    Button("Retry") { retrying = true; Task { await load() } }
+                } else if timedOut {
                     Text("Server list unavailable. Check the connection.").foregroundStyle(.secondary)
                     Button("Retry") { Task { await load() } }
                 } else { ProgressView("Loading locations") }
@@ -390,7 +405,7 @@ struct PickerSheet: View {
                 }
             }
             if !own.isEmpty {
-                Section("Saved Servers") {
+                Section("My Servers") {
                     ForEach(own) { o in
                         HStack(spacing: 10) {
                             Text(o.code).font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary).frame(width: 34)
@@ -411,7 +426,7 @@ struct PickerSheet: View {
                              : "Add or manage servers in Settings.")
                             .font(.callout).foregroundStyle(.secondary)
                         Spacer()
-                        Button("Open Settings") { openSettings() }
+                        Button("Open Settings") { Presentation.shared.settingsTab = 0; openSettings() }
                     }
                 }.selectionDisabled()
             }
@@ -429,8 +444,15 @@ struct PickerSheet: View {
         }
     }
 
+    /// "New Route" on a place that already is one.
+    private var existingRoute: Route? {
+        guard target.isEmpty, let l = selectedLocation else { return nil }
+        return model.setup.routes.first { !$0.imported && $0.loc.ident == l.ident }
+    }
+
     private var status: some View {
         let who = target.hasPrefix("app:") ? model.apps.app(String(target.dropFirst(4)))?.name ?? "This app" : "This route"
+        if existingRoute != nil, let picked { return Text("\(picked) is already a route.").lineLimit(1) }
         return Text(picked.map { "\(who) will leave through \($0)." } ?? "Pick where this route exits").lineLimit(1)
     }
 
@@ -440,9 +462,15 @@ struct PickerSheet: View {
         case .loc(var l):
             // A Nord server found over OpenVPN may have no NordLynx key: it is kept only where it can be used.
             l.pinned = l.pinned.flatMap { l.provider != "nord" || l.proto != nil || !$0.publicKey.isEmpty ? $0 : nil }
-            if target.isEmpty { model.addRoute(l) }
+            if target.isEmpty {
+                // A place that is already a route is shown instead of added twice.
+                if let existing = existingRoute { Presentation.shared.page = .apps(existing.id) } else { model.addRoute(l) }
+            }
             else if target.hasPrefix("app:") { model.addRouteForApp(String(target.dropFirst(4)), l) }
-            else { model.setLocation(target, l) }
+            else {
+                model.setLocation(target, l)
+                if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { model.setFilter(target, choice) }
+            }
         case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s) }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
         case nil: return
@@ -483,7 +511,7 @@ private struct PlaceRow: View {
             if let subtitle { Text(subtitle).foregroundStyle(.secondary) }
             Spacer()
             if loc.pinned == nil, loc.country != nil, source != nil {
-                Button("Pick a Server…") { servers = true }.buttonStyle(.borderless).foregroundStyle(.secondary)
+                Button("Pick a Server…") { servers = true }.buttonStyle(.borderless).foregroundStyle(Ink.accentText)
                     .accessibilityLabel("Pick a Server in \(loc.label)")
                     .popover(isPresented: $servers, arrowEdge: .leading) {
                         if let (p, account) = source {
@@ -516,10 +544,17 @@ private struct ServerList: View {
     let selected: Location?
     let pick: (Server) -> Void
     @State private var list: [Server]?
+    @State private var failed = false
+    @State private var attempt = 0
 
     var body: some View {
         Group {
-            if let list {
+            if failed {
+                VStack(spacing: 10) {
+                    Text("Couldn't load servers. Check the connection.").foregroundStyle(.secondary).multilineTextAlignment(.center)
+                    Button("Retry") { failed = false; attempt += 1 }
+                }.padding()
+            } else if let list {
                 if list.isEmpty { Text("No servers found").foregroundStyle(.secondary) } else {
                     List(Array(list.enumerated()), id: \.offset) { _, s in
                         let pinned = pinned(s)
@@ -549,8 +584,10 @@ private struct ServerList: View {
             } else { ProgressView("Loading servers") }
         }
         .frame(width: 300, height: 320)
-        .task {
-            let found = (try? await provider.servers(loc, account, limit: provider.id == "nord" ? 20 : 200, opts: model.setup.opts[provider.id] ?? [:])) ?? []
+        .task(id: attempt) {
+            let result = try? await provider.servers(loc, account, limit: provider.id == "nord" ? 20 : 200, opts: model.setup.opts[provider.id] ?? [:])
+            guard !Task.isCancelled else { return }
+            guard let found = result else { failed = true; return }
             list = found.sorted { ($0.load < 0 ? .max : $0.load) < ($1.load < 0 ? .max : $1.load) }
         }
     }
