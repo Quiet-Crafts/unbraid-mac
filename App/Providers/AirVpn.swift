@@ -85,8 +85,9 @@ nonisolated struct AirVpn: KeyProvider {
         if let error = r.error, error.localizedCaseInsensitiveContains("authoriz") { throw AuthError("AirVPN didn't accept that API key. Check it in the Client Area under API", url: "https://airvpn.org/apisettings/") }
         return r
     }
-    private func devices(_ key: String) async throws -> [DeviceInfo] {
-        try await allDevices(key).filter { !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    private func devices(_ key: String) async throws -> [DeviceInfo] { Self.named(try await allDevices(key)) }
+    private static func named(_ rows: [DeviceInfo]) -> [DeviceInfo] {
+        rows.filter { !$0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !$0.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
     }
     /// Every row, including one not named yet: a removal must find its device even before it was given a name.
     private func allDevices(_ key: String) async throws -> [DeviceInfo] {
@@ -137,14 +138,22 @@ nonisolated struct AirVpn: KeyProvider {
     }
     private func fromAPI(_ key: String, _ wanted: String?) async throws -> String {
         await retryCleanup()
-        let all = try await devices(key)
+        let rows = try await allDevices(key)
+        let all = Self.named(rows)
         if wanted == nil {
             let result: Reply
             do { result = try checked(await api("devices", key, ["action": "add"])) }
             catch is AuthError { throw AuthError("AirVPN didn't accept that API key. Check it in the Client Area under API", url: "https://airvpn.org/apisettings/") }
-            catch { throw Fail("AirVPN didn't answer while adding a device. If a new device appeared in the Client Area, remove it, then try again") }
+            catch {
+                // The reply may have been lost after AirVPN made the device: look for it rather than leave it behind.
+                if await removeStray(key, before: Set(rows.map(\.id))) { throw Fail("AirVPN didn't answer while adding a device, and the one it may have added was removed. Try again") }
+                throw Fail("AirVPN didn't answer while adding a device. If a new device appeared in the Client Area, remove it, then try again")
+            }
             if result.error == nil {
-                guard let id = result.id, !id.isEmpty else { throw Fail("AirVPN didn't identify the new device. Check the Client Area, then try again") }
+                guard let id = result.id, !id.isEmpty else {
+                    if await removeStray(key, before: Set(rows.map(\.id))) { throw Fail("AirVPN didn't identify the new device, and it was removed. Try again") }
+                    throw Fail("AirVPN didn't identify the new device. Check the Client Area, then try again")
+                }
                 let item = AirCleanup.Record(key: key, id: id)
                 do { try await journal.add(item) } catch {
                     let removed = await remove(key, id) == .removed
@@ -175,8 +184,31 @@ nonisolated struct AirVpn: KeyProvider {
         if let wanted, !wanted.isEmpty, let found = all.first(where: { $0.name.caseInsensitiveCompare(wanted) == .orderedSame }) { d = found }
         else if wanted == nil, all.count == 1 { d = all[0] }
         else if all.isEmpty { throw AuthError("AirVPN didn't add a device for unbraid and your account has none. Add one in the Client Area, then try again", url: "https://airvpn.org/devices/") }
+        else if let wanted, !wanted.isEmpty {
+            throw Challenge(message: "None of your AirVPN devices is named \u{201C}\(String(wanted.prefix(40)))\u{201D}. Choose one of: \(all.map { String($0.name.prefix(40)) }.joined(separator: ", ")).", field: Field(key: "device", label: "Device name", secret: false))
+        }
         else { throw Challenge(message: "AirVPN didn't add a device for unbraid. Choose one of yours: \(all.map { String($0.name.prefix(40)) }.joined(separator: ", ")).", field: Field(key: "device", label: "Device name", secret: false)) }
         return try await signed(key, d, own: false)
+    }
+    /// After an add whose answer was lost or unusable: removes the devices that weren't listed before and still have no
+    /// name (or AirVPN's default one), the signature of one just created and not yet renamed, never one the user made.
+    /// True when there was at least one and all are gone. Each is journaled before its removal, as a normal add is.
+    private func removeStray(_ key: String, before: Set<String>) async -> Bool {
+        guard let now = try? await allDevices(key) else { return false }
+        let strays = now.filter {
+            let name = $0.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !$0.id.isEmpty && !before.contains($0.id) && (name.isEmpty || name.caseInsensitiveCompare("New device") == .orderedSame)
+        }
+        guard !strays.isEmpty else { return false }
+        var all = true
+        for d in strays {
+            let item = AirCleanup.Record(key: key, id: d.id)
+            do { try await journal.add(item) } catch { all = false; continue }
+            if await remove(key, d.id) == .removed {
+                do { try await journal.remove(item) } catch { await journal.release(item) }
+            } else { all = false }
+        }
+        return all
     }
     private func readyDevice(_ key: String, _ id: String, _ name: String) async throws -> DeviceInfo {
         try await withThrowingTaskGroup(of: DeviceInfo.self) { group in

@@ -119,6 +119,45 @@ final class AirApiTests: XCTestCase {
         let a = try AirVpn().keyAccount(old)
         XCTAssertNil(a.apiKey); XCTAssertNil(a.ownDevice)
     }
+    func testAddWhoseReplyWasLostIsFoundAndRemoved() async throws {
+        let fake = FakeAir(); var (p, journal, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        p.api = { service, key, query in
+            let reply = try await fake.call(service, key, query)
+            if query["action"] == "add" {
+                // AirVPN made the device, and a device of the user's appeared meanwhile; the answer never arrived.
+                await fake.addUserDevice()
+                throw URLError(.networkConnectionLost)
+            }
+            return reply
+        }
+        do { _ = try await p.signIn(["key": key]); XCTFail("accepted") } catch {
+            XCTAssertFalse(error.localizedDescription.contains("remove it"), error.localizedDescription)
+        }
+        let names = await fake.names(); XCTAssertEqual(names, ["Default", "Phone"])
+        let left = try await journal.records(); XCTAssertTrue(left.isEmpty)
+    }
+
+    func testLostAddWhoseDeviceCannotBeRemovedStaysJournaled() async throws {
+        let fake = FakeAir(); var (p, journal, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        p.api = { service, key, query in
+            let reply = try await fake.call(service, key, query)
+            if query["action"] == "add" { await fake.configure(deleteFails: true); throw URLError(.timedOut) }
+            return reply
+        }
+        do { _ = try await p.signIn(["key": key]); XCTFail("accepted") } catch { XCTAssertTrue(error.localizedDescription.contains("Client Area")) }
+        let pending = try await journal.records(); XCTAssertEqual(pending.count, 1)
+    }
+
+    func testNameThatMatchesNoDeviceSaysSo() async throws {
+        let fake = FakeAir(); await fake.addUserDevice(); await fake.configure(refuse: true)
+        let (p, _, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        do { _ = try await p.signIn(["key": key, "device": "Fone"]); XCTFail("expected challenge") }
+        catch let c as Challenge {
+            XCTAssertTrue(c.message.hasPrefix("None of your AirVPN devices is named \u{201C}Fone\u{201D}."), c.message)
+            XCTAssertTrue(c.message.contains("Phone"))
+        }
+    }
+
     func testRefusedAddAsksAndUsesOnlyListedDevice() async throws {
         let fake = FakeAir(); await fake.addUserDevice(); await fake.configure(refuse: true)
         let (p, _, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
