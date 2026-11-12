@@ -860,7 +860,13 @@ private struct ProtectionTab: View {
             Section {
                 let blocked = s.apps.values.contains(BLOCK)
                 // While paused, a tunnel kept for blocked apps takes a new level at once; with none blocked it waits for Resume.
-                let restart = model.vpn.state.phase == .paused && blocked ? "Applies now." : model.tunnelUp ? model.appliesLater : ""
+                // With a home network reached through a tunnel, the pause keeps blocked apps off it, so Internet waits for Resume.
+                let remoteHome = s.home.wg != nil || (s.home.tailscale && !s.home.subnets.isEmpty)
+                // Only turning it on or off changes the VPN's profile (and restarts it); the two levels are one profile.
+                let restart = model.vpn.state.phase == .paused && blocked
+                    ? (remoteHome ? "Internet and home network applies now. Internet applies when you resume: until then blocked apps stay off your home network." : "Applies now.")
+                    : model.vpn.state.phase == .on ? "Turning this on or off restarts the VPN: for a moment apps may use your normal connection. Switching between Internet and Internet and home network doesn't."
+                    : model.tunnelUp ? model.appliesLater : ""
                 SettingsRow(title: "Block traffic outside the VPN", caption: killNote(s.prefs.killLevel, lan: s.prefs.lan) + (blocked ? " It stays on while any app is blocked." : "") + (restart.isEmpty ? "" : " " + restart), symbol: "shield", captionLines: nil) {
                     // A menu, like the filter's: three segments with these labels are wider than the card and pushed
                     // the whole page sideways.
