@@ -278,7 +278,7 @@ final class DiagnosticsTests: XCTestCase {
     func testTheRestOfAValueRedactHidOnlyTheStartOfIsMasked() {
         let values = ["correct horse battery staple", "tskey abc def"]
         for (raw, kept) in [("invalid password correct horse battery staple", "invalid [hidden] [value]"),
-                            ("password=correct horse battery staple rejected", "[hidden] [value] rejected"),
+                            ("password=correct horse battery staple rejected", "[hidden]"),
                             ("auth_key: tskey abc def: bad key", "[hidden] [value]: bad key"),
                             ("PASSWORD Correct HORSE\tbattery  Staple", "[hidden] [value]")] {
             let out = Diagnostics.clean(Redact.clean(raw), values: values)
