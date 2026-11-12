@@ -49,6 +49,7 @@ nonisolated enum Redact {
 
     private static let authorization = Array("authorization")
     private static let key = Array("key")
+    private static let invalid = Array("invalid"), port = Array("port")
     /// Names whose unquoted value, written after `:` or `=`, may hold blanks: it goes to the end of the line.
     private static let wholeLine: [[Character]] = ["password", "passwd", "secret", "passphrase"].map { Array($0) }
 
@@ -242,7 +243,7 @@ nonisolated enum Redact {
             for name in Redact.names where name[0] == c {
                 if let j = matches(name, at: i), let v = separator(after: j) {
                     let (end, quoted) = valueEnd(v)
-                    return Redact.wholeLine.contains(name) && !quoted ? (lineEnd(v), false) : (end, quoted)
+                    return Redact.wholeLine.contains(name) && !quoted ? (max(lineEnd(v), end), false) : (end, quoted)
                 }
             }
             for (name, whole) in Redact.moreNames where name[0] == c {
@@ -250,7 +251,7 @@ nonisolated enum Redact {
                 let (end, quoted) = valueEnd(v)
                 // "key" is also an ordinary word ("invalid key: x"): only a value long enough to be a key counts.
                 if name == Redact.key, end - v < 16 { continue }
-                return (name == Redact.authorization || Redact.wholeLine.contains(name)) && !quoted ? (lineEnd(v), false) : (end, quoted)
+                return (name == Redact.authorization || Redact.wholeLine.contains(name)) && !quoted ? (max(lineEnd(v), end), false) : (end, quoted)
             }
             return nil
         }
@@ -425,16 +426,15 @@ nonisolated enum Redact {
         /// `invalid port ":abc" after host`: Go quotes what follows the host's colon, which is the start of a password
         /// that holds a "/".
         mutating func invalidPorts() -> [Range<Int>] {
-            let phrase = Array("invalid port ".utf8)
             var out: [Range<Int>] = []
-            let count = phrase.count
             for i in 0..<n {
-                guard a[i] == 105 || a[i] == 73, i + count < n, a[i + count] == 34 else { continue }
-                var same = true
-                for k in 0..<count where a[i + k] != phrase[k] && a[i + k] != phrase[k] &- 32 { same = false; break }
-                guard same else { continue }
-                let q = i + count
-                out.append(q..<quoted(from: q + 1, "\"", 0))
+                // Written plainly or as an escape; the quote after it too, at any depth of quoting.
+                guard a[i] == 0 || a[i] == 92 && (i == 0 || a[i - 1] != 92) || a[i] == 105 || a[i] == 73,
+                      let (first, _) = read(i), letter(first) == "i", let w1 = matches(Redact.invalid, at: i), w1 < n, w[w1] || a[w1] == 92 else { continue }
+                let p = blanks(from: w1)
+                guard p > w1, let w2 = matches(Redact.port, at: p), case let b = blanks(from: w2), b > w2,
+                      let (r, next) = read(b), case .quote(let q, let depth) = r, q == "\"" else { continue }
+                out.append(b..<quoted(from: next, q, depth))
             }
             return out
         }
