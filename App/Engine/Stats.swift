@@ -124,11 +124,10 @@ final class Stats {
             own: Bundle.main.bundleIdentifier ?? "app.unbraid")
     }
 
-    /// Where each installed app lives, under its listed path and its real one, for attributing a process to its app.
+    /// Where each installed app is listed; the writer resolves their links off the main actor (a path on a slow or
+    /// unresponsive volume would otherwise stall the window).
     fileprivate func bundles() -> [BundleRoot] {
-        AppCatalog.shared.apps.filter { !$0.missing }.flatMap { a in
-            Set([a.path, URL(fileURLWithPath: a.path).resolvingSymlinksInPath().path]).map { BundleRoot(prefix: $0, id: a.id) }
-        }
+        AppCatalog.shared.apps.filter { !$0.missing }.map { BundleRoot(prefix: $0.path, id: $0.id) }
     }
 
     #if DEBUG
@@ -640,7 +639,10 @@ actor StatsWriter {
     private func apply(_ events: [Ledger.Ev], reset: Bool, gen g: Int) async {
         let ctx = await Stats.shared.context()
         if bundlesAt == 0 || Ndt7.uptimeMs() - bundlesAt > (bundles.isEmpty ? 30_000 : 300_000) {
-            bundles = await Stats.shared.bundles()
+            // Each app under its listed path and its real one (Safari's lives in a system cryptex behind a link).
+            bundles = await Stats.shared.bundles().flatMap { b in
+                Set([b.prefix, URL(fileURLWithPath: b.prefix).resolvingSymlinksInPath().path]).map { BundleRoot(prefix: $0, id: b.id) }
+            }
             bundlesAt = Ndt7.uptimeMs()
             owners.removeAll(keepingCapacity: true)
         }
