@@ -353,9 +353,9 @@ actor StatsWriter {
         prune()
     }
 
-    /// The database with its write-ahead log, where recent writes sit until a checkpoint.
+    /// The database with its write-ahead log, where recent writes sit until a checkpoint, and a damaged file set aside.
     nonisolated static func size() -> Int64 {
-        ["", "-wal", "-shm"].reduce(0) { sum, suffix in
+        ["", "-wal", "-shm", ".bad"].reduce(0) { sum, suffix in
             sum + (((try? FileManager.default.attributesOfItem(atPath: Self.file.path + suffix)[.size]) as? NSNumber)?.int64Value ?? 0)
         }
     }
