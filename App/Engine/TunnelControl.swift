@@ -171,7 +171,7 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         let existing = m.protocolConfiguration as? NETunnelProviderProtocol
         // What the system holds now, put back in memory if the save fails (memory must not claim what was never saved).
         let before = (killSwitch: existing?.includeAllNetworks ?? false, lan: existing?.excludeLocalNetworks ?? false,
-                      rules: m.onDemandRules, onDemand: m.isOnDemandEnabled)
+                      rules: m.onDemandRules, onDemand: m.isOnDemandEnabled, enabled: m.isEnabled)
         let p = existing ?? NETunnelProviderProtocol()
         p.providerBundleIdentifier = AppGroup.tunnelBundle
         p.serverAddress = "unbraid"
@@ -198,6 +198,7 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
             }
             m.onDemandRules = before.rules
             m.isOnDemandEnabled = before.onDemand
+            m.isEnabled = before.enabled
             throw error
         }
         try await m.loadFromPreferences()
