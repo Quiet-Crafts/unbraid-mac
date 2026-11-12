@@ -36,7 +36,7 @@ struct Entry: TimelineEntry {
 /// one entry is enough; a pause that ends on its own gets an entry at its resume time, and the moment the app stops
 /// vouching for the snapshot one that says "Open unbraid" (Snapshot.timeline).
 struct Provider: TimelineProvider {
-    func placeholder(in context: Context) -> Entry { Entry(snapshot: Snapshot(phase: .on, exits: 3)) }
+    func placeholder(in context: Context) -> Entry { Entry(snapshot: Snapshot(phase: .on, exits: 3, updated: .now)) }
     func getSnapshot(in context: Context, completion: @escaping (Entry) -> Void) { completion(Entry(snapshot: Snapshot.read())) }
     /// Read again on their own only when the app didn't reload them in time (Snapshot.nextRead).
     func getTimeline(in context: Context, completion: @escaping (Timeline<Entry>) -> Void) {
@@ -204,7 +204,7 @@ struct WidgetView: View {
 
     private var subtitle: String {
         switch s.phase {
-        case .on: "\(s.exits) VPN exit\(s.exits == 1 ? "" : "s")"
+        case .on: "\(s.exits) VPN route\(s.exits == 1 ? "" : "s")"
         case .connecting: "Setting up routes"
         case .paused: s.pausedUntil.map { "Resumes at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Until resumed"
         case .off: "Own connection"

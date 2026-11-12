@@ -90,6 +90,9 @@ struct SwitchProfileIntent: AppIntent {
 nonisolated struct ConnectPauseIntent: AppIntent {
     static let title: LocalizedStringResource = "Connect or Pause"
     static let isDiscoverable = false
+    /// Like the other intents: macOS can run it in the app, launching the app when it isn't running (Control Center
+    /// starts unbraid this way); run in the extension instead, it can only reach an app that is already open.
+    static let supportedModes: IntentModes = [.background, .foreground(.dynamic)]
     func perform() async throws -> some IntentResult {
         let s = Snapshot.read()
         try await WidgetAction.request(s.phase == .on && s.fresh(at: .now) ? "pause" : "connect")

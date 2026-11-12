@@ -98,7 +98,7 @@ struct MenuBarPanel: View {
                             Text(serverId(r, server)).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.dim).lineLimit(1)
                         }
                         if let reason = v.blocked[id] {
-                            Text("Blocked").font(.system(size: 11)).foregroundStyle(Ink.failedText).help(reason)
+                            Text("Not working").font(.system(size: 11)).foregroundStyle(Ink.failedText).help(reason)
                         }
                         Spacer(minLength: 8)
                         if showRate && v.blocked[id] == nil { RouteRate(route: id) }
@@ -132,7 +132,10 @@ struct MenuBarPanel: View {
         switch v.phase {
         case .on:
             let n = Set(model.vpn.tags.values).count
-            return "\(n) VPN exit\(n == 1 ? "" : "s") · since \(v.since.formatted(date: .omitted, time: .shortened))"
+            // A connection from an earlier day names the weekday: "since Tue 14:05" never reads as today.
+            let since = Calendar.current.isDateInToday(v.since) ? v.since.formatted(date: .omitted, time: .shortened)
+                : v.since.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+            return "\(n) VPN route\(n == 1 ? "" : "s") · since \(since)"
         case .connecting: return "Setting up your routes"
         case .paused:
             return v.pausedUntil.map { "Resumes at \($0.formatted(date: .omitted, time: .shortened)). Blocked apps stay blocked." }
