@@ -134,7 +134,14 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
     }
 
     nonisolated func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        let text = error.localizedDescription
+        let ns = error as NSError
+        let code = ns.domain == OSSystemExtensionErrorDomain ? OSSystemExtensionError.Code(rawValue: ns.code) : nil
+        // A replacement refused on purpose (an older app over a newer extension): the newer extension stays active.
+        if code == .requestCanceled {
+            Task { @MainActor in ext = .ready }
+            return
+        }
+        let text = code == .unsupportedParentBundleLocation ? "Move unbraid to the Applications folder, then open it from there." : error.localizedDescription
         Task { @MainActor in ext = .failed(text) }
     }
 
