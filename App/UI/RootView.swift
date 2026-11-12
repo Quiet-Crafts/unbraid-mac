@@ -22,7 +22,7 @@ struct PickerTarget: Identifiable, Hashable {
     var page: Page? = .apps(nil)
     /// The route being renamed. Its alert lives in the window, since menus drop the modifiers that would host it.
     var renaming: String?
-    /// The route about to be removed while apps are on it: they go back to the default, so it is confirmed first.
+    /// The route about to be removed: its apps go back to the default and it can't be brought back, so it is confirmed first.
     var removing: String?
     /// The first app was just blocked: ask whether Block covers the home network too.
     var blockScope = false
@@ -85,6 +85,8 @@ struct RootView: View {
     @Bindable private var presentation = Presentation.shared
     @State private var adding = false
     @State private var addAfterPicker = false
+    /// The picker's target while "Add a Provider" is open, so the picker comes back for it afterwards.
+    @State private var resumePicker: String?
     @State private var newName = ""
 
     /// Another sheet or question is up.
@@ -142,8 +144,9 @@ struct RootView: View {
         .alert("Block from your home network too?", isPresented: $presentation.blockScope) {
             Button("Block Home Network Too") { model.chooseBlockScope(.home) }
             Button("Internet Only") { model.chooseBlockScope(.internet) }
+            Button("Decide Later", role: .cancel) {}
         } message: {
-            Text("Blocking turns on the kill switch, so a blocked app can't find a way round the tunnel: while unbraid is reconnecting, nothing goes online. Internet Only blocks the internet and your tailnet; devices on your home network stay reachable. Home Network Too also keeps blocked apps away from your router, printer and other home devices; other apps still reach them. With the kill switch on, AirPlay and other discovery on your home network may not work. Change it any time in Settings › Protection.")
+            Text("Blocked apps can't reach the internet. Should they also be kept away from devices on your home network, like your printer?\n\nBlocking turns on the kill switch: nothing goes online while unbraid reconnects. Change this in Settings › Protection.")
         }
         .alert("Remove \(presentation.removing.map(model.setup.label) ?? "this route")?",
                isPresented: Binding(get: { presentation.removing != nil }, set: { if !$0 { presentation.removing = nil } })) {
@@ -152,15 +155,19 @@ struct RootView: View {
         } message: {
             let n = presentation.removing.map(model.apps.count(on:)) ?? 0
             let profiles = model.setup.saved.filter { p in p.defaultRoute == presentation.removing || p.apps.values.contains(presentation.removing ?? "") }.map(\.name)
-            Text("\(n) app\(n == 1 ? "" : "s") go back to the default route, \(model.setup.defaultLabel)." + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
+            let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(model.setup.label(model.setup.defaultRoute)))."
+            Text(apps + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
         }
         .sheet(item: $presentation.picker, onDismiss: {
             if addAfterPicker { addAfterPicker = false; adding = true }
-        }) {
-            PickerSheet(target: $0.id).environment(model)
-                .environment(\.addProvider) { addAfterPicker = true; presentation.picker = nil }
+        }) { item in
+            PickerSheet(target: item.id).environment(model)
+                .environment(\.addProvider) { resumePicker = item.id; addAfterPicker = true; presentation.picker = nil }
         }
-        .sheet(isPresented: $adding) { SignInView(first: false) }
+        // The picker comes back for what the user was choosing a place for, with the new provider or server listed.
+        .sheet(isPresented: $adding, onDismiss: {
+            if let id = resumePicker { resumePicker = nil; presentation.picker = PickerTarget(id: id) }
+        }) { SignInView(first: false, target: resumePicker ?? "") }
         // Asked once, after the first connection works, when nothing else is on screen; only an answer settles it (closing
         // the window keeps it for next time).
         .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy }, set: { _ in })) {
@@ -237,7 +244,8 @@ private struct Sidebar: View {
 
     var body: some View {
         let s = model.setup
-        List(selection: $presentation.page) {
+        // A list lets ⌘-click clear the selection; the page on show stays selected instead.
+        List(selection: Binding(get: { presentation.page }, set: { if let page = $0 { presentation.page = page } })) {
             Label { Text("All Apps") } icon: { Image(systemName: "square.grid.2x2").foregroundStyle(Ink.accentText) }
                 .badge(model.apps.listed.count).tag(Page.apps(nil))
             Section {
@@ -288,7 +296,7 @@ private struct RouteSidebarRow: View {
                     ViewThatFits(in: .horizontal) {
                         Text("DEFAULT").font(.system(size: 10, weight: .semibold, design: .monospaced)).tracking(0.6).foregroundStyle(Ink.dim)
                             .padding(.horizontal, 6).padding(.vertical, 2).background(Ink.high, in: RoundedRectangle(cornerRadius: Corner.mark))
-                        Image(systemName: "star.fill").font(.system(size: 12)).foregroundStyle(Ink.dim)
+                        Image(systemName: "checkmark.circle").font(.system(size: 12)).foregroundStyle(Ink.dim)
                             .help("Default route").accessibilityLabel("Default")
                     }
                 }
@@ -309,7 +317,7 @@ struct RouteActions: View {
     var body: some View {
         let s = model.setup
         let r = s.route(id)
-        if r != nil { Button("Change Server…") { openPicker(id) } }
+        if r != nil { Button("Change Location…") { openPicker(id) } }
         if r?.imported == true { Button("Rename…") { Presentation.shared.renaming = id } }
         if id != s.defaultRoute && id != BLOCK { Button("Make Default") { model.setDefault(id) } }
         if let r, !r.imported, let provider = Providers.get(r.loc.provider), provider.protection != nil {
@@ -322,7 +330,7 @@ struct RouteActions: View {
         if r != nil && id != s.defaultRoute {
             Divider()
             Button("Remove Route…", role: .destructive) {
-                if model.apps.count(on: id) > 0 || model.setup.saved.contains(where: { $0.defaultRoute == id || $0.apps.values.contains(id) }) { Presentation.shared.removing = id } else { model.removeRoute(id) }
+                Presentation.shared.removing = id
             }
         }
     }

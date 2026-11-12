@@ -45,7 +45,7 @@ private struct SaveProfileSheet: View {
                     Text("What it keeps").font(.headline)
                     Text("Default route · \(model.setup.label(model.setup.defaultRoute))")
                     let counts = Dictionary(grouping: model.setup.apps.values, by: { $0 }).mapValues(\.count).sorted { $0.key < $1.key }
-                    ForEach(Array(counts.prefix(3)), id: \.key) { id, count in Text("\(model.setup.label(id)) · \(count) apps") }
+                    ForEach(Array(counts.prefix(3)), id: \.key) { id, count in Text("\(model.setup.label(id)) · \(count) app\(count == 1 ? "" : "s")") }
                     if counts.count > 3 { Text("+\(counts.count - 3) more") }
                     Text("Routes are shared: changing a route's location changes it in every profile that uses it.").foregroundStyle(.secondary)
                 }
@@ -73,13 +73,13 @@ private struct ManageProfilesSheet: View {
                         HStack {
                             VStack(alignment: .leading) {
                                 HStack { Text(p.name); if p.name == model.setup.profile { Text("In use").font(.caption).foregroundStyle(.secondary) } }
-                                Text("\(model.setup.label(p.defaultRoute)) · \(p.apps.count) exceptions").font(.caption).foregroundStyle(.secondary)
+                                Text("\(model.setup.label(p.defaultRoute)) · \(p.apps.count) with their own route").font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Button { model.store.update { $0.move(p.name, by: -1) } } label: { Image(systemName: "arrow.up") }
-                                .accessibilityLabel("Move \(p.name) Up")
+                                .help("Move Up").accessibilityLabel("Move \(p.name) Up")
                             Button { model.store.update { $0.move(p.name, by: 1) } } label: { Image(systemName: "arrow.down") }
-                                .accessibilityLabel("Move \(p.name) Down")
+                                .help("Move Down").accessibilityLabel("Move \(p.name) Down")
                             Button("Rename") { rename = p.name; name = p.name }.accessibilityLabel("Rename \(p.name)")
                             Button("Delete", role: .destructive) { deleting = p.name }.accessibilityLabel("Delete \(p.name)")
                         }
@@ -97,6 +97,7 @@ private struct ManageProfilesSheet: View {
         } actions: {
             Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
         }.frame(height: 420)
+        .onExitCommand { dismiss() }
         .alert("Rename Profile", isPresented: Binding(get: { rename != nil }, set: { if !$0 { rename = nil } })) {
             TextField("Name", text: $name)
             Button("Save") { if let old = rename { model.store.update { $0.rename(old, name) } } }.disabled(model.setup.profileName(name, except: rename) == nil)

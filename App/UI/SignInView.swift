@@ -6,7 +6,7 @@ enum Disclosure {
     static let text = """
         unbraid creates a VPN on this Mac to route each app through the exit you chose. It reads the list of installed apps only on this Mac, to let you assign them. Traffic goes to the exits you chose: VPN providers, your own servers or Tailscale. Apps set to Direct and your local network, if allowed, use your normal connection.
 
-        unbraid has no servers of its own and no analytics. Its optional DNS filters contact dns.adguard-dns.com, family.adguard-dns.com, security.cloudflare-dns.com, family.cloudflare-dns.com, dns.nextdns.io or dns.quad9.net, or your own server. It contacts your VPN providers, DNS servers, Tailscale if you use it, and GitHub for some server lists. To check that a VPN still works, it asks Google or Cloudflare through that VPN, never over your normal connection. To show an exit address, it asks www.cloudflare.com or one.one.one.one through that exit while its page or the menu bar is open. With Direct as the default route, some lookups made through macOS, but not addresses, use your network’s DNS.
+        unbraid has no servers of its own and no analytics. Its optional DNS filters contact dns.adguard-dns.com, family.adguard-dns.com, security.cloudflare-dns.com, family.cloudflare-dns.com, dns.nextdns.io or dns.quad9.net, or your own server. It contacts your VPN providers, DNS servers, Tailscale if you use it, and GitHub for some server lists. unbraid's own requests to your providers use your normal connection, not the VPN. To check that a VPN still works, it asks Google or Cloudflare through that VPN, never over your normal connection. To show an exit address, it asks www.cloudflare.com or one.one.one.one through that exit while its page or the menu bar is open. With Direct as the default route, some lookups made through macOS, but not addresses, use your network’s DNS.
 
         AirVPN API-key sign-in sends your API key in a header to airvpn.org/api/ to list, add, rename and remove devices, read the generator config and your account information. IVPN sends your two-factor code or captcha answer to api.ivpn.net with your sign-in when required. Mullvad uses api.mullvad.net to read your account details and list, register, check and remove devices.
         """
@@ -16,6 +16,8 @@ enum Disclosure {
 /// server of your own, or use Tailscale only.
 struct SignInView: View {
     var first: Bool
+    /// What a server imported here becomes: "" a new route, or the route (or "app:<key>") the picker was open for.
+    var target = ""
     private let model = AppModel.shared
     @Environment(\.dismiss) private var dismiss
     @State private var choice: String?
@@ -29,7 +31,7 @@ struct SignInView: View {
                 }
         }
         // A saved server also becomes the first route. First run needs no dismissal: signedIn flips and RootView swaps.
-        .importFlow(importer, target: "") { if !first { dismiss() } }
+        .importFlow(importer, target: target) { if !first { dismiss() } }
         .frame(width: first ? nil : 520, height: first ? nil : 540)
         .background(CaptureExclusion())
     }
@@ -65,7 +67,7 @@ struct SignInView: View {
                         row("Use Tailscale Only", "No VPN provider, just your tailnet", symbol: "circle.grid.3x3", color: IconTile.Tile.indigo) { model.useTailscaleOnly() }
                     }
                 } header: {
-                    Text("Your own server")
+                    Text("My Servers")
                 } footer: {
                     if let e = importer.error { Label(e, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Ink.failedText) }
                 }
@@ -157,6 +159,8 @@ private struct ProviderForm: View {
         .formStyle(.grouped).scrollContentBackground(.hidden).background(Ink.ground)
         .navigationTitle(provider.name)
         .toolbar {
+            // Escape leaves the whole sheet from here too, not only from the list behind.
+            if !first { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: done) } }
             ToolbarItem(placement: .confirmationAction) {
                 Button { submit() } label: {
                     if busy { ProgressView().controlSize(.small).accessibilityLabel("Working") } else { Text("Sign In") }
