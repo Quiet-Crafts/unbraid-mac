@@ -253,6 +253,8 @@ struct AppsView: View {
         let p = NSOpenPanel()
         p.message = "Choose an app or a command-line tool. An interpreter such as python3 routes every script it runs; a script such as pip3 runs as its interpreter, so its own path routes nothing. Press ⇧⌘G to type a path such as /usr/bin/curl."
         p.prompt = "Add"
+        // A tool picked through a link (Homebrew) keeps the link path, which survives upgrades.
+        p.resolvesAliases = false
         p.directoryURL = URL(fileURLWithPath: "/Applications")
         guard p.runModal() == .OK, let url = p.url else { return }
         // An app, or a program that can run: any other file would be listed and route nothing.
