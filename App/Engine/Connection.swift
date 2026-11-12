@@ -641,6 +641,7 @@ final class Connection {
     }
 
     static let interruptedSignOut = "unbraid stopped the VPN to finish erasing a signed-out setup. Connect again."
+    private static let stopUnconfirmed = "The VPN hasn't confirmed that it stopped. Check System Settings, VPN."
     private static let fallbackRuns = "Connect on Demand couldn't be turned off, so macOS keeps the VPN running with nothing on it: "
         + "everything goes direct, outside any VPN. unbraid turns it off as soon as it can."
     /// Another user's fallback (`sealFallbackIfStuck`) runs: their engine, never stopped from here, and no VPN.
@@ -763,7 +764,7 @@ final class Connection {
                     // real status is read again once the queue is free.
                     guard g == generation else { return }
                     off(forget: false)
-                    state.error = "The VPN hasn't confirmed that it stopped. Check System Settings, VPN."
+                    state.error = Self.stopUnconfirmed
                     Task { await statusChanged() }
                     return
                 }
@@ -2485,7 +2486,7 @@ final class Connection {
                 // process may have turned it on.
                 if state.phase == .off, tunnel.status == .disconnected {
                     // What was said about a fallback running is over with it.
-                    if state.error == Self.fallbackRuns || state.error == Self.othersFallbackRuns { state = VpnState() }
+                    if state.error == Self.fallbackRuns || state.error == Self.othersFallbackRuns || state.error == Self.stopUnconfirmed { state = VpnState() }
                     holdOnDemandSoon()
                 }
             }
