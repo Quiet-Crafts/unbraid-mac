@@ -149,6 +149,13 @@ final class IvpnTests: XCTestCase {
         XCTAssertEqual(signInFailure(conflicting!, "IVPN"), "IVPN answered with an error (HTTP 502). Try again later.")
     }
 
+    func testSessionAddressMustBeFourPlainNumbers() {
+        for ip in ["x", "foo/32", "::1", "1.2.3/32", "01.2.3.4", "1.2.3.4.5", "host.example"] {
+            let e = thrown { try Ivpn.session((200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"\#(ip)"}}"#)), "a", "p") }
+            XCTAssertEqual(e?.localizedDescription, "Unexpected reply from IVPN", ip)
+        }
+    }
+
     func testRetryChallengesAndRateLimit() {
         for (status, message) in [(70011, "Enter the code from your authenticator app."), (70012, "That code didn't work. Enter the current one."), (70001, "Type the characters in the picture."), (70002, "That didn't match. Try this picture.")] {
             let body = D("{\"status\":\(status),\"captcha_id\":\"safe\"}")

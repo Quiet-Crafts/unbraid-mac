@@ -202,6 +202,8 @@ nonisolated struct Ivpn: Provider {
         case let status: throw Fail("IVPN error \(status)")
         }
         guard let ip = o.wireguard?.ipAddress, !ip.isEmpty, !ip.prefix(while: { $0 != "/" }).isEmpty else { throw Fail("IVPN didn't assign a WireGuard address") }
+        // It becomes the tunnel's own address: four plain numbers, or the reply isn't one to trust.
+        guard Catalog.Entry.octets(String(ip.prefix { $0 != "/" })) != nil else { throw Fail("Unexpected reply from IVPN") }
         guard let token = o.token, !token.isEmpty else { throw Fail("IVPN didn't return a session") }
         return JSON.encode(Account(accountId: account, sessionToken: token, privateKey: privateKey, ipAddress: String(ip.prefix { $0 != "/" }), limit: o.service_status?.deviceLimit, device: o.device_name.map { String($0.prefix(64)) }, createdAt: Date()))
     }

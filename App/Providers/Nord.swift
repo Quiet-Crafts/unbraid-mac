@@ -65,7 +65,18 @@ nonisolated struct Nord: Provider {
         let proto = String(tech.dropFirst("openvpn_".count))
         guard sv.host.wholeMatch(of: /[a-z0-9-]+\.nordvpn\.com/) != nil else { throw Fail("Unexpected server name") }
         let data = try await Http.get("https://downloads.nordcdn.com/configs/files/ovpn_\(proto)/servers/\(sv.host).\(proto).ovpn")
-        return .ovpn(sv, try Manual.parseOvpn(Self.withLegacyCiphers(String(decoding: data, as: UTF8.self)), name: sv.name, username: user, password: pass))
+        return .ovpn(sv, try Self.profile(String(decoding: data, as: UTF8.self), sv, user: user, pass: pass))
+    }
+
+    /// The downloaded profile, parsed. The tunnel dials whatever `remote` lines it holds, so each must be a public
+    /// address, as every other path requires of its endpoint; a host name, private or loopback address is refused.
+    static func profile(_ text: String, _ sv: Server, user: String, pass: String) throws -> OvpnProfile {
+        let hosts = text.split(whereSeparator: \.isNewline).compactMap { line -> String? in
+            let words = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
+            return words.first == "remote" ? (words.count > 1 ? String(words[1]) : "") : nil
+        }
+        guard !hosts.isEmpty, hosts.allSatisfy(Catalog.Entry.publicIPv4) else { throw Fail("\(sv.name) can't be reached right now") }
+        return try Manual.parseOvpn(withLegacyCiphers(text), name: sv.name, username: user, password: pass)
     }
 
     /// Servers by Nord's name for them; tests replace it.

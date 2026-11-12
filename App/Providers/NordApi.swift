@@ -24,10 +24,12 @@ nonisolated enum NordApi {
     private static func number(_ v: Any?) -> Int? { (v as? Int) ?? (v as? String).flatMap { Int($0) } }
 
     /// NordLynx private key plus the service username/password OpenVPN needs.
-    static func credentials(_ token: String) async throws -> (key: String, user: String, pass: String) {
-        guard let o = try JSON.object(try await get("/users/services/credentials", token), "NordVPN") as? [String: Any],
+    static func credentials(_ token: String, request: @Sendable (String, [String: String], Bool) async throws -> Data = { try await Http.get($0, headers: $1, credentials: $2) }) async throws -> (key: String, user: String, pass: String) {
+        guard let o = try JSON.object(try await get("/users/services/credentials", token, request: request), "NordVPN") as? [String: Any],
               let key = o["nordlynx_private_key"] as? String, let user = o["username"] as? String, let pass = o["password"] as? String
         else { throw unexpected() }
+        // Checked here, at sign-in, rather than later at connect, where a bad key reads as a problem with the route.
+        guard validWgKey(key) else { throw unexpected() }
         return (key, user, pass)
     }
 

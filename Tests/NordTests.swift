@@ -110,4 +110,28 @@ final class NordTests: XCTestCase {
             XCTAssertEqual(error.localizedDescription, "That doesn't look like a NordVPN token")
         }
     }
+
+    func testSignInChecksTheServiceKeyAndOpenVpnRemotes() async throws {
+        let valid = key1
+        let good = try await NordApi.credentials("t", request: { _, _, _ in Data(#"{"nordlynx_private_key":"\#(valid)","username":"u","password":"p"}"#.utf8) })
+        XCTAssertEqual(good.key, key1)
+        // 31 bytes of key: refused at sign-in, not found later as a problem with a route.
+        let short = Data(repeating: 1, count: 31).base64EncodedString()
+        for key in [short, "not base64", ""] {
+            do {
+                _ = try await NordApi.credentials("t", request: { _, _, _ in Data(#"{"nordlynx_private_key":"\#(key)","username":"u","password":"p"}"#.utf8) })
+                XCTFail("accepted key \(key)")
+            } catch { XCTAssertEqual(error.localizedDescription, "Unexpected reply from NordVPN") }
+        }
+        let sv = Server(name: "UK #1", host: "uk1.nordvpn.com", ip: "89.238.150.123", publicKey: "", load: 1)
+        XCTAssertNoThrow(try Nord.profile(ovpn("nord-double.udp.ovpn"), sv, user: "u", pass: "p"))
+        let original = ovpn("nord-double.udp.ovpn")
+        for remote in ["192.168.1.1 1194", "127.0.0.1 1194", "evil.example.com 1194", "10.0.0.1 1194"] {
+            let tampered = original.replacingOccurrences(of: "remote 89.238.150.123 1231", with: "remote \(remote)")
+            XCTAssertThrowsError(try Nord.profile(tampered, sv, user: "u", pass: "p"), remote)
+        }
+        // A profile with no remote at all is refused here too, not left to the parser.
+        let none = original.split(separator: "\n").filter { !$0.hasPrefix("remote ") }.joined(separator: "\n")
+        XCTAssertThrowsError(try Nord.profile(none, sv, user: "u", pass: "p"))
+    }
 }
