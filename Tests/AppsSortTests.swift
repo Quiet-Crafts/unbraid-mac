@@ -35,4 +35,11 @@ final class AppsSortTests: XCTestCase {
     func testIsAStrictOrderOnEqualRows() {
         XCTAssertFalse(AppsSort().inOrder(row("Same"), row("Same")))
     }
+
+    func testSearchMatchesNamesAndToolPathsButNotAppIdentifiers() {
+        XCTAssertTrue(AppSearch.matches(name: "Mail", id: "com.apple.mail", query: "mail"))
+        XCTAssertTrue(AppSearch.matches(name: "anything", id: "anything", query: ""))
+        XCTAssertFalse(AppSearch.matches(name: "Xcode", id: "com.apple.dt.Xcode", query: "app"))
+        XCTAssertTrue(AppSearch.matches(name: "curl", id: "/usr/bin/curl", query: "usr/bin"))
+    }
 }

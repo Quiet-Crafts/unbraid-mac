@@ -11,11 +11,9 @@ struct AppsView: View {
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var exitWatch = UUID()
     @State private var query = ""
-    @State private var showSystem = false
+    /// The sort and the system-apps switch outlive the page, so leaving for Traffic and coming back keeps them.
+    @Bindable private var filter = AppsFilter.shared
     @State private var selection = Set<String>()
-    /// An app added from a route's page, shown once All Apps has reset (see `add`).
-    @State private var pendingReveal: String?
-    @State private var sort = AppsSort()
     /// Bytes per app this week, from the statistics. Outlives the page, so coming back shows the numbers at once.
     private let week = WeekBytes.shared
     /// The week's bytes when the list was last sorted: rows keep their places while the numbers refresh underneath,
@@ -54,7 +52,7 @@ struct AppsView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let id = route {
                     if s.route(id) != nil {
-                        Button("Change Server…") { Presentation.shared.picker = PickerTarget(id: id) }
+                        Button("Change Location…") { Presentation.shared.picker = PickerTarget(id: id) }
                     }
                     if s.route(id) != nil || (id != BLOCK && id != s.defaultRoute) {
                         Menu { RouteActions(id: id) } label: { Label("Actions for \(s.label(id))", systemImage: "ellipsis") }
@@ -66,9 +64,9 @@ struct AppsView: View {
             ToolbarItemGroup(placement: .principal) {
                 SearchField(text: $query, prompt: "Search apps").frame(minWidth: 150, idealWidth: 260, maxWidth: 320)
                 Menu {
-                    Toggle("Include System Apps", isOn: $showSystem)
+                    Toggle("Include System Apps", isOn: $filter.showSystem)
                 } label: {
-                    Label("Filter", systemImage: showSystem ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
+                    Label("Filter", systemImage: filter.showSystem ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease")
                 }
                 .help("Filter apps")
                 Button(action: add) { Label("Add App…", systemImage: "plus") }.help("Add an app or command-line tool")
@@ -82,7 +80,6 @@ struct AppsView: View {
         .onDisappear { ExitCheck.shared.watch(exitWatch, visible: false) }
         .onChange(of: route) {
             selection = []; query = ""
-            if let key = pendingReveal { pendingReveal = nil; reveal(key) }
             ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK)
         }
         // Only what is on screen stays selected, so Move To never acts on apps the search or a move has hidden.
@@ -110,7 +107,7 @@ struct AppsView: View {
             }
             if !Task.isCancelled && !model.setup.prefs.stats { week.bytes = [:] }
         }
-        .onChange(of: sort) { rank = week.bytes }
+        .onChange(of: filter.sort) { rank = week.bytes }
     }
 
     // MARK: Header
@@ -170,7 +167,7 @@ struct AppsView: View {
     private func table(_ rows: [Row]) -> some View {
         // Icons and the tools' patterns can change without the list of apps changing.
         let _ = (model.apps.revision, model.apps.patternRevision)
-        return AppsTable(rows: rows, week: week.bytes, peak: week.peak, page: route ?? "", selection: $selection, sort: $sort)
+        return AppsTable(rows: rows, week: week.bytes, peak: week.peak, page: route ?? "", selection: $selection, sort: $filter.sort)
             .background { if rows.isEmpty { Color.clear.tourAnchor(2) } }
             // Step 3 of the tour points at the first row's route, in the Route column.
             .overlay(alignment: .topLeading) {
@@ -178,6 +175,18 @@ struct AppsView: View {
             }
             .pageWidth()
             .overlay { empty(rows) }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                // A few matches are listed, but others are among the hidden system apps.
+                let hidden = hiddenSystemMatches(model.setup)
+                if !rows.isEmpty && hidden > 0 {
+                    HStack(spacing: 6) {
+                        Text("\(hidden) macOS \(hidden == 1 ? "app matches" : "apps match") too.")
+                        Button("Show System Apps") { filter.showSystem = true }.contentButton()
+                    }
+                    .font(.system(size: 12)).foregroundStyle(Ink.dim).padding(.vertical, 8)
+                    .frame(maxWidth: .infinity)
+                }
+            }
     }
 
     @ViewBuilder private func empty(_ rows: [Row]) -> some View {
@@ -191,7 +200,19 @@ struct AppsView: View {
             }
         } else if rows.isEmpty {
             if !model.apps.loaded { ProgressView().accessibilityLabel("Loading apps") }
-            else if !query.isEmpty { ContentUnavailableView.search(text: query) }
+            else if !query.isEmpty {
+                let hidden = hiddenSystemMatches(model.setup)
+                if hidden > 0 {
+                    // Mail, Messages, App Store and the like are system apps, hidden unless asked for.
+                    ContentUnavailableView {
+                        Label("No Results for “\(query)”", systemImage: "magnifyingglass")
+                    } description: {
+                        Text("\(hidden) macOS \(hidden == 1 ? "app matches" : "apps match"), but system apps are hidden.")
+                    } actions: {
+                        Button("Show System Apps") { filter.showSystem = true }
+                    }
+                } else { ContentUnavailableView.search(text: query) }
+            }
             else {
                 ContentUnavailableView {
                     Label("No apps on this route", systemImage: "app.dashed")
@@ -209,33 +230,58 @@ struct AppsView: View {
         let q = query.trimmingCharacters(in: .whitespaces)
         return model.apps.apps.filter { a in
             // One missing is listed only while it keeps a route of its own.
-            (a.missing ? s.apps[a.id] != nil : showSystem || !a.system || s.apps[a.id] != nil) && (route == nil || s.routeOf(a.id) == route)
-                && (q.isEmpty || a.name.localizedStandardContains(q) || a.id.localizedStandardContains(q))
+            (a.missing ? s.apps[a.id] != nil : filter.showSystem || !a.system || s.apps[a.id] != nil) && (route == nil || s.routeOf(a.id) == route)
+                && AppSearch.matches(name: a.name, id: a.id, query: q)
         }
         .map { a in Row(id: a.id, name: a.name, routeName: s.label(s.routeOf(a.id)), week: rank[a.id] ?? 0) }
-        .sorted(by: sort.inOrder)
+        .sorted(by: filter.sort.inOrder)
+    }
+
+    /// Apps from macOS itself that match the search but are hidden, so the page can say so instead of "No Results".
+    private func hiddenSystemMatches(_ s: Setup) -> Int {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty, !filter.showSystem else { return 0 }
+        return model.apps.apps.filter { a in
+            a.system && !a.missing && s.apps[a.id] == nil && (route == nil || s.routeOf(a.id) == route)
+                && AppSearch.matches(name: a.name, id: a.id, query: q)
+        }.count
     }
 
     /// Any app or command-line tool, wherever it lives. It is listed (searched by name, so it is easy to find) and its
     /// Route menu does the rest; a tool is remembered once it has a route.
     private func add() {
         let p = NSOpenPanel()
-        p.message = "Choose an app or a command-line tool. An interpreter such as python3 routes every script it runs; a script such as pip3 runs as its interpreter, so its own path routes nothing."
+        p.message = "Choose an app or a command-line tool. An interpreter such as python3 routes every script it runs; a script such as pip3 runs as its interpreter, so its own path routes nothing. Press ⇧⌘G to type a path such as /usr/bin/curl."
         p.prompt = "Add"
         p.directoryURL = URL(fileURLWithPath: "/Applications")
         guard p.runModal() == .OK, let url = p.url else { return }
+        // An app, or a program that can run: any other file would be listed and route nothing.
+        guard AppScan.bundle(url, system: false) != nil || FileManager.default.isExecutableFile(atPath: url.path) else {
+            let alert = NSAlert()
+            alert.messageText = "That file isn't an app or a program."
+            alert.informativeText = "Choose an app, or a command-line tool such as /usr/bin/curl."
+            alert.runModal()
+            return
+        }
         let key = model.apps.add(url)
-        // From a route's page, open All Apps first; the page's reset (onChange of route) then shows the app, so the
-        // search and selection come after it whatever order SwiftUI runs them in.
-        if route != nil { pendingReveal = key; navigate(.apps(nil)) } else { reveal(key) }
+        // From a route's page the app goes onto that route and is shown there.
+        if let route { model.move([key], to: route, undo: undo) }
+        reveal(key)
     }
 
     /// Finds an added app in the list and selects it.
     private func reveal(_ key: String) {
         // A listed system app stays one; without a route it is listed only with system apps, so show them.
-        if model.apps.app(key)?.system == true, model.setup.apps[key] == nil { showSystem = true }
+        if model.apps.app(key)?.system == true, model.setup.apps[key] == nil { filter.showSystem = true }
         query = model.apps.app(key)?.name ?? ""; selection = [key]
     }
+}
+
+/// The apps list's sort and system-apps switch. Kept outside the page so they survive a visit to another page.
+@Observable final class AppsFilter {
+    static let shared = AppsFilter()
+    var sort = AppsSort()
+    var showSystem = false
 }
 
 /// The Apps menu and Find for this page. Reads the selection itself, so selecting rows redraws only this.

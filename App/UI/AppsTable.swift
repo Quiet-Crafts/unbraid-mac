@@ -619,7 +619,7 @@ private final class WeekRowCell: DrawnCell {
         toolTip = bytes.map { "\($0.formatted()) bytes" } ?? "No recorded data"
         setAccessibilityElement(true)
         setAccessibilityRole(.staticText)
-        setAccessibilityLabel(new.text)
+        setAccessibilityLabel(bytes == nil ? "No data this week" : new.text)
         needsDisplay = true
     }
 

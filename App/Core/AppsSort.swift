@@ -31,3 +31,12 @@ nonisolated struct AppsSort: Equatable {
         return a.name.localizedStandardCompare(b.name) == .orderedAscending
     }
 }
+
+/// What the apps search matches.
+nonisolated enum AppSearch {
+    /// A name always matches; the identifier only for a command-line tool, whose path the row shows. An app's
+    /// identifier is not shown, so "app" must not list every com.apple app.
+    static func matches(name: String, id: String, query q: String) -> Bool {
+        q.isEmpty || name.localizedStandardContains(q) || (id.hasPrefix("/") && id.localizedStandardContains(q))
+    }
+}
