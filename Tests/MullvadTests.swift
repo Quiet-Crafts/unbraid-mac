@@ -183,6 +183,92 @@ final class MullvadTests: XCTestCase {
         XCTAssertFalse(Mullvad.revoked(despite: blocked!))
     }
 
+    func testAvailabilityFlagsOfTheWrongTypeMeanUnavailable() throws {
+        func relay(_ extra: String) -> String {
+            #"{"hostname":"se-got-wg-001","location":"se-got","ipv4_addr_in":"1.2.3.4","public_key":"vOgsnvam/Xc6w8zfQeGcynOr8RMxYzpki3b0EaOkEoI="\#(extra)}"#
+        }
+        func parsed(_ extra: String) throws -> Mullvad.Relay {
+            try XCTUnwrap(Mullvad.parse(D(#"{"locations":{"se-got":{"country":"Sweden","city":"Gothenburg"}},"wireguard":{"relays":[\#(relay(extra))]}}"#)).wireguard.relays.first)
+        }
+        XCTAssertTrue(try parsed("").active)
+        XCTAssertTrue(try parsed(#","active":true"#).active)
+        XCTAssertFalse(try parsed(#","active":false"#).active)
+        XCTAssertFalse(try parsed(#","active":"true""#).active)
+        XCTAssertFalse(try parsed(#","active":1"#).active)
+        XCTAssertTrue(try parsed(#","include_in_country":null"#).inCountry)
+        XCTAssertFalse(try parsed(#","include_in_country":"yes""#).inCountry)
+    }
+
+    func testAnAddressThatIsNotFourNumbersIsNotAnAddress() throws {
+        for ip in ["", "x/32", "foo", "::1/128", "1.2.3/32", "01.2.3.4/32", "host.example/32"] {
+            let reply = (201, D(#"{"id":"d","name":"n","pubkey":"k","ipv4_address":"\#(ip)"}"#))
+            XCTAssertEqual(thrown { try Mullvad.device(reply, "1234567890123456", "p") }?.localizedDescription, "Unexpected reply from Mullvad", ip)
+        }
+        let keys = WgKeys.Keys(privateKey: "priv", publicKey: "ourpub")
+        let bad = D(#"[{"id":"d-2","name":"b","pubkey":"ourpub","ipv4_address":"nonsense"}]"#)
+        XCTAssertNotNil(thrown { try Mullvad.adopt(bad, "1234567890123456", keys) })
+    }
+
+    /// The real revocation path, with only the network replaced: a 401 from the device lookup must not count as removal.
+    func testDeviceLookupRefusedWith401IsNotARevocation() async throws {
+        let account = JSON.encode(Mullvad.Account(account: "1111222233334444", privateKey: "k", ipv4Address: "10.0.0.2/32", deviceId: "dev-1"))
+        let token = (200, D(#"{"access_token":"t","expiry":"2099-01-01T00:00:00Z"}"#))
+        func provider(token: (Int, Data), device: Int) -> Mullvad {
+            var p = Mullvad()
+            p.post = { _, _, _ in token }
+            // The same status check the real request applies, with the flag the code under test passes.
+            p.get = { _, _, credentials in try Http.check(device, credentials: credentials); return Data("{}".utf8) }
+            return p
+        }
+        let refused = try await provider(token: token, device: 401).revoked(account)
+        XCTAssertFalse(refused)
+        let outage = try await provider(token: token, device: 500).revoked(account)
+        XCTAssertFalse(outage)
+        let present = try await provider(token: token, device: 200).revoked(account)
+        XCTAssertFalse(present)
+        let removed = try await provider(token: token, device: 404).revoked(account)
+        XCTAssertTrue(removed)
+        // The token call's own refusal is a real one.
+        let gone = try await provider(token: (400, D(#"{"code":"INVALID_ACCOUNT"}"#)), device: 200).revoked(account)
+        XCTAssertTrue(gone)
+    }
+
+    func testSignOutOfAnAccountMullvadNoLongerKnowsIsReleased() async throws {
+        let account = JSON.encode(Mullvad.Account(account: "5555666677778888", privateKey: "k", ipv4Address: "10.0.0.2/32", deviceId: "dev-1"))
+        XCTAssertTrue(Mullvad.accountGone((400, D(#"{"code":"INVALID_ACCOUNT","error":"x"}"#))))
+        XCTAssertFalse(Mullvad.accountGone((401, Data())))
+        XCTAssertFalse(Mullvad.accountGone((500, D("INVALID_ACCOUNT"))))
+        var p = Mullvad()
+        p.post = { _, _, _ in (400, Data(#"{"code":"INVALID_ACCOUNT","error":"x"}"#.utf8)) }
+        let released = await p.signOut(account)
+        XCTAssertTrue(released)
+        p.post = { _, _, _ in (500, Data()) }
+        let outage = await p.signOut(account)
+        XCTAssertFalse(outage)
+    }
+
+    func testOneAccessTokenServesTheProviderPage() async throws {
+        let account = JSON.encode(Mullvad.Account(account: "9999000011112222", privateKey: "k", ipv4Address: "10.0.0.2/32", deviceId: "dev-1"))
+        let calls = Counter()
+        var p = Mullvad()
+        p.post = { _, _, _ in calls.bump(); return (200, Data(#"{"access_token":"t","expiry":"2099-01-01T00:00:00Z"}"#.utf8)) }
+        p.get = { url, _, _ in
+            Data(url.hasSuffix("/me") ? #"{"expiry":"2099-01-01T00:00:00Z"}"#.utf8 : #"[{"id":"dev-1","name":"calm fox","pubkey":"k","ipv4_address":"10.0.0.2/32"}]"#.utf8)
+        }
+        _ = try await p.plan(account)
+        _ = try await p.device(account)
+        _ = try await p.deviceCount(account)
+        XCTAssertEqual(calls.count, 1)
+        // A token about to expire is not kept.
+        let short = Mullvad.TokenCache()
+        short.keep("t", until: Date().addingTimeInterval(30), "a")
+        XCTAssertNil(short.token("a"))
+        short.keep("t", until: Date().addingTimeInterval(3600), "a")
+        XCTAssertEqual(short.token("a"), "t")
+        short.forget("a")
+        XCTAssertNil(short.token("a"))
+    }
+
     func testAnAlreadyRemovedDeviceCountsAsReleased() {
         XCTAssertTrue(Mullvad.released(despite: Http.Status(code: 404)))
         XCTAssertFalse(Mullvad.released(despite: Http.Status(code: 500)))
@@ -261,4 +347,11 @@ extension MullvadTests {
         XCTAssertEqual(try Mullvad.expiry(Data(#"{"expiry":"2026-11-22T08:00:00Z"}"#.utf8), now: Date(timeIntervalSince1970: 0)), "Paid until 22 Nov 2026")
         XCTAssertEqual(try Mullvad.expiry(Data(#"{"expiry":"2026-11-22T08:00:00.123Z"}"#.utf8), now: Date(timeIntervalSince1970: 0)), "Paid until 22 Nov 2026")
     }
+}
+
+private final class Counter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var n = 0
+    func bump() { lock.lock(); n += 1; lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return n }
 }

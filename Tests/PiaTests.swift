@@ -56,6 +56,14 @@ final class PiaTests: XCTestCase {
         XCTAssertEqual(try Pia.parseRegions(D(body)).map(\.id), ["c"])
     }
 
+    func testAnOfflineFlagOfTheWrongTypeMeansOffline() throws {
+        let body = #"{"regions":[{"id":"a","name":"A","country":"NL","offline":"false","servers":{"wg":[{"ip":"1.1.1.1","cn":"x"}]}},"#
+            + #"{"id":"b","name":"B","country":"NL","offline":1,"servers":{"wg":[{"ip":"1.1.1.2","cn":"y"}]}},"#
+            + #"{"id":"c","name":"C","country":"NL","offline":null,"servers":{"wg":[{"ip":"1.1.1.3","cn":"z"}]}},"#
+            + #"{"id":"d","name":"D","country":"NL","offline":false,"servers":{"wg":[{"ip":"1.1.1.4","cn":"w"}]}}]}"#
+        XCTAssertEqual(try Pia.parseRegions(D(body)).map(\.id), ["c", "d"])
+    }
+
     func testRegionWithALongCountryIsDroppedNotACrash() throws {
         let body = #"{"regions":[{"id":"a","name":"A","country":"NETHERLANDS","servers":{"wg":[{"ip":"1.1.1.1","cn":"x"}]}},"#
             + #"{"id":"b","name":"B","country":"","servers":{"wg":[{"ip":"1.1.1.2","cn":"y"}]}},"#

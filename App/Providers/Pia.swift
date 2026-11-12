@@ -322,6 +322,6 @@ nonisolated extension Pia.Region {
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         self.init(id: try c.decode(String.self, forKey: .id), name: try c.decode(String.self, forKey: .name), country: try c.decode(String.self, forKey: .country),
-                  geo: c(.geo, false), portForward: c(.portForward, false), offline: c(.offline, false), servers: c(.servers, Pia.Servers()))
+                  geo: c(.geo, false), portForward: c(.portForward, false), offline: c.flag(.offline, absent: false, wrong: true), servers: c(.servers, Pia.Servers()))
     }
 }

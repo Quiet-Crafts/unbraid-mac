@@ -74,7 +74,8 @@ nonisolated struct Mullvad: Provider {
 
     private struct TokenReply: Decodable {
         let accessToken: String
-        enum CodingKeys: String, CodingKey { case accessToken = "access_token" }
+        var expiry: String?
+        enum CodingKeys: String, CodingKey { case accessToken = "access_token", expiry }
     }
 
     struct DeviceReply: Decodable {
@@ -127,10 +128,10 @@ nonisolated struct Mullvad: Provider {
     @concurrent func signIn(_ input: [String: String]) async throws -> String {
         let n = (input["account"] ?? "").filter { !$0.isWhitespace && $0 != "-" }
         guard n.wholeMatch(of: /[0-9]{16}/) != nil else { throw Fail("A Mullvad account number has 16 digits") }
-        let token = try await accessToken(n)
+        let token = try await accessToken(n, fresh: true).token
         let keys = WgKeys.generate()
         do {
-            let reply = try await postJSONRaw("\(Self.api)/accounts/v1/devices", #"{"pubkey":"\#(keys.publicKey)","hijack_dns":false}"#, headers: bearer(token))
+            let reply = try await post("\(Self.api)/accounts/v1/devices", #"{"pubkey":"\#(keys.publicKey)","hijack_dns":false}"#, bearer(token))
             return try Self.device(reply, n, keys.privateKey)
         } catch let e as AuthError {
             throw e
@@ -144,9 +145,18 @@ nonisolated struct Mullvad: Provider {
     @concurrent func signOut(_ account: String) async -> Bool {
         do {
             let a = try Self.account(account)
-            _ = try await Http.delete("\(Self.api)/accounts/v1/devices/\(Http.enc(a.deviceId))", headers: bearer(try await accessToken(a.account)), credentials: true)
+            defer { Self.tokens.forget(a.account) }
+            let reply = try await post("\(Self.api)/auth/v1/token", #"{"account_number":"\#(a.account)"}"#, [:])
+            // An account Mullvad no longer knows has no device slot left to free.
+            if Self.accountGone(reply) { return true }
+            _ = try await Http.delete("\(Self.api)/accounts/v1/devices/\(Http.enc(a.deviceId))", headers: bearer(try Self.token(reply)), credentials: true)
             return true
         } catch { return Self.released(despite: error) }
+    }
+
+    /// The token call's own answer to an account number Mullvad doesn't have (deleted, or expired and purged).
+    static func accountGone(_ reply: (Int, Data)) -> Bool {
+        reply.0 == 400 && String(decoding: reply.1, as: UTF8.self).contains("INVALID_ACCOUNT")
     }
 
     /// No such device (404): it was already removed, on mullvad.net or by another sign-out, so the slot is free.
@@ -154,21 +164,68 @@ nonisolated struct Mullvad: Provider {
 
     private func bearer(_ token: String) -> [String: String] { ["Authorization": "Bearer \(token)"] }
 
-    private func accessToken(_ account: String) async throws -> String {
-        try Self.token(try await postJSONRaw("\(Self.api)/auth/v1/token", #"{"account_number":"\#(account)"}"#))
+    /// Not private: tests replace the network calls.
+    var post: @Sendable (_ url: String, _ body: String, _ headers: [String: String]) async throws -> (Int, Data) = { try await postJSONRaw($0, $1, headers: $2) }
+    var get: @Sendable (_ url: String, _ headers: [String: String], _ credentials: Bool) async throws -> Data = { try await Http.get($0, headers: $1, credentials: $2) }
+
+    /// Access tokens last a while: one is kept per account until shortly before it expires, so a visit to the provider
+    /// page doesn't ask for a new one on every line. `fresh` asks for a new one regardless (sign-in, revocation check).
+    private func accessToken(_ account: String, fresh: Bool = false) async throws -> (token: String, cached: Bool) {
+        if !fresh, let t = Self.tokens.token(account) { return (t, true) }
+        let (token, expires) = try Self.session(try await post("\(Self.api)/auth/v1/token", #"{"account_number":"\#(account)"}"#, [:]))
+        if let expires { Self.tokens.keep(token, until: expires, account) }
+        return (token, false)
     }
+
+    /// Runs `call` with a token; a kept token Mullvad refuses is dropped and replaced once.
+    private func authed<T>(_ account: String, _ call: (String) async throws -> T) async throws -> T {
+        let (token, cached) = try await accessToken(account)
+        do { return try await call(token) } catch is AuthError where cached {
+            Self.tokens.forget(account)
+            return try await call(try await accessToken(account, fresh: true).token)
+        }
+    }
+
+    final class TokenCache: @unchecked Sendable {
+        private let lock = NSLock()
+        private var kept: [String: (token: String, until: Date)] = [:]
+        func token(_ account: String, now: Date = Date()) -> String? {
+            lock.lock(); defer { lock.unlock() }
+            guard let k = kept[account], k.until > now else { return nil }
+            return k.token
+        }
+        func keep(_ token: String, until: Date, _ account: String, now: Date = Date()) {
+            // A minute short of the real end, so a token isn't used as it runs out.
+            let end = until.addingTimeInterval(-60)
+            lock.lock(); defer { lock.unlock() }
+            if end > now { kept[account] = (token, end) } else { kept[account] = nil }
+        }
+        func forget(_ account: String) { lock.lock(); kept[account] = nil; lock.unlock() }
+    }
+    static let tokens = TokenCache()
 
     /// The device Mullvad registered for `keys` although its reply never arrived, if the account lists one.
     private func adopted(_ token: String, _ account: String, _ keys: WgKeys.Keys) async -> String? {
-        guard let list = try? await Http.get("\(Self.api)/accounts/v1/devices", headers: bearer(token), credentials: true) else { return nil }
-        return (try? Self.adopt(list, account, keys)) ?? nil
+        guard let list = try? await get("\(Self.api)/accounts/v1/devices", bearer(token), true),
+              let d = try? Self.ours(list, keys) else { return nil }
+        if let blob = try? Self.blob(account, keys.privateKey, d) { return blob }
+        // Registered, but with an address that can't be used: give the slot back rather than strand it.
+        _ = try? await Http.delete("\(Self.api)/accounts/v1/devices/\(Http.enc(d.id))", headers: bearer(token), credentials: true)
+        return nil
+    }
+
+    private static func ours(_ list: Data, _ keys: WgKeys.Keys) throws -> DeviceReply? {
+        try JSON.decode([DeviceReply].self, list, "Mullvad").first { $0.pubkey == keys.publicKey }
     }
 
     static func adopt(_ list: Data, _ account: String, _ keys: WgKeys.Keys) throws -> String? {
-        try JSON.decode([DeviceReply].self, list, "Mullvad").first { $0.pubkey == keys.publicKey }.map { blob(account, keys.privateKey, $0) }
+        try ours(list, keys).map { try blob(account, keys.privateKey, $0) }
     }
 
-    static func token(_ reply: (Int, Data)) throws -> String {
+    static func token(_ reply: (Int, Data)) throws -> String { try session(reply).token }
+
+    /// The access token and, when the reply says, when it expires.
+    static func session(_ reply: (Int, Data)) throws -> (token: String, expires: Date?) {
         let (code, body) = reply
         if code == 400 && String(decoding: body, as: UTF8.self).contains("INVALID_ACCOUNT") || code == 401 {
             throw AuthError("Mullvad doesn't recognise that account number")
@@ -176,7 +233,15 @@ nonisolated struct Mullvad: Provider {
         // Only a 429 is passed on as a status: a 404 here is the token endpoint's, not "this device is gone" (`revoked`).
         if code == 429 { throw Http.Status(code: code) }
         guard (200..<300).contains(code) else { throw Fail("Mullvad answered with an error (HTTP \(code)). Try again later.") }
-        return try JSON.decode(TokenReply.self, body, "Mullvad").accessToken
+        let r = try JSON.decode(TokenReply.self, body, "Mullvad")
+        return (r.accessToken, r.expiry.flatMap(parseDate))
+    }
+
+    private static func parseDate(_ value: String) -> Date? {
+        let parser = ISO8601DateFormatter()
+        if let d = parser.date(from: value) { return d }
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return parser.date(from: value)
     }
 
     static func device(_ reply: (Int, Data), _ account: String, _ privateKey: String) throws -> String {
@@ -186,11 +251,13 @@ nonisolated struct Mullvad: Provider {
         }
         if code == 401 || code == 403 { throw AuthError("Mullvad refused the device registration") }
         guard code == 201 else { throw Http.Status(code: code) }
-        return blob(account, privateKey, try JSON.decode(DeviceReply.self, body, "Mullvad"))
+        return try blob(account, privateKey, try JSON.decode(DeviceReply.self, body, "Mullvad"))
     }
 
-    private static func blob(_ account: String, _ privateKey: String, _ d: DeviceReply) -> String {
-        JSON.encode(Account(account: account, privateKey: privateKey, ipv4Address: d.ipv4Address, deviceId: d.id, deviceName: d.name))
+    private static func blob(_ account: String, _ privateKey: String, _ d: DeviceReply) throws -> String {
+        // It becomes the tunnel's own address: four plain numbers, or the reply isn't one to trust.
+        guard Catalog.Entry.octets(String(d.ipv4Address.prefix { $0 != "/" })) != nil else { throw Fail("Unexpected reply from Mullvad") }
+        return JSON.encode(Account(account: account, privateKey: privateKey, ipv4Address: d.ipv4Address, deviceId: d.id, deviceName: d.name))
     }
 
     static func account(_ blob: String) throws -> Account { try JSON.decode(Account.self, Data(blob.utf8), "Mullvad") }
@@ -207,14 +274,19 @@ nonisolated struct Mullvad: Provider {
     @concurrent func deviceCount(_ account: String) async throws -> Int? { try await devices(Self.account(account)).count }
 
     private func devices(_ account: Account) async throws -> [DeviceReply] {
-        let token = try await accessToken(account.account)
-        return try JSON.decode([DeviceReply].self, try await Http.get("\(Self.api)/accounts/v1/devices", headers: bearer(token), credentials: true), "Mullvad")
+        try await authed(account.account) { token in
+            try JSON.decode([DeviceReply].self, try await get("\(Self.api)/accounts/v1/devices", bearer(token), true), "Mullvad")
+        }
     }
 
     @concurrent func revoked(_ account: String) async throws -> Bool {
         do {
             let a = try Self.account(account)
-            _ = try await Http.get("\(Self.api)/accounts/v1/devices/\(Http.enc(a.deviceId))", headers: bearer(try await accessToken(a.account)), credentials: true)
+            // A new token each time: a kept one that had gone bad must not hide a removed device.
+            let token = try await accessToken(a.account, fresh: true).token
+            // Without `credentials` a 401 here stays a plain status (a filter or hiccup, the device is still there);
+            // only the token call's own refusal or a 404 for the device means it is gone.
+            _ = try await get("\(Self.api)/accounts/v1/devices/\(Http.enc(a.deviceId))", bearer(token), false)
             return false
         } catch is CancellationError { throw CancellationError() }
         catch { return Self.revoked(despite: error) }
@@ -243,7 +315,7 @@ nonisolated struct Mullvad: Provider {
 
     @concurrent func plan(_ account: String) async throws -> String? {
         let a = try Self.account(account)
-        return try Self.expiry(await Http.get("\(Self.api)/accounts/v1/accounts/me", headers: bearer(try await accessToken(a.account)), credentials: true))
+        return try Self.expiry(try await authed(a.account) { try await get("\(Self.api)/accounts/v1/accounts/me", bearer($0), true) })
     }
 
     @concurrent func countries(_ account: String) async throws -> [Country] { Self.countries(try await fetch()) }
@@ -350,11 +422,20 @@ extension Mullvad.RelayList {
     }
 }
 
+extension KeyedDecodingContainer {
+    /// A true/false field: `absent` when it isn't there (or is null), `wrong` when it is there but isn't a boolean, so a
+    /// list that changes its shape doesn't make a relay look available.
+    nonisolated func flag(_ key: Key, absent: Bool, wrong: Bool) -> Bool {
+        guard contains(key), (try? decodeNil(forKey: key)) != true else { return absent }
+        return (try? decode(Bool.self, forKey: key)) ?? wrong
+    }
+}
+
 nonisolated extension Mullvad.Relay {
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
-        self.init(hostname: try c.decode(String.self, forKey: .hostname), location: try c.decode(String.self, forKey: .location), active: c(.active, true),
-                  ip: try c.decode(String.self, forKey: .ip), publicKey: try c.decode(String.self, forKey: .publicKey), inCountry: c(.inCountry, true), weight: c(.weight, 0), owned: c(.owned, false))
+        self.init(hostname: try c.decode(String.self, forKey: .hostname), location: try c.decode(String.self, forKey: .location), active: c.flag(.active, absent: true, wrong: false),
+                  ip: try c.decode(String.self, forKey: .ip), publicKey: try c.decode(String.self, forKey: .publicKey), inCountry: c.flag(.inCountry, absent: true, wrong: false), weight: c(.weight, 0), owned: c(.owned, false))
     }
 }
 
