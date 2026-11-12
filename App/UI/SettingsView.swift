@@ -186,8 +186,8 @@ private extension AppModel {
     }
     /// A running tunnel keeps the profile it started with; some options only reach it on the next connect.
     var tunnelUp: Bool { vpn.state.phase == .on || vpn.state.phase == .paused }
-    /// What changing a profile option does now: connected, the tunnel restarts at once (a moment without it).
-    var appliesLater: String { vpn.state.phase == .on ? "Changing this restarts the tunnel for a moment." : "Applies when you resume." }
+    /// What changing a profile option does now: connected, the VPN restarts at once (a moment without it).
+    var appliesLater: String { vpn.state.phase == .on ? "Changing this restarts the VPN: for a moment apps may use your normal connection." : "Applies when you resume." }
 }
 
 // MARK: - General
@@ -301,7 +301,7 @@ private struct ConnectionsTab: View {
                     SettingsRow(title: "No provider yet", caption: "Add one with Add Provider…", symbol: "person") { EmptyView() }
                 }
             }
-            Section("My servers") {
+            Section("My Servers") {
                 ForEach(s.servers) { ServerRow(server: $0) }
                 Button { importer.file() } label: {
                     SettingsRow(title: "Import WireGuard or OpenVPN File…", symbol: "doc") { EmptyView() }
@@ -378,6 +378,18 @@ private struct ServerRow: View {
     @State private var removing = false
     @State private var name = ""
 
+    /// What removing does. When a route using the server is the default, the apps that follow it move: to the first
+    /// route left, which is how `removeServer` picks the new default, or to Direct when none is.
+    private func removalNote(_ n: Int) -> String {
+        if n == 0 { return "It isn't used by any route." }
+        let s = model.setup
+        let current = s.route(s.defaultRoute)
+        guard current?.own == server.id else { return "The routes using it are removed too; their apps follow the default route." }
+        let next = s.routes.first { $0.own != server.id }
+        return "\(current?.name ?? "This route") is your default route. Everything that follows the default will "
+            + (next.map { "use \($0.name)." } ?? "go Direct.") + " The routes using \(server.name) are removed too."
+    }
+
     var body: some View {
         let n = model.setup.routes.filter { $0.own == server.id }.count
         SettingsRow(title: server.name, caption: "\(server.kind) · " + (n == 0 ? "not in use" : "used by \(n) route\(n == 1 ? "" : "s")"), symbol: "server.rack", mark: server.code) {
@@ -396,7 +408,7 @@ private struct ServerRow: View {
         .confirmationDialog("Remove \(server.name)?", isPresented: $removing, titleVisibility: .visible) {
             Button("Remove", role: .destructive) { model.removeServer(server.id) }
         } message: {
-            Text(n == 0 ? "It isn't used by any route." : "The routes using it are removed too; their apps follow the default route.")
+            Text(removalNote(n))
         }
     }
 }
@@ -419,12 +431,15 @@ private struct LocalAccess: View {
     var body: some View {
         let h = model.setup.home
         Section {
-            SettingsRow(title: "Reach devices on this network", caption: "Printers, NAS and your router stay reachable from every app", symbol: "wifi") {
+            SettingsRow(title: "Reach devices on this network", caption: "Printers, network drives and your router stay reachable from every app", symbol: "wifi") {
                 Toggle("", isOn: model.pref(\.lan)).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityLabel("Reach devices on this network")
             }
-        } header: { Text("This network") } footer: { Text("Blocked apps too, unless the kill switch covers your home network.") }
+        } header: { Text("This network") } footer: {
+            Text("Blocked apps too, unless the kill switch covers your home network."
+                 + (model.tunnelUp && model.setup.prefs.killLevel == .off ? " " + model.appliesLater : ""))
+        }
         Section {
-            SubToggle("Home through Tailscale", "Tailnet" + (h.subnets.isEmpty ? "" : " and \(h.subnets.joined(separator: ", "))") + " from every app except blocked apps", symbol: "house",
+            SubToggle("Home through Tailscale", (h.subnets.isEmpty ? "Your Tailscale devices" : "Your Tailscale devices and \(h.subnets.joined(separator: ", "))") + " from every app except blocked apps", symbol: "house",
                       isOn: Binding(get: { h.tailscale }, set: { v in model.setHome { $0.tailscale = v } }))
             SettingsRow(title: "Home subnets through Tailscale", caption: (h.subnets.isEmpty ? "None" : h.subnets.joined(separator: ", ")) + " · a WireGuard tunnel uses its own config's ranges", symbol: "network") {
                 Button("Edit…") { editing = true }.contentButton()
@@ -480,7 +495,7 @@ private struct SubnetsEditor: View {
         FormSheet(title: "Home Subnets") {
             Section {
                 TextField("Subnets", text: $text, prompt: Text("192.168.1.0/24"))
-                if !valid { ErrorLine(text: "Private ranges only, in CIDR notation, e.g. 192.168.1.0/24") }
+                if !valid { ErrorLine(text: "Use a private range such as 192.168.1.0/24") }
             } footer: { Text("Separate several with commas.") }
         } actions: {
             Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
@@ -810,15 +825,20 @@ private struct ControlServerSheet: View {
 
 // MARK: - Protection
 
-/// What each kill switch level does, in plain words. Home-network reach depends on "Reach devices on this network".
+/// What each kill switch level does, in plain words, as the code does it. Home-network reach depends on "Reach devices
+/// on this network". Only the first level lets traffic skip the VPN while it is connected.
 private func killNote(_ level: KillLevel, lan: Bool) -> String {
+    let direct = " Apps set to Direct still use your normal connection, and nothing is covered while unbraid is disconnected."
     switch level {
-    case .off: return "While the tunnel is down or reconnecting, macOS may send traffic outside it."
+    case .off:
+        return "Apps that pick Wi-Fi or Ethernet themselves can skip the VPN, even while it is connected"
+            + (lan ? ", and so can traffic to your home network" : "") + ". While a VPN reconnects, any app may use your normal connection."
     case .internet:
-        return "Nothing leaves outside the tunnel while it is up or reconnecting." + (lan ? " Devices on your home network stay reachable from every app, blocked apps included; AirPlay and other discovery may not work." : "")
+        return "Apps only go out the way you chose for them: while a VPN reconnects, its apps wait instead of using your normal connection." + direct
+            + (lan ? " Devices on your home network stay reachable from every app, blocked apps included; AirPlay and other discovery may not work." : "")
     case .home:
-        return "Nothing leaves outside the tunnel, and blocked apps can't reach your home network either"
-            + (lan ? "; other apps still can. AirPlay and other discovery on your home network may not work." : ".")
+        return "While a VPN reconnects, its apps wait instead of using your normal connection, and blocked apps can't reach your home network either"
+            + (lan ? "; other apps still can. AirPlay and other discovery on your home network may not work." : ".") + direct
     }
 }
 
@@ -831,33 +851,47 @@ private struct ProtectionTab: View {
         let filter = s.prefs.effectiveFilter
         let saved = filter.value
         let level = s.prefs.killLevel == .off ? "Off" : s.prefs.killLevel == .internet ? "Internet" : "Internet and home network"
-        let filterName = filter.id == "own" ? "Your own server" : FilterServer.presets.first(where: { $0.id == filter.id })?.name ?? "None"
+        let chosenName = filter.id == "own" ? "Your own server" : FilterServer.presets.first(where: { $0.id == filter.id })?.name ?? "None"
+        // A filter that is chosen but not set up, or applied nowhere, filters nothing: the header says so.
+        let working = filter.server != nil && (filter.routes || filter.direct || filter.directApps)
+        let filterName = filter.id == nil || working ? chosenName : chosenName + " (not used yet)"
         SettingsPage(title: "Protection", subtitle: "Kill switch: \(level) · Filter: \(filterName)", tile: IconTile.Tile.red) {
             if let n = model.notice { Section { NoticeRow(text: n) } }
             Section {
                 let blocked = s.apps.values.contains(BLOCK)
-                SettingsRow(title: "Block traffic outside the tunnel", caption: killNote(s.prefs.killLevel, lan: s.prefs.lan) + (blocked ? " It stays on while any app is blocked." : ""), symbol: "shield", captionLines: nil) {
+                // While paused, a tunnel kept for blocked apps takes a new level at once; with none blocked it waits for Resume.
+                let restart = model.vpn.state.phase == .paused && blocked ? "Applies now." : model.tunnelUp ? model.appliesLater : ""
+                SettingsRow(title: "Block traffic outside the VPN", caption: killNote(s.prefs.killLevel, lan: s.prefs.lan) + (blocked ? " It stays on while any app is blocked." : "") + (restart.isEmpty ? "" : " " + restart), symbol: "shield", captionLines: nil) {
                     // A menu, like the filter's: three segments with these labels are wider than the card and pushed
                     // the whole page sideways.
-                    Picker("Block traffic outside the tunnel", selection: Binding(get: { s.prefs.killLevel }, set: { v in model.setPrefs { $0.killLevel = v } })) {
+                    Picker("Block traffic outside the VPN", selection: Binding(get: { s.prefs.killLevel }, set: { v in model.setPrefs { $0.killLevel = v } })) {
                         Text("Off").tag(KillLevel.off).selectionDisabled(blocked)
                         Text("Internet").tag(KillLevel.internet)
                         Text("Internet and home network").tag(KillLevel.home)
-                    }.labelsHidden().accessibilityLabel("Block traffic outside the tunnel")
+                    }.labelsHidden().accessibilityLabel("Block traffic outside the VPN")
                 }
-                SubToggle("Connect on demand", "macOS brings the tunnel back after sleep, network changes and restarts.", symbol: "arrow.clockwise",
+                SubToggle("Connect on demand", "macOS brings the VPN back after sleep, network changes and restarts.", symbol: "arrow.clockwise",
                           isOn: Binding(get: { model.setup.prefs.alwaysOn }, set: { v in
                               model.setPrefs { $0.alwaysOn = v }; model.vpn.onDemandChanged(v)
                           }))
                 if s.prefs.alwaysOn, model.vpn.tunnel.onDemandUnavailable {
-                    ErrorLine(text: "Unavailable: the tunnel couldn't save its configuration. unbraid tries again with the next change.")
+                    ErrorLine(text: "Unavailable: the VPN couldn't save its configuration. unbraid tries again with the next change.")
                 }
-            } header: { Text("Kill switch") } footer: { if model.tunnelUp { Text(model.appliesLater) } }
+            } header: { Text("Kill switch") }
 
             Section {
                 SettingsRow(title: "unbraid's filter", symbol: "line.3.horizontal.decrease.circle") {
                 Picker("unbraid's filter", selection: Binding(get: { filter.id ?? "" }, set: { id in
-                    model.setPrefs { $0.filter.id = id.isEmpty ? nil : id; $0.customDns = [] }
+                    model.setPrefs { p in
+                        let before = p.filter.id
+                        p.filter.id = id.isEmpty ? nil : id
+                        // A value typed for another server (a NextDNS profile) means nothing to this one.
+                        if p.filter.id != before { p.filter.value = "" }
+                        // Choosing a filter applies it to VPN routes, so it filters something at once; the switches
+                        // below fine-tune where.
+                        if before == nil, p.filter.id != nil, !(p.filter.routes || p.filter.direct || p.filter.directApps) { p.filter.routes = true }
+                        p.customDns = []
+                    }
                 })) {
                     Text("None").tag("")
                     ForEach(FilterServer.presets, id: \.id) { Text("\($0.name) · \($0.blocks)").tag($0.id) }
@@ -877,24 +911,24 @@ private struct ProtectionTab: View {
                     }
                 }
             } header: { Text("Filter") } footer: {
-                Text("With Direct as the default route, some lookups macOS makes for apps, other than addresses, can use your network's DNS.")
+                Text("A filter blocks ads, trackers or adult sites by refusing to look up their addresses. With Direct as the default route, a few of macOS's own lookups may skip the filter.")
             }
             if filter.id != nil {
                 Section {
-                    SettingsRow(title: "VPN routes", symbol: "network") {
-                        Toggle("", isOn: Binding(get: { filter.routes }, set: { v in model.setPrefs { $0.filter.routes = v; $0.customDns = [] } })).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityLabel("VPN routes")
+                    SettingsRow(title: "Apps on VPN routes", symbol: "network") {
+                        Toggle("", isOn: Binding(get: { filter.routes }, set: { v in model.setPrefs { $0.filter.routes = v; $0.customDns = [] } })).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityLabel("Apps on VPN routes")
                     }
-                    SettingsRow(title: "Direct traffic through unbraid", symbol: "arrow.right") {
-                        Toggle("", isOn: Binding(get: { filter.direct }, set: { v in model.setPrefs { $0.filter.direct = v; $0.customDns = [] } })).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityLabel("Direct traffic through unbraid")
+                    SettingsRow(title: "Apps on Direct", symbol: "arrow.right") {
+                        Toggle("", isOn: Binding(get: { filter.direct }, set: { v in model.setPrefs { $0.filter.direct = v; $0.customDns = [] } })).labelsHidden().toggleStyle(.switch).controlSize(.small).accessibilityLabel("Apps on Direct")
                     }
                     SettingsRow(title: "Apps set to Direct", symbol: "app") {
                         Picker("Apps set to Direct", selection: Binding(get: { filter.directApps }, set: { v in model.setPrefs { $0.filter.directApps = v; $0.customDns = [] } })) {
-                            Text("Use your network's DNS").tag(false)
+                            Text("Not filtered").tag(false)
                             Text("Use this filter").tag(true)
                         }.labelsHidden()
                     }
                 } header: { Text("Where it applies") } footer: {
-                    Text("VPN routes ask the filter through their own tunnel. Direct traffic uses your normal connection.")
+                    Text("Apps on VPN routes ask the filter through their VPN. Apps on Direct ask it over your normal connection.")
                 }
             }
         }
@@ -955,12 +989,14 @@ private struct StatisticsTab: View {
             Section {
                 SubToggle("Record usage statistics", "Only on this Mac, never uploaded. Turning it off keeps what's saved.", symbol: "chart.bar",
                           isOn: Binding(get: { on }, set: { if $0 { consent = true } else { model.setStats(false) } }))
-                SubToggle("Test all routes at once", "Measure several running exits together.", symbol: "speedometer",
-                          isOn: Binding(get: { model.setup.prefs.testAllRoutes }, set: { value in model.setPrefs { $0.testAllRoutes = value } }))
                 SettingsRow(title: "Saved history", caption: "Hourly for a week, daily for about a year", symbol: "clock") {
                     Text(amount).monospacedDigit().foregroundStyle(.secondary)
                 }
-            } header: { Text("Recording") } footer: { Text("Apps, exits, bytes, times, speeds and speed-test exit IPs. No browsing destinations, ever.") }
+            } header: { Text("Recording") } footer: { Text("Apps and programs (by their location on this Mac, home folder as ~; temporary and cache folders grouped as \"Other programs\"), routes, bytes, times, speeds and speed-test exit IPs. No browsing destinations, ever.") }
+            Section {
+                SubToggle("Test all routes at once", "Adds \u{201C}All\u{201D} to the Speed Test page: test 2 to 10 routes together.", symbol: "speedometer",
+                          isOn: Binding(get: { model.setup.prefs.testAllRoutes }, set: { value in model.setPrefs { $0.testAllRoutes = value } }))
+            } header: { Text("Speed test") }
             if size > 0 {
                 Section {
                     Button(role: .destructive) { deleting = true } label: {
@@ -976,7 +1012,7 @@ private struct StatisticsTab: View {
             ConsentSheet(title: Text("Keep statistics?").font(.title2.bold()), rows: [
                 ("desktopcomputer", "Statistics stay on this Mac. They are never uploaded."),
                 ("clock", "Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests."),
-                ("nosign", "Only apps, exits, bytes, times, speeds and speed-test exit IPs. No browsing destinations, ever."),
+                ("nosign", "Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as \"Other programs\". No browsing destinations, ever."),
                 ("trash", "Turn off or delete everything in Settings at any time."),
             ], action: "Turn On", accept: { model.setStats(true) }) {}
         }
@@ -1113,6 +1149,7 @@ private struct LicencesSheet: View {
         } actions: {
             Button("Done") { dismiss() }.contentButton(prominent: true).keyboardShortcut(.defaultAction)
         }
+        .onExitCommand { dismiss() }
         .frame(height: 520)
         // About 200 KB of text: read and reflowed off the main thread.
         .task { notices = await Task.detached { Self.load() }.value }

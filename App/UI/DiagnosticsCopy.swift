@@ -40,21 +40,43 @@ extension DiagnosticsReport {
     static func providerName(_ id: String) -> String? { id == "tailscale" ? "Tailscale exit node" : Providers.get(id)?.name }
 }
 
-/// Copies the report for support: nothing leaves the Mac unless the user pastes it somewhere.
+/// Shows the report, then copies it on request: nothing leaves the Mac unless the user pastes it somewhere.
 struct CopyDiagnosticsButton: View {
     @State private var copied = false
+    @State private var report: String?
+    /// Counts clicks of Copy, so an earlier "Copied" timer never clears a later one.
+    @State private var copies = 0
 
     var body: some View {
-        Button(copied ? "Copied" : "Copy Diagnostics") {
-            Task {
-                let text = await DiagnosticsReport.collect().text(now: .now, names: DiagnosticsReport.providerName)
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(text, forType: .string)
-                copied = true
-                try? await Task.sleep(for: .seconds(2))
-                copied = false
+        Button(copied ? "Copied" : "Copy Diagnostics…") {
+            Task { report = await DiagnosticsReport.collect().text(now: .now, names: DiagnosticsReport.providerName) }
+        }
+        .help("Shows what would be copied: versions, the connection's state and what last failed, for a message to support.")
+        .sheet(isPresented: Binding(get: { report != nil }, set: { if !$0 { report = nil } })) {
+            if let report {
+                SheetFrame(title: "Copy Diagnostics", subtitle: "Keys, addresses, host names and your setup's own values are hidden. It lists your app and macOS versions, your providers' names and what last failed.") {
+                    ScrollView {
+                        Text(report).font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading).padding(Layout.gutter)
+                    }
+                    .frame(height: 320).background(Ink.surface)
+                } actions: {
+                    Button("Cancel", role: .cancel) { self.report = nil }.keyboardShortcut(.cancelAction).contentButton()
+                    Button("Copy") {
+                        NSPasteboard.general.clearContents()
+                        NSPasteboard.general.setString(report, forType: .string)
+                        self.report = nil
+                        copies += 1
+                        let mine = copies
+                        copied = true
+                        Task {
+                            try? await Task.sleep(for: .seconds(2))
+                            if copies == mine { copied = false }
+                        }
+                    }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
+                }
+                .font(.system(size: 13))
             }
         }
-        .help("Copies versions, the connection's state and what last failed, with keys, addresses, host names and your setup's own values masked, to paste into a message to support. Read it before you send it.")
     }
 }
