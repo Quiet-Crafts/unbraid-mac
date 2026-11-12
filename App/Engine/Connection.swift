@@ -787,6 +787,8 @@ final class Connection {
         testingOwner.clear(); testingBase = nil; testingAccounts = nil
         generation += 1
         let g = generation
+        // Connect on Demand turned back on by a Connect, Resume or the Settings toggle meanwhile supersedes the Off owed below.
+        let cleared = offCleared
         defer { Task { await self.removeTestingIfNeeded(g) } }
         cancelResume()
         defer { settle(g) }
@@ -822,13 +824,11 @@ final class Connection {
                             catch is CancellationError { throw CancellationError() }
                             catch is TunnelControl.Overtaken { throw TunnelControl.Overtaken() }
                             catch {
-                                guard g == generation else { return }
                                 // A failed save still stops the tunnel: then the pause stands, with the reason. One that
                                 // never stopped (the profile couldn't be read) is a failed pause, as before.
                                 let original = error
                                 do { try await tunnel.waitStopped() } catch { throw original }
-                                guard g == generation else { return }
-                                offLater()
+                                if cleared == offCleared { offLater() }
                                 stopFailure = message(error, "Could not stop the VPN")
                             }
                             pausedInput = nil; pausedProfile = nil
@@ -867,6 +867,7 @@ final class Connection {
     /// [launch]: from `restorePause`; see the guard below.
     private func reconcilePause(launch: Bool = false) async {
         let g = generation
+        let cleared = offCleared
         do {
             try await exclusive {
                 // A pending erase in-session means a sign-out or server change is tearing down: its own disconnect or erase
@@ -990,12 +991,10 @@ final class Connection {
                         catch is CancellationError { throw CancellationError() }
                         catch is TunnelControl.Overtaken { throw TunnelControl.Overtaken() }
                         catch {
-                            guard g == generation else { return }
                             // As for a pause: only a stop that happened counts as one.
                             let original = error
                             do { try await tunnel.waitStopped() } catch { throw original }
-                            guard g == generation else { return }
-                            offLater()
+                            if cleared == offCleared { offLater() }
                             stopFailure = message(error, "Could not stop the VPN")
                         }
                         pausedInput = nil; pausedProfile = nil
