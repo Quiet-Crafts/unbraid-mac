@@ -741,17 +741,16 @@ final class Connection {
             }
             let stopped: Bool
             do { stopped = try await tunnel.stop(userInitiated: true) } catch {
-                // Overtaken meanwhile (a Connect): that one owns Connect on Demand and the state.
-                guard g == generation else { return }
-                // Connect on Demand couldn't be turned off (the stop is still asked for): turned off again until saved.
-                offLater()
+                // Recorded even if a newer operation arrived meanwhile, as for a confirmed stop: that one starts from this state.
+                // Connect on Demand couldn't be turned off (the stop is still asked for): turned off again until saved, unless a
+                // newer operation or the Settings toggle owns it by now.
+                if g == generation, cleared == offCleared { offLater() }
                 let failure = message(error, "Could not stop the VPN")
                 // Off as with any Disconnect, once the stop is through, with the reason: a pause ends (nothing reconciling it
                 // starts its blocking engine again, and none stays behind with nothing to resume it), and the stop isn't
                 // then taken for one from outside ("turned off by macOS"). The record stays, marked stopped: Connect on
                 // Demand may start the tunnel again, and a takeover then knows which accounts it runs.
                 try? await tunnel.waitStopped()
-                guard g == generation else { return }
                 off(forget: false)
                 state.error = failure
                 // The tunnel's real status is read again once the queue is free, so one still up is taken over.
