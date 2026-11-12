@@ -336,13 +336,24 @@ private struct LaneBar: View {
                     }
                 }.clipShape(Capsule())
             }.frame(height: 14).accessibilityHidden(true)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 12) {
-                    ForEach(top, id: \.self) { a in
-                        Text(programName(a.app) + " " + Units.bytes(a.bytes)).fixedSize()
-                    }
-                    if !rest.isEmpty { Text("+\(rest.count) apps \(Units.bytes(restBytes))").foregroundStyle(Ink.dim).fixedSize() }
-                }.font(.system(size: 12))
+            // The longest line that fits: names that don't fit move from the end into the "+N apps" count, which is never cut.
+            ViewThatFits(in: .horizontal) {
+                ForEach(Array(stride(from: top.count, through: 0, by: -1)), id: \.self) { shown in
+                    line(shown, restBytes: restBytes)
+                }
+            }.font(.system(size: 12))
+        }
+    }
+
+    private func line(_ shown: Int, restBytes: Int64) -> some View {
+        let hidden = rest.count + top.count - shown
+        let hiddenBytes = restBytes + top.dropFirst(shown).reduce(Int64(0)) { $0 + $1.bytes }
+        return HStack(spacing: 12) {
+            ForEach(top.prefix(shown), id: \.self) { a in
+                Text(programName(a.app) + " " + Units.bytes(a.bytes)).fixedSize()
+            }
+            if hidden > 0 {
+                Text("+\(hidden) \(hidden == 1 ? "app" : "apps") \(Units.bytes(hiddenBytes))").foregroundStyle(Ink.dim).fixedSize()
             }
         }
     }
