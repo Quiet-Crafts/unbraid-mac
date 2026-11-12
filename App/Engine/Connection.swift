@@ -763,6 +763,9 @@ final class Connection {
                     // Never confirmed: no clean Off. Nothing is restarted; the record stays, as after a failed stop, and the
                     // real status is read again once the queue is free. Recorded even if a newer operation arrived meanwhile, as
                     // for a confirmed stop: that one starts from this state.
+                    // The user's Off, still: the tunnel that may be up when the status is read again must not bring Connect on
+                    // Demand back (only a newer operation of theirs, which owns it, may).
+                    if g == generation { offLater() }
                     off(forget: false)
                     state.error = Self.stopUnconfirmed
                     Task { await statusChanged() }
