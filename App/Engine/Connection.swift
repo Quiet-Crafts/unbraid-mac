@@ -199,7 +199,7 @@ final class Connection {
             let resetPorts = !self.portStep.isEmpty
             self.portStep.removeAll()
             self.failing.removeAll()
-            self.state.dropping = []
+            if !self.state.dropping.isEmpty { self.state.dropping = [] }
             self.onNetworkChange?()
             guard self.state.phase == .on else { return }
             if resetPorts { await self.reload(checked: self.commits, healthAction: true) }
@@ -326,7 +326,7 @@ final class Connection {
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 self?.healthReset += 1
-                self?.state.dropping = []
+                if self?.state.dropping.isEmpty == false { self?.state.dropping = [] }
             }
         }
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -2495,7 +2495,7 @@ final class Connection {
             if current != basis {
                 basis = current
                 plan.restart(now: .now)
-                state.dropping = []
+                if !state.dropping.isEmpty { state.dropping = [] }
                 failing.removeAll()
             }
             guard state.phase == .on, !SpeedTest.shared.testing, let setup = running else { continue }
@@ -2541,7 +2541,8 @@ final class Connection {
             }
             let deadTags = plan.finish(answers, regular: regular, now: .now, draw: Double.random(in: HealthSchedule.every), networkUp: networkUp)
             failing = Set(plan.streaks.keys.flatMap { exits[$0]?.values.map { $0 } ?? [] })
-            state.dropping = exits.filter { plan.dropping($0.key) }.values.flatMap { $0.keys }.sorted()
+            let dropping = exits.filter { plan.dropping($0.key) }.values.flatMap { $0.keys }.sorted()
+            if dropping != state.dropping { state.dropping = dropping }
             guard !deadTags.isEmpty else { continue }
             let dead = deadTags.compactMap { exits[$0] }
             let routeIds = Set(dead.flatMap { $0.keys })
