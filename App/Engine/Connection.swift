@@ -1548,6 +1548,8 @@ final class Connection {
             let staged = try await tunnel.stage(json, persist: stagePersist, search: search)
             guard g == generation else { throw CancellationError() }
             told(staged.revision)
+            // Staging waits too: a takeover whose tunnel was stopped meanwhile starts nothing.
+            if takeover, [.disconnecting, .disconnected, .invalid].contains(tunnel.refreshStatus()) { throw StoppedMeanwhile() }
             state.phase = .connecting
             do {
                 // Keep the old routing flags until stopped; prevent on-demand racing the controlled restart.
