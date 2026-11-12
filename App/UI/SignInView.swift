@@ -140,7 +140,7 @@ private struct ProviderForm: View {
                     Text(challenge.message)
                     if let data = challenge.image, let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFit().frame(maxHeight: 150) }
                     field(challenge.field)
-                    Button("Cancel") { model.closeProviderForm(id); values[challenge.field.key] = nil }
+                    Button("Cancel") { clearPastedSecrets(); model.closeProviderForm(id); values[challenge.field.key] = nil }
                 }
             }
             if let e = model.formError[id] {
@@ -178,7 +178,13 @@ private struct ProviderForm: View {
         // A finished sign-in closes a sheet; on first run RootView swaps to the app by itself.
         .onChange(of: model.accounts[id] != nil) { _, signedIn in if signedIn && !first { done() } }
         // Leaving the form discards what was typed (secrets) and its error.
-        .onDisappear { values = [:]; revealedFiles = []; model.closeProviderForm(id) }
+        .onDisappear { clearPastedSecrets(); values = [:]; revealedFiles = []; model.closeProviderForm(id) }
+    }
+
+    /// A secret pasted into the form and then abandoned must not stay on the clipboard.
+    private func clearPastedSecrets() {
+        let fields = provider.fields + [model.challenges[provider.id]?.field].compactMap { $0 }
+        for f in fields where f.secret { if let v = values[f.key], !v.isEmpty { model.clearClipboardIf(v) } }
     }
 
     @ViewBuilder private func field(_ f: Field) -> some View {
