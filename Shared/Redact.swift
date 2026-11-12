@@ -47,9 +47,8 @@ nonisolated enum Redact {
         ("pt", true), ("key", true), ("pass", true), ("uuid", true),
     ].map { (Array($0.0), $0.1) }
 
-    /// The words that open an Authorization header's value; the credential is the word after.
     private static let authorization = Array("authorization")
-    private static let schemes: [[Character]] = ["bearer", "basic", "token", "digest"].map { Array($0) }
+    private static let key = Array("key")
 
     /// One character as the text may quote it: itself, or escaped by a run of backslashes (at any depth of quoting).
     private enum Read: Equatable {
@@ -80,6 +79,8 @@ nonisolated enum Redact {
         private var blanks: [Int]?
         /// From each place: where text that isn't quoted ends, at a blank but not at a line break escaped by a backslash.
         private var unquotedEnds: [Int]?
+        /// From each place: where its line ends.
+        private var lineEnds: [Int]?
         /// Each quote character's places, the backslashes right before each, and a tree of their least.
         private var quotes: [Character: Quotes] = [:]
 
@@ -241,7 +242,9 @@ nonisolated enum Redact {
             for (name, whole) in Redact.moreNames where name[0] == c {
                 guard let j = matches(name, at: i), !whole || !wordCharacter(before: i), let v = separator(after: j) else { continue }
                 let (end, quoted) = valueEnd(v)
-                return name == Redact.authorization && !quoted ? (credential(after: end), false) : (end, quoted)
+                // "key" is also an ordinary word ("invalid key: x"): only a value long enough to be a key counts.
+                if name == Redact.key, end - v < 16 { continue }
+                return name == Redact.authorization && !quoted ? (lineEnd(v), false) : (end, quoted)
             }
             return nil
         }
@@ -259,27 +262,25 @@ nonisolated enum Redact {
         /// A letter, digit or `_` is right before [i] (the character itself, or the end of an escape).
         private func wordCharacter(before i: Int) -> Bool {
             guard i > 0 else { return false }
-            let c = t[i - 1]
-            return c == "_" || c.isLetter || c.isNumber
+            var c = t[i - 1]
+            // The end of an escape is that character, decoded: a blank after `\n`, `\t`; a `\uXXXX` as what it stands for.
+            if i >= 2, a[i - 2] == 92, [110, 114, 116, 102, 118].contains(a[i - 1]) { return false }
+            if i >= 6, a[i - 6] == 92, a[i - 5] == 117, let (r, _) = read(i - 6), case .decoded(let d) = r { c = d }
+            return c == "_" || c == "-" || c.isLetter || c.isNumber
         }
 
-        /// An Authorization header's value "Bearer abc": its first word, a scheme, ends at [end]; the credential is the
-        /// next word on the line, and goes too.
-        private mutating func credential(after end: Int) -> Int {
-            guard end < n, let word = start(of: end), Redact.schemes.contains(where: { s in
-                s.count == end - word && zip(t[word..<end], s).allSatisfy(Scan.same)
-            }) else { return end }
-            var k = end
-            while k < n, w[k], !t[k].isNewline { k += 1 }
-            guard k > end, k < n, !w[k] else { return end }
-            return unquotedEnd(k)
-        }
-
-        /// Where the unquoted word that ends at [end] starts.
-        private func start(of end: Int) -> Int? {
-            var k = end
-            while k > 0, !w[k - 1], a[k - 1] != 58, a[k - 1] != 61 { k -= 1 }
-            return k < end ? k : nil
+        /// Where the line that holds [v] ends: at a line break, written plainly or as an escape (`\n`, `\r`).
+        private mutating func lineEnd(_ v: Int) -> Int {
+            if lineEnds == nil {
+                var ends = [Int](repeating: n, count: n + 1)
+                var k = n - 1
+                while k >= 0 {
+                    ends[k] = t[k].isNewline || (a[k] == 92 && k + 1 < n && (a[k + 1] == 110 || a[k + 1] == 114)) ? k : ends[k + 1]
+                    k -= 1
+                }
+                lineEnds = ends
+            }
+            return lineEnds![v]
         }
 
         /// A name's letter (or `_`), in lower case, written plainly or as an escape.
@@ -401,7 +402,7 @@ nonisolated enum Redact {
                     if e - k == 2, e < n, Scan.same(t[k], "i"), Scan.same(t[k + 1], "s") {
                         var m = e
                         while m < n, w[m] { m += 1 }
-                        if m < n { e = blank(from: m) }
+                        if m < n { e = valueEnd(m).0 }
                     }
                     out.append(i..<(Scan.index(of: e, in: found).map { wordEnds[$0] } ?? e))
                     break
@@ -422,6 +423,15 @@ nonisolated enum Redact {
             var stops = [Int](repeating: n, count: n + 1)
             var k = n - 1
             while k >= 0 { stops[k] = w[k] || a[k] == 47 ? k : stops[k + 1]; k -= 1 }
+            // From each place: the last ":" before it, the last "." or ":" before it, and where its run of digits ends.
+            var colonBefore = [Int](repeating: -1, count: n + 1), dotBefore = [Int](repeating: -1, count: n + 1)
+            for q in 0..<n {
+                colonBefore[q + 1] = a[q] == 58 ? q : colonBefore[q]
+                dotBefore[q + 1] = a[q] == 58 || a[q] == 46 ? q : dotBefore[q]
+            }
+            var digitsEnd = [Int](repeating: n, count: n + 1)
+            k = n - 1
+            while k >= 0 { digitsEnd[k] = (48...57).contains(a[k]) ? digitsEnd[k + 1] : k; k -= 1 }
             var ats: [Int] = [], atEnds: [Int] = [], plainAts: [Int] = []
             for i in 0..<n {
                 if a[i] == 64 { ats.append(i); atEnds.append(i + 1); plainAts.append(i) }
@@ -443,12 +453,12 @@ nonisolated enum Redact {
                 // A "/" in the password ("user:pa/ss@host"): what comes before the first "/" can't be a host and port (what
                 // follows its last ":" isn't a number), so the login goes on to the next blank.
                 var stop = hostEnd
-                if hostEnd < n, self.a[hostEnd] == 47, self.a[a] != 91, !(ats[Scan.lowerBound(a, in: ats)..<ats.count].first.map { $0 < hostEnd } ?? false), let colon = (a..<hostEnd).last(where: { self.a[$0] == 58 }),
-                   colon + 1 < hostEnd, !(colon + 1..<hostEnd).allSatisfy({ (48...57).contains(self.a[$0]) }) {
+                if hostEnd < n, self.a[hostEnd] == 47, self.a[a] != 91, !(ats[Scan.lowerBound(a, in: ats)..<ats.count].first.map { $0 < hostEnd } ?? false), case let colon = colonBefore[hostEnd], colon >= a,
+                   colon + 1 < hostEnd, digitsEnd[colon + 1] < hostEnd {
                     stop = blank(from: hostEnd)
                 } else if hostEnd < n, self.a[hostEnd] == 47, i - k == 2, zip(t[k..<i], "ss").allSatisfy({ Scan.same($0, $1) }),
                           !(ats[Scan.lowerBound(a, in: ats)..<ats.count].first.map { $0 < hostEnd } ?? false),
-                          !t[a..<hostEnd].contains(where: { $0 == "." || $0 == ":" }) {
+                          dotBefore[hostEnd] < a {
                     // A Shadowsocks link's login is Base64, which holds "/" too.
                     stop = blank(from: hostEnd)
                 }
@@ -548,15 +558,18 @@ nonisolated enum Redact {
             var out: [Range<Int>] = []
             var i = 0
             while i < n {
-                guard let first = piece(at: i) else { i += 1; continue }
+                guard a[i] == 92 || a[i] == 0 || base64(a[i]), let first = piece(at: i) else { i += 1; continue }
                 var end = first.end, total = first.count, last = first.count
                 var keylike = first.keylike
                 let start = first.count >= 16
-                var next = lineBreak(after: end).flatMap { piece(at: $0) }
-                while let p = next, (total >= 40 && p.count <= last) || (p.count >= 16 && (start || total >= 40) && (keylike || p.keylike)) {
+                var next = first.count < 16 ? nil : lineBreak(after: end).flatMap { piece(at: $0) }
+                var closed = false  // A line shorter than the one before it is a key's last.
+                while let p = next, (!closed && total >= 40 && p.count <= last && (p.padded || p.count >= 8 && p.keylike))
+                        || (p.count >= 16 && (start || total >= 40) && (keylike || p.keylike)) {
                     keylike = keylike || p.keylike
+                    closed = closed || p.count < last
                     end = p.end; total += p.count; last = p.count
-                    next = p.count >= 40 || total < 40 ? lineBreak(after: end).flatMap { piece(at: $0) } : nil
+                    next = lineBreak(after: end).flatMap { piece(at: $0) }
                 }
                 if total >= 40 {
                     out.append(i..<end)
@@ -569,9 +582,18 @@ nonisolated enum Redact {
         }
 
         /// The run of Base64 characters that starts at [i], with the `=` after it (up to two); nil if there is none.
-        private func piece(at i: Int) -> (end: Int, count: Int, keylike: Bool)? {
+        private func piece(at i: Int) -> (end: Int, count: Int, keylike: Bool, padded: Bool)? {
             var j = i, count = 0, keylike = false
-            while let (c, next) = base64(at: j) {
+            while j < n {
+                let plain = a[j]
+                if plain != 92 && plain != 0 {  // (The usual case, quickly.)
+                    guard base64(plain) else { break }
+                    count += 1
+                    keylike = keylike || plain == 43 || (48...57).contains(plain)
+                    j += 1
+                    continue
+                }
+                guard let (c, next) = base64(at: j) else { break }
                 count += 1
                 keylike = keylike || c == 43 || (48...57).contains(c)
                 j = next
@@ -579,7 +601,7 @@ nonisolated enum Redact {
             guard count > 0 else { return nil }
             var pad = 0
             while pad < 2, let (c, next) = base64(at: j, padding: true), c == 61 { j = next; pad += 1; keylike = true }
-            return (j, count + pad, keylike)
+            return (j, count + pad, keylike, pad > 0)
         }
 
         /// A line break (one, or a carriage return and a line feed), written plainly or as an escape: where the next line starts.
@@ -588,7 +610,7 @@ nonisolated enum Redact {
             while breaks < 2, let (r, next) = read(j) {
                 switch r {
                 case .blank: break
-                case .plain(let c) where c.isNewline: break
+                case .plain(let c) where c.isNewline, .decoded(let c) where c.isNewline: break
                 default: return breaks > 0 ? j : nil
                 }
                 j = next; breaks += 1
