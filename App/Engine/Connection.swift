@@ -1489,12 +1489,15 @@ final class Connection {
         return .init(killSwitch: s.prefs.killSwitch, lan: s.lanBypassesTunnel, onDemand: s.prefs.alwaysOn)
     }
 
+    /// A takeover's `apply` found the tunnel no longer running.
+    private struct StoppedMeanwhile: Error {}
+
     /// [g]: the generation of the operation applying it. Once a newer one took over, nothing more is started.
     /// `since`: the erase request the caller's operation began under, when it waited before getting here.
     /// [staged]: told the revision the extension staged it as, before it can run. [search]: the search domain, when the
     /// caller records what it applied (otherwise `search(input)`).
     private func apply(_ input: Compiler.Input, _ json: String, _ g: Int, persist: Bool = true, requireDurable: Bool = false, profile override: TunnelControl.Profile? = nil,
-                       since: Int? = nil, search searched: String? = nil, staged told: (String) -> Void = { _ in }) async throws {
+                       since: Int? = nil, search searched: String? = nil, takeover: Bool = false, staged told: (String) -> Void = { _ in }) async throws {
         if !Lifecycle.mayApply(persist: persist, requireDurable: requireDurable) { throw Fail("The tunnel couldn't save its configuration") }
         engineChanges += 1
         #if DEBUG
@@ -1527,6 +1530,9 @@ final class Connection {
         // A persisting change replaces whatever a pause sealed (or withdraws it, if it fails).
         if persist { pauseSealed = nil }
         if persist, !(await Running.unsealed()) { throw TunnelControl.Unstaged(errorDescription: "Could not save the connection state") }
+        // A takeover found the tunnel running; stopped since (from System Settings) during the wait above, it is not started
+        // again: the stop stands.
+        if takeover, [.disconnecting, .disconnected, .invalid].contains(tunnel.refreshStatus()) { throw StoppedMeanwhile() }
         // Connect on Demand isn't part of the running tunnel: a change to it alone needs no restart (a pause leaves it).
         // An erase still pending: never reload the running engine in place, restart it so the erase comes first.
         if tunnel.status == .connected, previous?.routing == target.routing, !store.extensionWipePending {
@@ -3235,7 +3241,7 @@ final class Connection {
                 }
                 let json = try compiled.get()
                 admitted = true
-                try await apply(input, json, g)
+                try await apply(input, json, g, takeover: true)
                 commit(input, json, accounts)
                 guard g == generation else { return }
                 stopAdopting()
@@ -3247,6 +3253,13 @@ final class Connection {
                 startWatching()
                 return
             }
+        } catch is StoppedMeanwhile {
+            // The tunnel was stopped from outside while being taken over: ended as any stop from outside.
+            guard g == generation else { return }
+            let error = await tunnel.disconnectError()
+            guard g == generation else { return }
+            stopAdopting()
+            await teardown(error: error ?? "The VPN was turned off by macOS", g)
         } catch {
             guard g == generation else { return }
             let failure = message(error, "Could not take over the running VPN")
