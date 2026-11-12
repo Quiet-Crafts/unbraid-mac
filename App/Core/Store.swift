@@ -224,6 +224,7 @@ final class Store {
     // MARK: Server catalogues (public data, sealed so that nothing else can plant one)
 
     nonisolated private struct CountryCache: Codable {
+        var provider: String
         var countries: [Country]
         var published: Int64?
     }
@@ -234,8 +235,9 @@ final class Store {
 
     private func countryCache(_ provider: String) -> CountryCache? {
         guard let data = vault.read(Self.countryFile(provider)) else { return nil }
-        if let cache = try? JSONDecoder().decode(CountryCache.self, from: data) { return cache }
-        return (try? JSONDecoder().decode([Country].self, from: data)).map { CountryCache(countries: $0, published: nil) }
+        // One provider's sealed list copied over another's is not that provider's.
+        guard let cache = try? JSONDecoder().decode(CountryCache.self, from: data), cache.provider == provider else { return nil }
+        return cache
     }
 
     func countries(_ provider: String) -> [Country] { countryCache(provider)?.countries ?? [] }
@@ -250,7 +252,7 @@ final class Store {
     }
 
     func countries(_ provider: String, _ list: [Country], published: Int64? = nil) {
-        let cache = CountryCache(countries: list, published: published)
+        let cache = CountryCache(provider: provider, countries: list, published: published)
         FileWork.shared.submit { [dir, vault] in
             guard let data = try? JSONEncoder().encode(cache), vault.write(Self.countryFile(provider), data) else { return }
             try? FileManager.default.removeItem(at: dir.appending(path: "countries-\(provider).json")) // the plain file of older builds

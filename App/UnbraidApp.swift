@@ -203,7 +203,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         #if DEBUG
         if PerfHost.active { PerfHost.start(); return }
         #endif
-        if SingleCopy.refuseOutsideApplications() { NSApp.terminate(nil); return }
+        // Left at once, not through the normal quit: that would also resume a pause the copy in Applications holds.
+        if SingleCopy.refuseOutsideApplications() { exit(0) }
         Connection.shared.tunnel.installExtension()
         Task { await Connection.shared.restorePause() }
         LoginItem.shared.watch()
@@ -367,10 +368,10 @@ enum WidgetActions {
             // The profile in use pauses a running tunnel and connects an off one. At launch a running tunnel is taken
             // over a moment later: until then it reads as off, so the request waits a little for it.
             let model = AppModel.shared
-            if atLaunch, WidgetAction.profileRequest(action)?.name == model.setup.profile, Connection.shared.state.phase == .off {
+            if atLaunch, WidgetAction.profileRequest(action)?.name == model.setup.profile, WidgetActions.unsettled() {
                 waiting = Task {
                     let deadline = ContinuousClock.now + .seconds(6)
-                    while Connection.shared.state.phase == .off, ContinuousClock.now < deadline {
+                    while unsettled(), ContinuousClock.now < deadline {
                         try? await Task.sleep(for: .milliseconds(250))
                         if Task.isCancelled { return }
                     }
@@ -383,6 +384,9 @@ enum WidgetActions {
         }
         return true
     }
+
+    /// Off or connecting: a running tunnel taken over after launch passes through both before it reads as on.
+    private static func unsettled() -> Bool { [.off, .connecting].contains(Connection.shared.state.phase) }
 
     private static func profileRequest(_ action: String) {
         let model = AppModel.shared

@@ -189,7 +189,7 @@ final class StoreTests: XCTestCase {
 
     func testCountryCacheReadsOldFormatAndPersistsPublication() async throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let old = Data("[]".utf8)
+        let old = Data(#"{"provider":"proton","countries":[]}"#.utf8)
         let sealedWithTheStoresKey = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
         XCTAssertTrue(sealedWithTheStoresKey.write("countries-proton.bin", old))
         let s = store()
@@ -215,6 +215,12 @@ final class StoreTests: XCTestCase {
         await settle()
         XCTAssertFalse(FileManager.default.fileExists(atPath: dir.appending(path: "countries-nord.json").path))
         XCTAssertEqual(store().countries("nord"), [])
+        // Sealed with the right key but for another provider: not this one's list.
+        let vault = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        XCTAssertTrue(vault.write("countries-proton.bin", Data(#"{"provider":"nord","countries":[],"published":5}"#.utf8)))
+        XCTAssertNil(store().catalogDate("proton"))
+        XCTAssertTrue(vault.write("countries-proton.bin", Data(#"{"provider":"proton","countries":[],"published":5}"#.utf8)))
+        XCTAssertEqual(store().catalogDate("proton"), 5)
     }
 
     func testPendingProfileSwitchSurvivesSealedStoreRelaunch() async {
