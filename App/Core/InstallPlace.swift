@@ -24,7 +24,9 @@ nonisolated enum InstallPlace {
         guard other.pid != me.pid else { return false }
         let there = isInApplications(other.path), here = isInApplications(me.path)
         if there != here { return there }
-        let a = other.launched ?? .distantFuture, b = me.launched ?? .distantFuture
-        return a != b ? a < b : other.pid < me.pid
+        // Without a start date on either side there is nothing to compare: the process number decides, so exactly one of
+        // two copies yields whatever is known about them.
+        if let a = other.launched, let b = me.launched, a != b { return a < b }
+        return other.pid < me.pid
     }
 }

@@ -31,4 +31,17 @@ final class InstallPlaceTests: XCTestCase {
         XCTAssertTrue(InstallPlace.outranks(installed, image))
         XCTAssertFalse(InstallPlace.outranks(image, installed))
     }
+
+    func testAMissingStartDateFallsBackToTheProcessNumber() {
+        let dated = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: Date(timeIntervalSince1970: 100), pid: 40)
+        let low = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: nil, pid: 10)
+        let high = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: nil, pid: 90)
+        // Exactly one of any two yields, in either order, when a date is missing on one side or both.
+        for (a, b) in [(dated, low), (dated, high), (low, high)] {
+            XCTAssertNotEqual(InstallPlace.outranks(a, b), InstallPlace.outranks(b, a))
+        }
+        XCTAssertTrue(InstallPlace.outranks(low, high))
+        XCTAssertTrue(InstallPlace.outranks(low, dated))
+        XCTAssertTrue(InstallPlace.outranks(dated, high))
+    }
 }
