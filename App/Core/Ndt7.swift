@@ -16,6 +16,9 @@ nonisolated enum Ndt7 {
     struct Limited: Error {}
     struct Refused: Error {}
 
+    /// What a test shows when the locate worked through the exit but no test server accepted a connection.
+    static let unreachableText = "M-Lab's test servers couldn't be reached through this exit. Its DNS may block measurement-lab.org (some free VPN servers do)."
+
     /// Try the remaining candidates only when a server refuses the test.
     static func anyOf<T>(_ server: Server, run: (Server) async throws -> T) async throws -> (Server, T) {
         for candidate in [server] + server.others {

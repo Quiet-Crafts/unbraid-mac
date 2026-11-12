@@ -328,7 +328,7 @@ final class SpeedTest {
                             return try await Ndt7.download(tag: j.tag, url: url, probe: probe, sample: { samples.add($0, $1) }) { rate in if self.all?.phase == .download { self.updateLeg(mine, j.exit) { $0.now = rate }; if self.attempt == mine { self.all?.elapsedMs = Ndt7.uptimeMs() - started } } }
                         }
                         return ParallelResult(exit: j.exit, server: chosen, value: value, samples: samples.read())
-                    } catch { return ParallelResult(exit: j.exit) }
+                    } catch { return ParallelResult(exit: j.exit, refused: error is Ndt7.Refused) }
                 }
             } }
             for await result in group {
@@ -336,7 +336,7 @@ final class SpeedTest {
                 updateLeg(mine, result.exit) { l in
                     l.now = 0; l.down = result.value
                     if let server = result.server { if l.server?.download != server.download { l.ping = nil }; l.server = server }
-                    if result.value == nil { l.error = "Stopped during the download: the exit stopped answering. Not in the totals." }
+                    if result.value == nil { l.error = result.refused ? Ndt7.unreachableText : "Stopped during the download: the exit stopped answering. Not in the totals." }
                 }
             }
         }
@@ -476,7 +476,7 @@ final class SpeedTest {
             return
         } catch {
             Log.error("speed test", error: error)
-            update(j.mine) { $0.phase = .failed; $0.error = "The test couldn't finish. Check the connection and try again." }
+            update(j.mine) { $0.phase = .failed; $0.error = error is Ndt7.Refused ? Ndt7.unreachableText : "The test couldn't finish. Check the connection and try again." }
         }
     }
 
@@ -818,6 +818,8 @@ private nonisolated struct ParallelResult: Sendable {
     var server: Ndt7.Server? = nil
     var value: Int64? = nil
     var samples: [(time: Int64, bytes: Int64)] = []
+    /// No test server accepted a connection through this exit.
+    var refused = false
 }
 
 private nonisolated final class SpeedSamples: @unchecked Sendable {
