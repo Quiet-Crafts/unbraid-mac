@@ -46,11 +46,17 @@ struct CopyDiagnosticsButton: View {
     @State private var report: String?
     /// Counts clicks of Copy, so an earlier "Copied" timer never clears a later one.
     @State private var copies = 0
+    @State private var collecting = false
 
     var body: some View {
         Button(copied ? "Copied" : "Copy Diagnostics…") {
-            Task { report = await DiagnosticsReport.collect().text(now: .now, names: DiagnosticsReport.providerName) }
+            collecting = true
+            Task {
+                report = await DiagnosticsReport.collect().text(now: .now, names: DiagnosticsReport.providerName)
+                collecting = false
+            }
         }
+        .disabled(collecting)
         .help("Shows what would be copied: versions, the connection's state and what last failed, for a message to support.")
         .sheet(isPresented: Binding(get: { report != nil }, set: { if !$0 { report = nil } })) {
             if let report {

@@ -853,7 +853,7 @@ private struct ProtectionTab: View {
         let level = s.prefs.killLevel == .off ? "Off" : s.prefs.killLevel == .internet ? "Internet" : "Internet and home network"
         let chosenName = filter.id == "own" ? "Your own server" : FilterServer.presets.first(where: { $0.id == filter.id })?.name ?? "None"
         // A filter that is chosen but not set up, or applied nowhere, filters nothing: the header says so.
-        let working = filter.server != nil && (filter.routes || filter.direct || filter.directApps)
+        let working = filter.server != nil && (filter.routes || filter.direct || filter.directApps || filter.apps.values.contains(true))
         let filterName = filter.id == nil || working ? chosenName : chosenName + " (not used yet)"
         SettingsPage(title: "Protection", subtitle: "Kill switch: \(level) · Filter: \(filterName)", tile: IconTile.Tile.red) {
             if let n = model.notice { Section { NoticeRow(text: n) } }
@@ -889,7 +889,7 @@ private struct ProtectionTab: View {
                         if p.filter.id != before { p.filter.value = "" }
                         // Choosing a filter applies it to VPN routes, so it filters something at once; the switches
                         // below fine-tune where.
-                        if before == nil, p.filter.id != nil, !(p.filter.routes || p.filter.direct || p.filter.directApps) { p.filter.routes = true }
+                        if before == nil, p.filter.id != nil, !(p.filter.routes || p.filter.direct || p.filter.directApps || p.filter.apps.values.contains(true)) { p.filter.routes = true }
                         p.customDns = []
                     }
                 })) {
