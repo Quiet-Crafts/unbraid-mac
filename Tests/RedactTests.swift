@@ -188,7 +188,9 @@ final class RedactTests: XCTestCase {
     /// quoting: no part of it ever shows.
     func testAPlantedSecretNeverShows() {
         let names = ["private_key", "PrivateKey", "PRE_SHARED_KEY", "presharedkey", "PSK", "auth_key", "ApiKey", "credential", "CREDENTIALS",
-                     "password", "Passwd", "secret", "token", "ToKeN", #"pass\u0077ord"#, #"\u0074oken"#]
+                     "password", "Passwd", "secret", "token", "ToKeN", #"pass\u0077ord"#, #"\u0074oken"#,
+                     "secret_key", "private-key", "x-api-key", "client_key", "access_key", "passphrase", "key", "pt", "pass", "uuid",
+                     "account_number", "account_id", "Authorization"]
         let values = ["FAKEHEAD FAKETAIL", "FAKEHEAD\"FAKETAIL", "FAKEHEAD\",FAKETAIL", "FAKEHEAD\"}FAKETAIL", "FAKEHEAD\"]FAKETAIL",
                       "FAKEHEAD\" FAKETAIL", "FAKEHEAD\\FAKETAIL", "FAKEHEAD\\\"FAKETAIL", "FAKEHEAD/FAKETAIL", "FAKEHEAD\nFAKETAIL",
                       "FAKEHEAD\tFAKETAIL", "FAKEHEAD\r\nFAKETAIL", "FAKEHEAD☃FAKETAIL", "FAKEHEAD'FAKETAIL", "FAKEHEAD@FAKETAIL", "FAKEHEAD\\"]
@@ -231,11 +233,51 @@ final class RedactTests: XCTestCase {
         XCTAssertGreaterThan(checked, 10_000)
     }
 
+    /// Shapes the providers and the engine really write: headers, query values, account fields, wrapped and escaped keys.
+    func testProviderAndWrappedKeyShapesAreHidden() {
+        let hexA = "6acef03f62675b4b1bbd03e53b187727", hexB = "1bbd03e53b1877276acef03f62675b4b"
+        let slashKey = "+//7//v/+//7//v/+//7//v/+//7//v/+//7//v/+/8="
+        let cases: [(String, [String])] = [
+            ("Authorization: Bearer FAKESHORT7", ["FAKESHORT7"]),
+            ("Authorization: Basic eDpGYWtlUGFzczc=", ["eDpGYWtlUGFzczc="]),
+            (#"{"Authorization":"Bearer FAKESHORT7"}"#, ["FAKESHORT7"]),
+            ("got Bearer FAKESHORT7 back", ["FAKESHORT7"]),
+            ("https://192.0.2.20:1337/addKey?pt=FAKESHORT7&pubkey=dummy", ["FAKESHORT7"]),
+            ("https://192.0.2.20:1337/addKey?pt=Fake%2FPass%2B7 end", ["Fake%2FPass%2B7"]),
+            (#"{"account_number":"1234567890123456"}"#, ["1234567890123456"]),
+            ("account_id=i-FAKE-1234-5678", ["i-FAKE-1234-5678"]),
+            ("key: " + hexA, [hexA]),
+            ("uuid: 1b2c3d4e-0000-4000-8000-123456789abc", ["1b2c3d4e-0000"]),
+            (#"{"control_wrap":{"key":"-----BEGIN OpenVPN Static key V1-----\n"# + hexA + #"\n"# + hexB + #"\n-----END OpenVPN Static key V1-----"}}"#, [hexA, hexB]),
+            ("-----BEGIN OpenVPN Static key V1-----\n" + hexA + "\n" + hexB + "\n-----END OpenVPN Static key V1-----", [hexA, hexB]),
+            ("-----BEGIN PRIVATE KEY-----\n" + String(repeating: "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7", count: 2) + "\nQ2pFakeTailAbc12==\n-----END PRIVATE KEY-----", ["Q2pFakeTail"]),
+            ("PrivateKey = FAKEFAKEFAKEFAKEFAKEFA\nKEFAKEFAKEFAKEFAKEFAK=", ["FAKEFAKEFAKEFAKEFAKEFA", "KEFAKEFAKEFAKEFAKEFAK"]),
+            ("bad key \"" + slashKey.replacingOccurrences(of: "/", with: "\\/") + "\"", ["+\\/\\/7\\/\\/v", "+\\/8="]),
+            ("bad key " + slashKey.map { String(format: "\\u%04x", $0.asciiValue!) }.joined(), ["\\u002b\\u002f"]),
+            ("AwoRGB8mLTQ7QklQV15l\u{0301}bHN6gYiPlp2kq7K5wMfO1dw=", ["bHN6gYiPlp2kq7K5wMfO1dw="]),
+            ("parse \"https://FAKEUSER:FAKEPA/SS@192.0.2.1/\": invalid port", ["FAKEUSER", "SS@"]),
+            ("dial ss://YWVzLTI1Ni1nY206cHc/Png=@192.0.2.1:8388 failed", ["YWVzLTI1Ni1nY206cHc", "Png="]),
+            ("password is FAKESECRET1", ["FAKESECRET1"]),
+            ("password\u{FF1A}FAKESECRET1", ["FAKESECRET1"]),
+        ]
+        for (input, leaks) in cases {
+            let out = Redact.hiding(input)
+            for leak in leaks { XCTAssertFalse(out.contains(leak), "\(input.debugDescription) -> \(out.debugDescription)") }
+        }
+        // The host after a login, and what stands around a hidden value, stay.
+        XCTAssertEqual(Redact.hiding("dial ss://YWVzLTI1Ni1nY206cHc/Png=@192.0.2.1:8388 failed"), "dial ss://[hidden]@192.0.2.1:8388 failed")
+        XCTAssertEqual(Redact.hiding("got Bearer FAKESHORT7 back"), "got [hidden] back")
+        XCTAssertEqual(Redact.hiding("https://FAKEUSER:FAKEPASS@invalid.example/path"), "https://[hidden]@invalid.example/path")
+    }
+
     func testTextWithoutSecretsIsReturnedUnchanged() {
         for text in ["", "ordinary message", "token expired", "Sign in to Mullvad for Sweden", "https://example.invalid/path",
                      "route to [2001:db8::1] failed", #"{"server":"192.0.2.1"}"#, #""a\\b\"c""#, "line one\nline two", "authentication failed",
                      "dial tcp 192.0.2.1:443: connect: connection refused", #"decode config: json: unknown field "mtu_size""#,
                      "user@example.com not found", "https://example.com/@scope/pkg", "missing token", "tokens: 5",
+                     "public_key: abc", "bypass: 3", "no key found", "sort key", "mtu 1500, port: 443", "ptr: 5", "Authorization failed",
+                     "first line of a message\nsecond line of a message", "https://example.com:8443/a/b@c",
+                     "retry in 15s\nretry in 30s", "dial tcp 192.0.2.1:443\nconnect: refused",
                      String(repeating: "\\", count: 100_000), String(repeating: "\"", count: 100_000), String(repeating: "@", count: 1_000)] {
             XCTAssertEqual(Redact.hiding(text), text)
         }
@@ -262,7 +304,8 @@ final class RedactTests: XCTestCase {
                         fill(#"\u0070assword:\""#), fill("://"), fill("a://"), fill(#"a:\/\/"#), fill("@"), "https://" + fill("x@"),
                         "password" + fill(" "), "password" + fill("\\"), fill("password=["), fill("password x "), fill("AAAA="), fill("\\u0020"),
                         "ss:\\/\\/" + String(repeating: "password=\"", count: size / 20) + "@" + fill("x"), fill("token=\"password a b\""),
-                        fill("\\\n")]
+                        fill("\\\n"), fill("AbC1dEf2GhI3jKl4\n"), fill("AbC1dEf2GhI3jKl4MnO5pQr6StU7vWx8\r\n"), fill("AbC1dEf2GhI3jKl4\\n"),
+                        fill("a\n"), fill("Authorization: "), fill("password is "), fill("Bearer "), fill("key="), fill("ss://x/")]
         for text in patterns {
             let start = Date()
             _ = Redact.hiding(text)

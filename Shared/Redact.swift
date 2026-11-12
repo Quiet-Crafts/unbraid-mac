@@ -39,6 +39,18 @@ nonisolated enum Redact {
         "authkey", "api_key", "apikey", "credentials", "credential", "password", "passwd", "secret", "token",
     ].map { Array($0) }
 
+    /// More names, which the earlier pattern did not know: the account and header fields of the providers. A short one
+    /// counts only as a whole word (not inside `public_key` or `bypass`).
+    private static let moreNames: [(name: [Character], whole: Bool)] = [
+        ("authorization", false), ("account_number", false), ("account_id", false), ("secret_key", false), ("secretkey", false),
+        ("client_key", false), ("clientkey", false), ("access_key", false), ("accesskey", false), ("passphrase", false),
+        ("pt", true), ("key", true), ("pass", true), ("uuid", true),
+    ].map { (Array($0.0), $0.1) }
+
+    /// The words that open an Authorization header's value; the credential is the word after.
+    private static let authorization = Array("authorization")
+    private static let schemes: [[Character]] = ["bearer", "basic", "token", "digest"].map { Array($0) }
+
     /// One character as the text may quote it: itself, or escaped by a run of backslashes (at any depth of quoting).
     private enum Read: Equatable {
         /// Not escaped; or a `\uXXXX` or `\/` escape, decoded.
@@ -222,23 +234,58 @@ nonisolated enum Redact {
             case 92 where i == 0 || a[i - 1] != 92: break
             default: return nil
             }
-            guard let (first, _) = read(i), let c = letter(first), c == "p" || c == "a" || c == "c" || c == "s" || c == "t" else { return nil }
+            guard let (first, _) = read(i), let c = letter(first), c == "p" || c == "a" || c == "c" || c == "s" || c == "t" || c == "k" || c == "u" else { return nil }
             for name in Redact.names where name[0] == c {
-                var j = i
-                var matched = true
-                for want in name {
-                    guard let (r, next) = read(j), letter(r) == want else { matched = false; break }
-                    j = next
-                }
-                if matched, let v = separator(after: j) { return valueEnd(v) }
+                if let j = matches(name, at: i), let v = separator(after: j) { return valueEnd(v) }
+            }
+            for (name, whole) in Redact.moreNames where name[0] == c {
+                guard let j = matches(name, at: i), !whole || !wordCharacter(before: i), let v = separator(after: j) else { continue }
+                let (end, quoted) = valueEnd(v)
+                return name == Redact.authorization && !quoted ? (credential(after: end), false) : (end, quoted)
             }
             return nil
+        }
+
+        /// Where [name] written from [i] ends (nil if it isn't there).
+        private func matches(_ name: [Character], at i: Int) -> Int? {
+            var j = i
+            for want in name {
+                guard let (r, next) = read(j), letter(r) == want else { return nil }
+                j = next
+            }
+            return j
+        }
+
+        /// A letter, digit or `_` is right before [i] (the character itself, or the end of an escape).
+        private func wordCharacter(before i: Int) -> Bool {
+            guard i > 0 else { return false }
+            let c = t[i - 1]
+            return c == "_" || c.isLetter || c.isNumber
+        }
+
+        /// An Authorization header's value "Bearer abc": its first word, a scheme, ends at [end]; the credential is the
+        /// next word on the line, and goes too.
+        private mutating func credential(after end: Int) -> Int {
+            guard end < n, let word = start(of: end), Redact.schemes.contains(where: { s in
+                s.count == end - word && zip(t[word..<end], s).allSatisfy(Scan.same)
+            }) else { return end }
+            var k = end
+            while k < n, w[k], !t[k].isNewline { k += 1 }
+            guard k > end, k < n, !w[k] else { return end }
+            return unquotedEnd(k)
+        }
+
+        /// Where the unquoted word that ends at [end] starts.
+        private func start(of end: Int) -> Int? {
+            var k = end
+            while k > 0, !w[k - 1], a[k - 1] != 58, a[k - 1] != 61 { k -= 1 }
+            return k < end ? k : nil
         }
 
         /// A name's letter (or `_`), in lower case, written plainly or as an escape.
         private func letter(_ r: Read) -> Character? {
             switch r {
-            case .plain(let c), .decoded(let c): return c.utf8.count == 1 && c.utf8.first == 95 ? "_" : Scan.fold(c)
+            case .plain(let c), .decoded(let c): return c.utf8.count == 1 && (c.utf8.first == 95 || c.utf8.first == 45) ? "_" : Scan.fold(c)
             default: return nil
             }
         }
@@ -253,7 +300,7 @@ nonisolated enum Redact {
                 }
             }
             j = blanks(from: j)
-            guard let (r, next) = read(j), decodes(r, to: ":") || decodes(r, to: "=") else { return nil }
+            guard let (r, next) = read(j), decodes(r, to: ":") || decodes(r, to: "=") || decodes(r, to: "\u{FF1A}") else { return nil }
             return blanks(from: next)
         }
 
@@ -343,13 +390,19 @@ nonisolated enum Redact {
                 wordEnds[s] = Scan.index(of: e, in: found).map { wordEnds[$0] } ?? e
             }
             var out: [Range<Int>] = []
-            for i in 0..<n where a[i] == 112 || a[i] == 80 || a[i] == 0 && Scan.fold(t[i]) == "p" {
+            for i in 0..<n where a[i] == 112 || a[i] == 80 || a[i] == 98 || a[i] == 66 || a[i] == 0 && (Scan.fold(t[i]) == "p" || Scan.fold(t[i]) == "b") {
                 for name in Scan.passwords {
                     guard i + name.count < n, zip(t[i..<(i + name.count)], name).allSatisfy(Scan.same), w[i + name.count] else { continue }
                     var k = i + name.count
                     while k < n, w[k] { k += 1 }
                     guard k < n else { continue }
-                    let e = blank(from: k)
+                    var e = blank(from: k)
+                    // "password is hunter2": the word after "is" is the password.
+                    if e - k == 2, e < n, Scan.same(t[k], "i"), Scan.same(t[k + 1], "s") {
+                        var m = e
+                        while m < n, w[m] { m += 1 }
+                        if m < n { e = blank(from: m) }
+                    }
                     out.append(i..<(Scan.index(of: e, in: found).map { wordEnds[$0] } ?? e))
                     break
                 }
@@ -357,14 +410,14 @@ nonisolated enum Redact {
             return out
         }
 
-        private static let passwords: [[Character]] = [Array("password"), Array("passwd")]
+        private static let passwords: [[Character]] = [Array("password"), Array("passwd"), Array("bearer")]
 
         // MARK: URL logins
 
         /// The login in a URL ("ss://method:pass@host", "https://user:pass@host", "https:\/\/…" or with `\u` escapes, as
         /// a string quotes it): from after `//` to the last `@` before the host part ends (at a blank or a `/`), so an `@`
         /// in a password hides it whole.
-        func logins() -> [Login] {
+        mutating func logins() -> [Login] {
             // Where the host part ends, from each place; where the "@"s (plain, or escaped as "@") and ":"s are.
             var stops = [Int](repeating: n, count: n + 1)
             var k = n - 1
@@ -386,7 +439,19 @@ nonisolated enum Redact {
                     ascii = ascii || asciiRun && Scan.fold(t[k]) != nil
                 }
                 guard letter else { continue }
-                let stop = stops[a]
+                let hostEnd = stops[a]
+                // A "/" in the password ("user:pa/ss@host"): what comes before the first "/" can't be a host and port (what
+                // follows its last ":" isn't a number), so the login goes on to the next blank.
+                var stop = hostEnd
+                if hostEnd < n, self.a[hostEnd] == 47, self.a[a] != 91, !(ats[Scan.lowerBound(a, in: ats)..<ats.count].first.map { $0 < hostEnd } ?? false), let colon = (a..<hostEnd).last(where: { self.a[$0] == 58 }),
+                   colon + 1 < hostEnd, !(colon + 1..<hostEnd).allSatisfy({ (48...57).contains(self.a[$0]) }) {
+                    stop = blank(from: hostEnd)
+                } else if hostEnd < n, self.a[hostEnd] == 47, i - k == 2, zip(t[k..<i], "ss").allSatisfy({ Scan.same($0, $1) }),
+                          !(ats[Scan.lowerBound(a, in: ats)..<ats.count].first.map { $0 < hostEnd } ?? false),
+                          !t[a..<hostEnd].contains(where: { $0 == "." || $0 == ":" }) {
+                    // A Shadowsocks link's login is Base64, which holds "/" too.
+                    stop = blank(from: hostEnd)
+                }
                 let firstAt = Scan.lowerBound(a, in: ats)
                 let lastAt = Scan.lowerBound(stop, in: ats) - 1
                 guard firstAt <= lastAt, ats[lastAt] > a else {
@@ -398,7 +463,7 @@ nonisolated enum Redact {
                 // The earlier pattern: "scheme://" in plain ASCII, then up to the first plain "@".
                 let plain = Scan.lowerBound(a, in: plainAts)
                 let literal = ascii && t[i] == ":" && a == i + 3
-                let earlier = literal && plain < plainAts.count && plainAts[plain] < stop && plainAts[plain] > a ? a..<plainAts[plain] : nil
+                let earlier = literal && plain < plainAts.count && plainAts[plain] < hostEnd && plainAts[plain] > a ? a..<plainAts[plain] : nil
                 // Cut off after an "@", what follows may still be the password's (after an "@" in it), even if it looks
                 // like a host name: it goes too, unless it is an IP address.
                 let end = stop == n && !address(atEnds[lastAt]) ? n : ats[lastAt]
@@ -476,23 +541,74 @@ nonisolated enum Redact {
         // MARK: keys
 
         /// Runs of 40 or more Base64 (or URL-safe Base64) characters, with up to two `=` after: keys, whatever their name.
+        /// A character may be written as an escape (`\/`, `\u002b`) or carry a combining mark. A key wrapped over lines
+        /// goes whole: the lines after a full one (the last is shorter), or lines of 16 or more characters that hold a
+        /// digit, `+` or `=` and add up to 40 (a key split in two).
         func blobs() -> [Range<Int>] {
             var out: [Range<Int>] = []
             var i = 0
             while i < n {
-                guard base64(a[i]) else { i += 1; continue }
-                var e = i
-                while e < n, base64(a[e]) { e += 1 }
-                if e - i >= 40 {
-                    var end = e
-                    while end < n, end - e < 2, a[end] == 61 { end += 1 }
+                guard let first = piece(at: i) else { i += 1; continue }
+                var end = first.end, total = first.count, last = first.count
+                var keylike = first.keylike
+                let start = first.count >= 16
+                var next = lineBreak(after: end).flatMap { piece(at: $0) }
+                while let p = next, (total >= 40 && p.count <= last) || (p.count >= 16 && (start || total >= 40) && (keylike || p.keylike)) {
+                    keylike = keylike || p.keylike
+                    end = p.end; total += p.count; last = p.count
+                    next = p.count >= 40 || total < 40 ? lineBreak(after: end).flatMap { piece(at: $0) } : nil
+                }
+                if total >= 40 {
                     out.append(i..<end)
                     i = end
                 } else {
-                    i = e
+                    i = first.end
                 }
             }
             return out
+        }
+
+        /// The run of Base64 characters that starts at [i], with the `=` after it (up to two); nil if there is none.
+        private func piece(at i: Int) -> (end: Int, count: Int, keylike: Bool)? {
+            var j = i, count = 0, keylike = false
+            while let (c, next) = base64(at: j) {
+                count += 1
+                keylike = keylike || c == 43 || (48...57).contains(c)
+                j = next
+            }
+            guard count > 0 else { return nil }
+            var pad = 0
+            while pad < 2, let (c, next) = base64(at: j, padding: true), c == 61 { j = next; pad += 1; keylike = true }
+            return (j, count + pad, keylike)
+        }
+
+        /// A line break (one, or a carriage return and a line feed), written plainly or as an escape: where the next line starts.
+        private func lineBreak(after i: Int) -> Int? {
+            var j = i, breaks = 0
+            while breaks < 2, let (r, next) = read(j) {
+                switch r {
+                case .blank: break
+                case .plain(let c) where c.isNewline: break
+                default: return breaks > 0 ? j : nil
+                }
+                j = next; breaks += 1
+            }
+            return breaks > 0 ? j : nil
+        }
+
+        /// The Base64 character (ASCII code) at [i], as it is written plainly, as an escape, or with combining marks after
+        /// it; and where the next starts. [padding]: `=` counts, nothing else does.
+        private func base64(at i: Int, padding: Bool = false) -> (UInt8, Int)? {
+            guard i < n else { return nil }
+            var code = a[i], next = i + 1
+            if code == 92 {
+                guard let (r, after) = read(i), case .decoded(let c) = r, c.utf8.count == 1 else { return nil }
+                code = c.utf8.first!; next = after
+            } else if code == 0 {
+                guard let s = t[i].unicodeScalars.first, s.isASCII, t[i].unicodeScalars.dropFirst().allSatisfy({ $0.properties.generalCategory == .nonspacingMark }) else { return nil }
+                code = UInt8(s.value)
+            }
+            return padding ? (code == 61 ? (code, next) : nil) : (base64(code) ? (code, next) : nil)
         }
 
         private func base64(_ b: UInt8) -> Bool { (65...90).contains(b) || (97...122).contains(b) || (48...57).contains(b) || b == 43 || b == 47 || b == 95 || b == 45 }
