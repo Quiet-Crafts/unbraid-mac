@@ -655,14 +655,12 @@ actor StatsWriter {
         liveOut.yield(live)
     }
 
-    /// The app key of the process at `path`: the installed app whose bundle holds it, else the bundle it sits in, else
-    /// "?" (the engine didn't say, or it's not an app).
+    /// The app key of the process at `path` (see `StatsMath.ownerKey`).
     private func appOf(_ path: String, _ ctx: StatsContext) -> String {
         if let k = owners[path] { return k }
         // Paths can include a fresh version directory on every app update. Bound both successful and failed lookups.
         if owners.count >= 4096 { owners.removeAll(keepingCapacity: true) }
-        let key = StatsMath.appKey(path: path, bundles: bundles.map { ($0.prefix, $0.id) }, tools: ctx.tools)
-            ?? StatsMath.outerApp(path).flatMap { Bundle(path: $0)?.bundleIdentifier } ?? "?"
+        let key = StatsMath.ownerKey(path: path, bundles: bundles.map { ($0.prefix, $0.id) }, tools: ctx.tools) { Bundle(path: $0)?.bundleIdentifier }
         owners[path] = key
         return key
     }

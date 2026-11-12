@@ -401,6 +401,13 @@ nonisolated enum StatsMath {
         return candidates.contains(own) ? own : tag == Compiler.tsTag ? home : candidates[0]
     }
 
+    /// The key a process's traffic is counted under: the listed app or added tool that holds it, else the app bundle it
+    /// sits in, else its own path (a program outside any app, such as ssh or a background service of macOS, named after
+    /// its file and the same key it gets once added as a tool), else "?" when the engine didn't say.
+    static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, bundleId: (String) -> String?) -> String {
+        appKey(path: path, bundles: bundles, tools: tools) ?? outerApp(path).flatMap(bundleId) ?? (path.hasPrefix("/") ? path : "?")
+    }
+
     /// The path of the outermost app bundle a process lives in ("/Applications/Foo.app" for a helper deep inside it).
     static func outerApp(_ path: String) -> String? {
         guard let r = path.range(of: ".app/") else { return path.hasSuffix(".app") ? path : nil }

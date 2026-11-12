@@ -983,8 +983,9 @@ final class AppModel {
         if clipboardContains(pb.string(forType: .string), secret: secret) { pb.clearContents() }
     }
 
-    /// An app as statistics name it: its catalogue name, "unbraid", "Unknown app" (no owner found), or a tool's last
-    /// identifier component ("com.example.sync-tool" becomes "sync-tool").
+    /// An app as statistics name it: its catalogue name, "unbraid", "Unknown app" (the engine didn't say), a program's
+    /// file name (a path: tools and programs outside any app), or a removed app's last identifier component
+    /// ("com.example.sync-tool" becomes "sync-tool").
     func appName(_ key: String) -> String {
         key == "?" ? "Unknown app" : key == Bundle.main.bundleIdentifier ? "unbraid" : apps.app(key)?.name ?? String(key.split(separator: ".").last ?? "")
     }

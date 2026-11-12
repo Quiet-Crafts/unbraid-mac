@@ -425,6 +425,18 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(Array(d.suffix(3)), [3_000_000, 0, 0])
     }
 
+    func testAProgramOutsideAnyAppIsCountedUnderItsOwnPath() {
+        let bundles = [(prefix: "/Applications/Safari.app", id: "com.apple.Safari")]
+        let ids = ["/Applications/Other.app": "com.example.other"]
+        let key = { (path: String, tools: Set<String>) in StatsMath.ownerKey(path: path, bundles: bundles, tools: tools) { ids[$0] } }
+        XCTAssertEqual(key("/Applications/Safari.app/Contents/MacOS/Safari", []), "com.apple.Safari")
+        XCTAssertEqual(key("/Applications/Other.app/Contents/MacOS/Other", []), "com.example.other")
+        XCTAssertEqual(key("/usr/bin/ssh", []), "/usr/bin/ssh")
+        XCTAssertEqual(key("/usr/bin/ssh", ["/usr/bin/ssh"]), "/usr/bin/ssh") // the same key once added as a tool
+        XCTAssertEqual(key("/Applications/Broken.app/Contents/MacOS/Broken", []), "/Applications/Broken.app/Contents/MacOS/Broken")
+        XCTAssertEqual(key("", []), "?")
+    }
+
     func testAClosingOnlyExitIsDrawn() {
         var w = LiveWindow()
         w.close(exit: "own", up: 10, down: 500_000)

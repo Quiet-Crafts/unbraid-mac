@@ -204,6 +204,8 @@ struct TrafficView: View {
                             AppIconView(app: model.apps.app(a.app), size: Measure.tableIcon)
                             Text(model.appName(a.app)).lineLimit(1)
                         }.frame(maxWidth: .infinity, minHeight: Measure.tableRow, alignment: .leading).layoutPriority(-1)
+                        // A program outside any app is named after its file: where it lives says what it is.
+                        .help(a.app.hasPrefix("/") ? a.app : "")
                         Button { filter(a.exit) } label: {
                             HStack(spacing: 8) {
                                 RouteDot(color: v.exits[a.exit]?.color ?? Ink.dim)
