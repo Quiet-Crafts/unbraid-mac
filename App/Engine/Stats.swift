@@ -392,6 +392,11 @@ actor StatsWriter {
 
     /// Version 2: peaks keep upload apart (bps/at stay the download's).
     private func openFile() throws -> SQL {
+        // A set-aside copy of a damaged file is not history to keep: it goes after a month.
+        let bad = Self.file.path + ".bad"
+        if let m = try? FileManager.default.attributesOfItem(atPath: bad)[.modificationDate] as? Date, -m.timeIntervalSinceNow > 30 * 86_400 {
+            try? FileManager.default.removeItem(atPath: bad)
+        }
         try FileManager.default.createDirectory(at: Self.dir, withIntermediateDirectories: true)
         guard let d = SQL(path: Self.file.path) else { throw Fail("The statistics file can't be opened") }
         // It names apps and exits: readable by this user only, like the sealed files.

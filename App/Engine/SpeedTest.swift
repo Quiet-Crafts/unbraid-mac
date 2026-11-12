@@ -476,7 +476,7 @@ final class SpeedTest {
             return
         } catch {
             Log.error("speed test", error: error)
-            update(j.mine) { $0.phase = .failed; $0.error = error is Ndt7.Refused ? Ndt7.unreachableText : "The test couldn't finish. Check the connection and try again." }
+            update(j.mine) { $0.phase = .failed; $0.error = error is Ndt7.Refused && $0.down == nil ? Ndt7.unreachableText : "The test couldn't finish. Check the connection and try again." }
         }
     }
 
