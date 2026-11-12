@@ -167,7 +167,7 @@ struct RootView: View {
         // The picker comes back for what the user was choosing a place for, with the new provider or server listed.
         .sheet(isPresented: $adding, onDismiss: {
             if let id = resumePicker { resumePicker = nil; presentation.picker = PickerTarget(id: id) }
-        }) { SignInView(first: false, target: resumePicker ?? "") }
+        }) { SignInView(first: false, saveOnly: resumePicker != nil) }
         // Asked once, after the first connection works, when nothing else is on screen; only an answer settles it (closing
         // the window keeps it for next time).
         .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy }, set: { _ in })) {

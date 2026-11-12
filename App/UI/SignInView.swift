@@ -16,8 +16,8 @@ enum Disclosure {
 /// server of your own, or use Tailscale only.
 struct SignInView: View {
     var first: Bool
-    /// What a server imported here becomes: "" a new route, or the route (or "app:<key>") the picker was open for.
-    var target = ""
+    /// Opened from the location picker: a server imported here is only saved, and the picker (which comes back) lists it.
+    var saveOnly = false
     private let model = AppModel.shared
     @Environment(\.dismiss) private var dismiss
     @State private var choice: String?
@@ -31,7 +31,7 @@ struct SignInView: View {
                 }
         }
         // A saved server also becomes the first route. First run needs no dismissal: signedIn flips and RootView swaps.
-        .importFlow(importer, target: target) { if !first { dismiss() } }
+        .importFlow(importer, target: saveOnly ? nil : "") { if !first { dismiss() } }
         .frame(width: first ? nil : 520, height: first ? nil : 540)
         .background(CaptureExclusion())
     }
