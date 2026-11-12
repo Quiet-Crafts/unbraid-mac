@@ -706,6 +706,8 @@ final class Connection {
         testingOwner.clear(); testingBase = nil; testingAccounts = nil
         generation += 1
         let g = generation
+        // Connect on Demand turned back on in Settings while this runs supersedes this Off (`offCleared`).
+        let cleared = offCleared
         defer { Task { await self.removeTestingIfNeeded(g) } }
         cancelResume()
         defer { if g == generation, store.pause != nil { armResume(retry: true) } }
@@ -765,7 +767,7 @@ final class Connection {
                     // for a confirmed stop: that one starts from this state.
                     // The user's Off, still: the tunnel that may be up when the status is read again must not bring Connect on
                     // Demand back (only a newer operation of theirs, which owns it, may).
-                    if g == generation { offLater() }
+                    if g == generation, cleared == offCleared { offLater() }
                     off(forget: false)
                     state.error = Self.stopUnconfirmed
                     Task { await statusChanged() }
