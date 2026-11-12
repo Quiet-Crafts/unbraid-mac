@@ -326,7 +326,7 @@ actor StatsWriter {
         pending.clear()
         open = open.map { (Self.wall(), $0.paused) }
         database = nil
-        for suffix in ["", "-journal", "-wal", "-shm"] { try? FileManager.default.removeItem(atPath: Self.file.path + suffix) }
+        for suffix in ["", "-journal", "-wal", "-shm", ".bad"] { try? FileManager.default.removeItem(atPath: Self.file.path + suffix) }
         if wasOn && recording { await startCollector() }
     }
 
@@ -376,9 +376,23 @@ actor StatsWriter {
         "CREATE TABLE IF NOT EXISTS test(at INTEGER PRIMARY KEY, exit TEXT, via TEXT, server TEXT, ip TEXT, down INTEGER, up INTEGER, idle INTEGER, busy_down INTEGER, busy_up INTEGER, grp INTEGER, n INTEGER NOT NULL DEFAULT 0)",
     ]
 
-    /// The open file, created on first use. Version 2: peaks keep upload apart (bps/at stay the download's).
+    /// The open file, created on first use. A file that is not a database (or is damaged) is set aside as `stats.db.bad`
+    /// and a fresh one started, so recording goes on.
     private func db() throws -> SQL {
         if let database { return database }
+        do { return try openFile() } catch let e as SQL.Failure where e.code == SQLITE_NOTADB || e.code == SQLITE_CORRUPT {
+            Log.error("stats", facts: "Statistics file unreadable (code \(e.code)); set aside")
+            let bad = Self.file.path + ".bad"
+            try? FileManager.default.removeItem(atPath: bad)
+            try FileManager.default.moveItem(atPath: Self.file.path, toPath: bad)
+            chmod(bad, 0o600)
+            for suffix in ["-wal", "-shm", "-journal"] { try? FileManager.default.removeItem(atPath: Self.file.path + suffix) }
+            return try openFile()
+        }
+    }
+
+    /// Version 2: peaks keep upload apart (bps/at stay the download's).
+    private func openFile() throws -> SQL {
         try FileManager.default.createDirectory(at: Self.dir, withIntermediateDirectories: true)
         guard let d = SQL(path: Self.file.path) else { throw Fail("The statistics file can't be opened") }
         // It names apps and exits: readable by this user only, like the sealed files.
@@ -615,7 +629,7 @@ actor StatsWriter {
                 guard g == gen else { return }
                 sample(now, Int((quiet + 500) / 1000), active: ctx.liveExits)
             }
-            if now - lastFlush > 25_000 { lastFlush = now; await flush(); checkpoint() }
+            if mono - lastFlush > 25_000 { lastFlush = mono; await flush(); checkpoint() }
         case .lost(let g): if g == gen { retry(g) }
         case .retry(let g): if g == gen && client != nil { retries += 1; await startCollector(retime: true) }
         }
@@ -625,9 +639,9 @@ actor StatsWriter {
     /// server are fixed when it is first seen, against the configuration the engine actually runs.
     private func apply(_ events: [Ledger.Ev], reset: Bool, gen g: Int) async {
         let ctx = await Stats.shared.context()
-        if bundlesAt == 0 || Self.wall() - bundlesAt > (bundles.isEmpty ? 30_000 : 300_000) {
+        if bundlesAt == 0 || Ndt7.uptimeMs() - bundlesAt > (bundles.isEmpty ? 30_000 : 300_000) {
             bundles = await Stats.shared.bundles()
-            bundlesAt = Self.wall()
+            bundlesAt = Ndt7.uptimeMs()
             owners.removeAll(keepingCapacity: true)
         }
         guard g == gen else { return }
