@@ -443,8 +443,22 @@ nonisolated enum StatsMath {
 
     // MARK: Reading
 
+    /// One program recorded as "~/bin/tool" (not routed) and as "/Users/<name>/bin/tool" (routed, or from before "~" was
+    /// used) is one row: the "~" form is written out as the path routing keeps.
+    static func sameTools(_ rows: [AppBytes], home: String) -> [AppBytes] {
+        let h = home.hasSuffix("/") ? String(home.dropLast()) : home
+        guard h.count > 1, rows.contains(where: { $0.app.hasPrefix("~/") }) else { return rows }
+        var sums: [AppBytes] = [], at: [String: Int] = [:]
+        for r in rows {
+            let app = r.app.hasPrefix("~/") ? h + r.app.dropFirst() : r.app
+            let k = app + "\u{0}" + r.exit
+            if let i = at[k] { sums[i].bytes += r.bytes } else { at[k] = sums.count; sums.append(AppBytes(app: app, exit: r.exit, bytes: r.bytes)) }
+        }
+        return sums.sorted { $0.bytes > $1.bytes }
+    }
+
     /// Everything a period shows, from `source`. `now` fixes "today" and the current hour (StatsScreen.kt `load`).
-    static func view(_ p: Period, now: Date, tz: TimeZone = .current, locale: Locale = .current, setup: Setup, source: StatsSource) -> StatsView {
+    static func view(_ p: Period, now: Date, tz: TimeZone = .current, locale: Locale = .current, homeFolder: String = NSHomeDirectory(), setup: Setup, source: StatsSource) -> StatsView {
         let nowMs = Int64(now.timeIntervalSince1970 * 1000)
         let today = dayOf(nowMs, tz: tz)
         let (from, to) = p.range(today: today)
@@ -507,7 +521,7 @@ nonisolated enum StatsMath {
             byExit: byExit.sorted { $0.value.total != $1.value.total ? $0.value.total > $1.value.total : $0.key < $1.key }.map { ExitBytes(exit: $0.key, bytes: $0.value) },
             total: byExit.values.reduce(Traffic(), +), columns: columns, labels: labels,
             selected: p == .day ? hourNow : Int(today - from),
-            apps: source.apps(from, to), peaks: peaks, dailyPeaks: daily, tests: tests,
+            apps: sameTools(source.apps(from, to), home: homeFolder), peaks: peaks, dailyPeaks: daily, tests: tests,
             week: week, weekMs: Int64(week.filter { $0 > 0 }.reduce(0, +) * 3_600_000), heat: heat, heatStart: heatStart)
     }
 }

@@ -437,6 +437,15 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(key("", []), "?")
     }
 
+    func testAToolRecordedWithAndWithoutTheTildeIsOneRow() {
+        let rows = [AppBytes(app: "~/bin/tool", exit: "r1", bytes: 5), AppBytes(app: "/Users/me/bin/tool", exit: "r1", bytes: 7),
+                    AppBytes(app: "~/bin/tool", exit: DIRECT, bytes: 2), AppBytes(app: "com.example.app", exit: "r1", bytes: 1)]
+        let merged = StatsMath.sameTools(rows, home: "/Users/me")
+        XCTAssertEqual(Set(merged), [AppBytes(app: "/Users/me/bin/tool", exit: "r1", bytes: 12), AppBytes(app: "/Users/me/bin/tool", exit: DIRECT, bytes: 2),
+                                     AppBytes(app: "com.example.app", exit: "r1", bytes: 1)])
+        XCTAssertEqual(StatsMath.sameTools(rows, home: "/").count, 4) // no home folder to write out
+    }
+
     func testAToolReachedThroughALinkIsCountedUnderItsKeyAcrossVersions() {
         let tool = "/opt/homebrew/bin/curl"
         let patterns = [tool: [Compiler.pattern(forPath: tool),
