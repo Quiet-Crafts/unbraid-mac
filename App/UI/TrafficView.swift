@@ -16,6 +16,12 @@ private func programName(_ key: String) -> String {
 /// A location key (a program outside any app): an absolute path or one under the home folder.
 private func isLocation(_ key: String) -> Bool { key.hasPrefix("/") || key.hasPrefix("~/") }
 
+/// A location as shown: the home folder written `~`, so the account name never appears on screen.
+private func shownLocation(_ key: String) -> String {
+    let home = NSHomeDirectory()
+    return key.hasPrefix(home + "/") ? "~" + key.dropFirst(home.count) : key
+}
+
 struct TrafficView: View {
     private let model = AppModel.shared
     @Environment(\.navigate) private var navigate
@@ -222,13 +228,13 @@ struct TrafficView: View {
                             AppIconView(app: model.apps.app(a.app), size: Measure.tableIcon)
                             Text(programName(a.app)).lineLimit(1)
                             if isLocation(a.app), names.contains(programName(a.app)) {
-                                Text((a.app as NSString).deletingLastPathComponent).lineLimit(1).truncationMode(.head)
+                                Text((shownLocation(a.app) as NSString).deletingLastPathComponent).lineLimit(1).truncationMode(.head)
                                     .font(.system(size: 12)).foregroundStyle(Ink.dim)
                             }
                         }
                         .accessibilityElement(children: .combine)
-                        .accessibilityValue(isLocation(a.app) ? a.app : "")
-                        .help(isLocation(a.app) ? a.app : "")
+                        .accessibilityValue(isLocation(a.app) ? shownLocation(a.app) : "")
+                        .help(isLocation(a.app) ? shownLocation(a.app) : "")
                         .frame(maxWidth: .infinity, minHeight: Measure.tableRow, alignment: .leading).layoutPriority(-1)
                         Button { filter(a.exit) } label: {
                             HStack(spacing: 8) {
