@@ -66,20 +66,23 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         let first = !statusLoaded
         if initial { statusLoaded = true }
         guard initial || previous != status else { return }
-        // Only a stop seen this session has a reason worth reading: the one left by an earlier run is old news.
-        if status == .disconnected, previous != status, !first, let c = manager?.connection {
-            let g = previous == .disconnecting && disconnectReason.pending ? disconnectReason.generation : disconnectReason.begin()
-            c.fetchLastDisconnectError { e in
-                let text = e.map { Redact.clean(($0 as NSError).localizedDescription) }
-                Task { @MainActor in
-                    guard self.disconnectReason.finish(text, generation: g) else { return }
-                    if let e { Diagnostics.noteStop(e) }
+        // An unchanged status (a repeat read at start-up) leaves the reason of the stop that just happened alone.
+        if previous != status {
+            // Only a stop seen this session has a reason worth reading: the one left by an earlier run is old news.
+            if status == .disconnected, !first, let c = manager?.connection {
+                let g = previous == .disconnecting && disconnectReason.pending ? disconnectReason.generation : disconnectReason.begin()
+                c.fetchLastDisconnectError { e in
+                    let text = e.map { Redact.clean(($0 as NSError).localizedDescription) }
+                    Task { @MainActor in
+                        guard self.disconnectReason.finish(text, generation: g) else { return }
+                        if let e { Diagnostics.noteStop(e) }
+                    }
                 }
+            } else if status == .disconnecting {
+                _ = disconnectReason.begin()
+            } else {
+                disconnectReason.invalidate()
             }
-        } else if status == .disconnecting {
-            _ = disconnectReason.begin()
-        } else {
-            disconnectReason.invalidate()
         }
         // Stop ownership is invalidated immediately; only the text waits for the system's answer.
         onStatusChange?()
