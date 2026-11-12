@@ -5,7 +5,6 @@ import SwiftUI
 /// connection control. No diagram: numbers and names answer faster.
 struct MenuBarPanel: View {
     private let model = AppModel.shared
-    @Environment(\.openSettings) private var openSettings
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var front = FrontApp.shared
     /// The app in front when the panel opened. Held while it is open, so a click always edits the app the person meant.
@@ -42,7 +41,7 @@ struct MenuBarPanel: View {
             Divider().padding(.top, 12)
             VStack(alignment: .leading, spacing: 2) {
                 MenuRow(title: "Open unbraid", key: "⌘O", shortcut: "o") { AppDelegate.openMain() }
-                MenuRow(title: "Settings…", key: "⌘,", shortcut: ",") { NSApp.activate(); openSettings() }
+                MenuRow(title: "Settings…", key: "⌘,", shortcut: ",") { AppDelegate.openSettingsWindow() }
                 MenuRow(title: "Quit unbraid", key: "⌘Q", shortcut: "q") { NSApp.terminate(nil) }
             }
             // The rows' hover fill reaches past the text, so the text lines up with the content above.
