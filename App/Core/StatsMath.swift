@@ -444,13 +444,15 @@ nonisolated enum StatsMath {
     // MARK: Reading
 
     /// One program recorded as "~/bin/tool" (not routed) and as "/Users/<name>/bin/tool" (routed, or from before "~" was
-    /// used) is one row: the "~" form is written out as the path routing keeps.
-    static func sameTools(_ rows: [AppBytes], home: String) -> [AppBytes] {
+    /// used) is one row: merged by the full path (the identity routing keeps), then shown again with the home folder as
+    /// "~", so the account's name isn't displayed. Tools in `routed` keep their full path, which finds them in the app list.
+    static func sameTools(_ rows: [AppBytes], home: String, routed: Set<String> = []) -> [AppBytes] {
         let h = home.hasSuffix("/") ? String(home.dropLast()) : home
-        guard h.count > 1, rows.contains(where: { $0.app.hasPrefix("~/") }) else { return rows }
+        guard h.count > 1, rows.contains(where: { $0.app.hasPrefix("~/") || $0.app.hasPrefix(h + "/") }) else { return rows }
         var sums: [AppBytes] = [], at: [String: Int] = [:]
         for r in rows {
-            let app = r.app.hasPrefix("~/") ? h + r.app.dropFirst() : r.app
+            let full = r.app.hasPrefix("~/") ? h + r.app.dropFirst() : r.app
+            let app = full.hasPrefix(h + "/") && !routed.contains(full) ? "~" + full.dropFirst(h.count) : full
             let k = app + "\u{0}" + r.exit
             if let i = at[k] { sums[i].bytes += r.bytes } else { at[k] = sums.count; sums.append(AppBytes(app: app, exit: r.exit, bytes: r.bytes)) }
         }
@@ -521,7 +523,7 @@ nonisolated enum StatsMath {
             byExit: byExit.sorted { $0.value.total != $1.value.total ? $0.value.total > $1.value.total : $0.key < $1.key }.map { ExitBytes(exit: $0.key, bytes: $0.value) },
             total: byExit.values.reduce(Traffic(), +), columns: columns, labels: labels,
             selected: p == .day ? hourNow : Int(today - from),
-            apps: sameTools(source.apps(from, to), home: homeFolder), peaks: peaks, dailyPeaks: daily, tests: tests,
+            apps: sameTools(source.apps(from, to), home: homeFolder, routed: Set(setup.apps.keys)), peaks: peaks, dailyPeaks: daily, tests: tests,
             week: week, weekMs: Int64(week.filter { $0 > 0 }.reduce(0, +) * 3_600_000), heat: heat, heatStart: heatStart)
     }
 }

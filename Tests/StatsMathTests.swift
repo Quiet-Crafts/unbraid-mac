@@ -437,13 +437,18 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(key("", []), "?")
     }
 
-    func testAToolRecordedWithAndWithoutTheTildeIsOneRow() {
+    func testAToolRecordedWithAndWithoutTheTildeIsOneRowShownWithTheTilde() {
         let rows = [AppBytes(app: "~/bin/tool", exit: "r1", bytes: 5), AppBytes(app: "/Users/me/bin/tool", exit: "r1", bytes: 7),
-                    AppBytes(app: "~/bin/tool", exit: DIRECT, bytes: 2), AppBytes(app: "com.example.app", exit: "r1", bytes: 1)]
+                    AppBytes(app: "~/bin/tool", exit: DIRECT, bytes: 2), AppBytes(app: "com.example.app", exit: "r1", bytes: 1),
+                    AppBytes(app: "/Users/me/other", exit: "r1", bytes: 3), AppBytes(app: "/Users/meagain/bin/tool", exit: "r1", bytes: 4)]
         let merged = StatsMath.sameTools(rows, home: "/Users/me")
-        XCTAssertEqual(Set(merged), [AppBytes(app: "/Users/me/bin/tool", exit: "r1", bytes: 12), AppBytes(app: "/Users/me/bin/tool", exit: DIRECT, bytes: 2),
-                                     AppBytes(app: "com.example.app", exit: "r1", bytes: 1)])
-        XCTAssertEqual(StatsMath.sameTools(rows, home: "/").count, 4) // no home folder to write out
+        XCTAssertEqual(Set(merged), [AppBytes(app: "~/bin/tool", exit: "r1", bytes: 12), AppBytes(app: "~/bin/tool", exit: DIRECT, bytes: 2),
+                                     AppBytes(app: "com.example.app", exit: "r1", bytes: 1), AppBytes(app: "~/other", exit: "r1", bytes: 3),
+                                     AppBytes(app: "/Users/meagain/bin/tool", exit: "r1", bytes: 4)]) // not another folder that starts alike
+        // A routed tool keeps the path routing knows it by, and still takes its "~" history.
+        let routed = StatsMath.sameTools(rows, home: "/Users/me", routed: ["/Users/me/bin/tool"])
+        XCTAssertTrue(routed.contains(AppBytes(app: "/Users/me/bin/tool", exit: "r1", bytes: 12)))
+        XCTAssertEqual(StatsMath.sameTools(rows, home: "/").count, rows.count) // no home folder to write out
     }
 
     func testAToolReachedThroughALinkIsCountedUnderItsKeyAcrossVersions() {
