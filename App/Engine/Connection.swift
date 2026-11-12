@@ -761,8 +761,8 @@ final class Connection {
             if stopped {
                 do { try await tunnel.waitStopped() } catch is CancellationError {} catch {
                     // Never confirmed: no clean Off. Nothing is restarted; the record stays, as after a failed stop, and the
-                    // real status is read again once the queue is free.
-                    guard g == generation else { return }
+                    // real status is read again once the queue is free. Recorded even if a newer operation arrived meanwhile, as
+                    // for a confirmed stop: that one starts from this state.
                     off(forget: false)
                     state.error = Self.stopUnconfirmed
                     Task { await statusChanged() }
