@@ -826,7 +826,6 @@ final class Connection {
                                 offLater()
                                 stopFailure = message(error, "Could not stop the VPN")
                             }
-                            guard g == generation else { return }
                             pausedInput = nil; pausedProfile = nil
                         }
                         break
@@ -994,7 +993,6 @@ final class Connection {
                             offLater()
                             stopFailure = message(error, "Could not stop the VPN")
                         }
-                        guard g == generation else { return }
                         pausedInput = nil; pausedProfile = nil
                         pauseRetry.clear()
                         recordRun { $0.stopped() }
