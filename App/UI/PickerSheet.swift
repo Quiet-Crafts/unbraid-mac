@@ -468,8 +468,11 @@ struct PickerSheet: View {
             }
             else if target.hasPrefix("app:") { model.addRouteForApp(String(target.dropFirst(4)), l) }
             else {
-                model.setLocation(target, l)
-                if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { model.setFilter(target, choice) }
+                // The place and the filter choice are one change, so a Cancel at the limit question leaves both as they were.
+                var filter: Bool??
+                if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { filter = choice }
+                model.setLocation(target, l, filter: filter) { if $0 { dismiss() } }
+                return
             }
         case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s) }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
