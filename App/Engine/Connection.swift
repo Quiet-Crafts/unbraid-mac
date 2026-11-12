@@ -798,6 +798,7 @@ final class Connection {
                 // The sealed copy is the full configuration again (connect sealed it): nothing sealed for a pause yet.
                 pauseSealed = nil; sealRetry.clear(); sealWarning = nil
                 Running.pauseBaseline(old?.setup)
+                var stopFailure: String?
                 do {
                     while true {
                         if !input.setup.apps.isEmpty { state.phase = .connecting }
@@ -811,7 +812,23 @@ final class Connection {
                             try await apply(input, json, g, persist: false, search: searched)
                             pausedInput = input; pausedSearch = searched; pausedProfile = tunnel.profile
                             (pausedJSON, pausedRevision) = (json, tunnel.applied)
-                        } else { try await tunnel.stop(userInitiated: true) }
+                        } else {
+                            do { try await tunnel.stop(userInitiated: true) }
+                            catch is CancellationError { throw CancellationError() }
+                            catch is TunnelControl.Overtaken { throw TunnelControl.Overtaken() }
+                            catch {
+                                guard g == generation else { return }
+                                // A failed save still stops the tunnel: then the pause stands, with the reason. One that
+                                // never stopped (the profile couldn't be read) is a failed pause, as before.
+                                let original = error
+                                do { try await tunnel.waitStopped() } catch { throw original }
+                                guard g == generation else { return }
+                                offLater()
+                                stopFailure = message(error, "Could not stop the VPN")
+                            }
+                            guard g == generation else { return }
+                            pausedInput = nil; pausedProfile = nil
+                        }
                         break
                     }
                 } catch {
@@ -834,6 +851,7 @@ final class Connection {
                 clearRunning(forget: false)
                 recordRun { if input.setup.apps.isEmpty { $0.stopped() } else { $0.pausedBlocking() } }
                 state = VpnState(phase: .paused, pausedUntil: until, pausedAt: since)
+                state.error = stopFailure
                 if g == generation { startWatching(); armResume() }
             }
         } catch is CancellationError {} catch { state.error = message(error, "Could not pause") }
@@ -889,6 +907,7 @@ final class Connection {
                         step = Lifecycle.pauseStep(wanted: key, running: nil, connected: true, retry: pauseRetry, now: .now)
                     }
                 }
+                var stopFailure: String?
                 do {
                     switch step {
                     case .converged(let clear), .idle(let clear):
@@ -963,14 +982,26 @@ final class Connection {
                         // An app blocked again while sealing: the tunnel isn't stopped after all.
                         guard g == generation, state.phase == .paused, pauseKey() == key else { return }
                         state.phase = .connecting
-                        try await tunnel.stop(userInitiated: true)
+                        do { try await tunnel.stop(userInitiated: true) }
+                        catch is CancellationError { throw CancellationError() }
+                        catch is TunnelControl.Overtaken { throw TunnelControl.Overtaken() }
+                        catch {
+                            guard g == generation else { return }
+                            // As for a pause: only a stop that happened counts as one.
+                            let original = error
+                            do { try await tunnel.waitStopped() } catch { throw original }
+                            guard g == generation else { return }
+                            offLater()
+                            stopFailure = message(error, "Could not stop the VPN")
+                        }
+                        guard g == generation else { return }
                         pausedInput = nil; pausedProfile = nil
                         pauseRetry.clear()
                         recordRun { $0.stopped() }
                     }
                     // Recorded even when overtaken: a queued resume reads the paused state to put it back if it fails.
                     state = previous
-                    state.error = sealWarning
+                    state.error = stopFailure ?? sealWarning
                 } catch is CancellationError {} catch {
                     // A failed reload can close the old engine. Reported, and the pause ends with it (`teardown`).
                     guard g == generation else { return }
