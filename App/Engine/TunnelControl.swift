@@ -167,7 +167,11 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
     func configure(_ profile: Profile) async throws {
         let (killSwitch, lan, onDemand) = (profile.killSwitch, profile.lan, profile.onDemand)
         let m = try await load()
-        let p = (m.protocolConfiguration as? NETunnelProviderProtocol) ?? NETunnelProviderProtocol()
+        let existing = m.protocolConfiguration as? NETunnelProviderProtocol
+        // What the system holds now, put back in memory if the save fails (memory must not claim what was never saved).
+        let before = (killSwitch: existing?.includeAllNetworks ?? false, lan: existing?.excludeLocalNetworks ?? false,
+                      rules: m.onDemandRules, onDemand: m.isOnDemandEnabled)
+        let p = existing ?? NETunnelProviderProtocol()
         p.providerBundleIdentifier = AppGroup.tunnelBundle
         p.serverAddress = "unbraid"
         p.includeAllNetworks = killSwitch
@@ -184,7 +188,17 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         m.isEnabled = true
         m.onDemandRules = onDemand ? [NEOnDemandRuleConnect()] : nil
         m.isOnDemandEnabled = onDemand
-        try await m.saveToPreferences()
+        do { try await m.saveToPreferences() } catch {
+            if let existing {
+                existing.includeAllNetworks = before.killSwitch
+                existing.excludeLocalNetworks = before.lan
+            } else {
+                m.protocolConfiguration = nil
+            }
+            m.onDemandRules = before.rules
+            m.isOnDemandEnabled = before.onDemand
+            throw error
+        }
         try await m.loadFromPreferences()
     }
 
@@ -465,14 +479,13 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         guard m.isOnDemandEnabled != enabled else { return }
         m.isOnDemandEnabled = enabled
         m.onDemandRules = enabled ? [NEOnDemandRuleConnect()] : nil
-        do {
-            try await m.saveToPreferences()
-            try await m.loadFromPreferences()
-        } catch {
+        do { try await m.saveToPreferences() } catch {
             // A failed save must not make the next attempt mistake memory for persisted preferences.
             m.isOnDemandEnabled = !enabled
             throw error
         }
+        // Saved: a failed read-back says nothing about what was saved.
+        try await m.loadFromPreferences()
     }
 
     /// A stop given up because a newer operation took over after Connect on Demand was already turned off for it.
