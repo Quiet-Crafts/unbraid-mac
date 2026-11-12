@@ -3,6 +3,19 @@ import SwiftUI
 
 /// What went through the VPN: the period's total, data per day or hour by exit, each exit's share, the apps that sent it,
 /// the last minute live, and each exit's speeds. Android's Overview, App flows, Usage by provider and Tunnels, on one page.
+/// An app's or program's row name. A program outside any app is kept by its location on this Mac, with the home folder
+/// written "~": its row is named by its file name, and the key "?" (programs in temporary or cache folders, which change
+/// on every run) reads "Other programs".
+private func programName(_ key: String) -> String {
+    // "?other" is the key the statistics give programs run from temporary or cache folders.
+    if key == "?" || key == "?other" { return "Other programs" }
+    if key.hasPrefix("~/") { return URL(fileURLWithPath: key).lastPathComponent }
+    return AppModel.shared.appName(key)
+}
+
+/// A location key (a program outside any app): an absolute path or one under the home folder.
+private func isLocation(_ key: String) -> Bool { key.hasPrefix("/") || key.hasPrefix("~/") }
+
 struct TrafficView: View {
     private let model = AppModel.shared
     @Environment(\.navigate) private var navigate
@@ -39,7 +52,7 @@ struct TrafficView: View {
         let total = max(1, exits.reduce(0) { $0 + $1.bytes.total })
         return ScrollView {
             VStack(alignment: .leading, spacing: Layout.gap) {
-                summary(v, v.byExit.filter { $0.bytes.total > 0 }, max(1, v.total.total))
+                summary(v, all: v.byExit.filter { $0.bytes.total > 0 }, exits: exits, total: total)
                 if exits.filter({ Double($0.bytes.total) / Double(total) >= 0.005 }).count > 1 { RouteSplit(v: v, exits: exits, total: total) }
                 UsageCard(v: v, selected: $column)
                 if !exits.isEmpty {
@@ -63,9 +76,11 @@ struct TrafficView: View {
     }
 
     /// The period's one big number, then the facts beside it, set like a measurement: down, up, the busiest exit.
-    private func summary(_ v: StatsView, _ exits: [ExitBytes], _ total: Int64) -> some View {
-        let traffic = exits.reduce(Traffic()) { $0 + $1.bytes }
-        let t = StatsMath.bytes(traffic.total)
+    /// The totals count everything that went through unbraid; the busiest route and its share count VPN routes only,
+    /// the same total as the route bar and the Routes card, so one route never shows two shares.
+    private func summary(_ v: StatsView, all: [ExitBytes], exits: [ExitBytes], total: Int64) -> some View {
+        let traffic = all.reduce(Traffic()) { $0 + $1.bytes }
+        let t = Units.byteParts(traffic.total)
         let busiest = exits.max { $0.bytes.total < $1.bytes.total }
         return Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 4) {
             GridRow {
@@ -81,8 +96,8 @@ struct TrafficView: View {
                 }
                 .accessibilityElement(children: .combine)
                 .padding(.trailing, 28)
-                summaryCell { Figure(value: StatsMath.bytes(traffic.down).0, unit: StatsMath.bytes(traffic.down).1).lineLimit(1) }
-                summaryCell { Figure(value: StatsMath.bytes(traffic.up).0, unit: StatsMath.bytes(traffic.up).1).lineLimit(1) }
+                summaryCell { Figure(value: Units.byteParts(traffic.down).0, unit: Units.byteParts(traffic.down).1).lineLimit(1) }
+                summaryCell { Figure(value: Units.byteParts(traffic.up).0, unit: Units.byteParts(traffic.up).1).lineLimit(1) }
                 if let b = busiest {
                     summaryCell {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -98,7 +113,7 @@ struct TrafficView: View {
                 summaryCell { Text(" ") }
                 if let b = busiest {
                     summaryCell {
-                        Text("\(StatsMath.bytesText(b.bytes.total)) · \((Double(b.bytes.total) / Double(total)).formatted(.percent.precision(.fractionLength(0))))")
+                        Text("\(Units.bytes(b.bytes.total)) · \((Double(b.bytes.total) / Double(total)).formatted(.percent.precision(.fractionLength(0))))")
                     }
                 }
             }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
@@ -117,7 +132,7 @@ struct TrafficView: View {
             speed($0) != speed($1) ? speed($0) > speed($1) : (v.exits[$0]?.name ?? $0) < (v.exits[$1]?.name ?? $1)
         }
         return Card {
-            Text("Tunnels").overline()
+            Text("Route speeds").overline()
             if ids.allSatisfy({ speed($0) == 0 }) {
                 Text("No speeds yet. Run a speed test.").foregroundStyle(Ink.dim)
             }
@@ -127,12 +142,12 @@ struct TrafficView: View {
                     Button(v.exits[id]?.name ?? model.setup.route(id)?.name ?? id) { detail = id }.buttonStyle(.plain)
                     Spacer()
                     VStack(alignment: .trailing, spacing: 8) {
-                        if let t = v.tests[id] { Text("Test ↓\(StatsMath.mbps(t.down)) ↑\(StatsMath.mbps(t.up)) Mbps") }
+                        if let t = v.tests[id] { Text("Test ↓\(Units.mbps(Double(t.down))) ↑\(Units.mbps(Double(t.up))) Mbps") }
                         if v.tests[id] == nil { Text("–").foregroundStyle(Ink.dim) }
                     }
                     .font(.system(size: 12, design: .monospaced))
                     Button { detail = id } label: { Image(systemName: "info.circle").frame(width: 28, height: 28) }
-                        .buttonStyle(.quiet).help("Exit Details").accessibilityLabel("Details for \(v.exits[id]?.name ?? id)")
+                        .buttonStyle(.quiet).help("Route Details").accessibilityLabel("Details for \(v.exits[id]?.name ?? id)")
                 }
             }
             Text("Speed-test results: download (↓) and upload (↑).")
@@ -152,7 +167,7 @@ struct TrafficView: View {
                 VStack(spacing: 8) {
                     HStack(spacing: 12) {
                         Text(r.name); Spacer()
-                        Text(StatsMath.bytesText(r.bytes)).foregroundStyle(Ink.dim)
+                        Text(Units.bytes(r.bytes)).foregroundStyle(Ink.dim)
                         Text((Double(r.bytes) / Double(sum)).formatted(.percent.precision(.fractionLength(0))))
                             .frame(width: 64, alignment: .trailing)
                     }
@@ -174,12 +189,15 @@ struct TrafficView: View {
             if a == b { return false }
             let first: Bool
             switch sort {
-            case .app: first = (model.appName(a.app), a.exit, a.app) < (model.appName(b.app), b.exit, b.app)
+            case .app: first = (programName(a.app), a.exit, a.app) < (programName(b.app), b.exit, b.app)
             case .exit: first = (v.exits[a.exit]?.name ?? a.exit, a.app) < (v.exits[b.exit]?.name ?? b.exit, b.app)
             case .data: first = a.bytes != b.bytes ? a.bytes < b.bytes : (a.app, a.exit) < (b.app, b.exit)
             }
             return ascending ? first : !first
         }
+        // Two programs outside apps can share a file name (two "python3"): the folder then tells them apart.
+        let shown = rows.prefix(all ? rows.count : 12)
+        let names = Dictionary(grouping: shown, by: { programName($0.app) }).filter { Set($0.value.map(\.app)).count > 1 }.keys
         return Card {
             HStack(spacing: 12) {
                 Text("Apps").overline(); Spacer()
@@ -197,22 +215,28 @@ struct TrafficView: View {
                     sortButton(.exit).frame(minWidth: 128, maxWidth: .infinity, alignment: .leading)
                     sortButton(.data).frame(width: 108, alignment: .trailing)
                 }.padding(.bottom, 12)
-                ForEach(rows.prefix(all ? rows.count : 12), id: \.self) { a in
+                ForEach(shown, id: \.self) { a in
                     Hairline().gridCellColumns(3)
                     GridRow {
                         HStack(spacing: 12) {
                             AppIconView(app: model.apps.app(a.app), size: Measure.tableIcon)
-                            Text(model.appName(a.app)).lineLimit(1)
-                        }.frame(maxWidth: .infinity, minHeight: Measure.tableRow, alignment: .leading).layoutPriority(-1)
-                        // A program outside any app is named after its file: where it lives says what it is.
-                        .help(a.app.hasPrefix("/") ? a.app : "")
+                            Text(programName(a.app)).lineLimit(1)
+                            if isLocation(a.app), names.contains(programName(a.app)) {
+                                Text((a.app as NSString).deletingLastPathComponent).lineLimit(1).truncationMode(.head)
+                                    .font(.system(size: 12)).foregroundStyle(Ink.dim)
+                            }
+                        }
+                        .accessibilityElement(children: .combine)
+                        .accessibilityValue(isLocation(a.app) ? a.app : "")
+                        .help(isLocation(a.app) ? a.app : "")
+                        .frame(maxWidth: .infinity, minHeight: Measure.tableRow, alignment: .leading).layoutPriority(-1)
                         Button { filter(a.exit) } label: {
                             HStack(spacing: 8) {
                                 RouteDot(color: v.exits[a.exit]?.color ?? Ink.dim)
                                 Text(v.exits[a.exit]?.name ?? "Removed route").lineLimit(1)
                             }.fixedSize(horizontal: true, vertical: false).frame(minWidth: 128, maxWidth: .infinity, alignment: .leading)
                         }.buttonStyle(.plain).help("Show only this route")
-                        Text(StatsMath.bytesText(a.bytes)).font(.system(size: 12, design: .monospaced))
+                        Text(Units.bytes(a.bytes)).font(.system(size: 12, design: .monospaced))
                             .frame(width: 108, alignment: .trailing)
                     }
                 }
@@ -250,9 +274,9 @@ private struct ExitRow: View {
     let tap: () -> Void
     let info: () -> Void
     private func laneLabel(_ name: String?, _ top: [AppBytes], _ rest: Int, _ restBytes: Int64) -> String {
-        let apps = top.map { "\(AppModel.shared.appName($0.app)), \(StatsMath.bytesText($0.bytes))" }.joined(separator: ", ")
-        let more = rest == 0 ? "" : ", \(rest) other apps, \(StatsMath.bytesText(restBytes))"
-        return "Filter by \(name ?? "Exit"), \(bytes.formatted()) bytes. " + apps + more
+        let apps = top.map { "\(programName($0.app)), \(Units.bytes($0.bytes))" }.joined(separator: ", ")
+        let more = rest == 0 ? "" : ", \(rest) other apps, \(Units.bytes(restBytes))"
+        return "Filter by \(name ?? "Route"), \(Units.bytes(bytes)). " + apps + more
     }
 
     var body: some View {
@@ -275,16 +299,16 @@ private struct ExitRow: View {
                     }
                     Spacer(minLength: 0)
                     VStack(alignment: .trailing, spacing: 8) {
-                        Text("\(StatsMath.bytesText(bytes)) · \(share.formatted(.percent.precision(.fractionLength(0))))")
-                        if let t = v.tests[exit] { Text("Test ↓\(StatsMath.mbps(t.down)) ↑\(StatsMath.mbps(t.up)) Mbps").foregroundStyle(Ink.dim) }
+                        Text("\(Units.bytes(bytes)) · \(share.formatted(.percent.precision(.fractionLength(0))))")
+                        if let t = v.tests[exit] { Text("Test ↓\(Units.mbps(Double(t.down))) ↑\(Units.mbps(Double(t.up))) Mbps").foregroundStyle(Ink.dim) }
                     }.font(.system(size: 12, design: .monospaced))
                 }.contentShape(.rect)
             }.buttonStyle(.plain)
                 .accessibilityLabel(laneLabel(ex?.name, lane.top, lane.rest.count, restBytes))
                 .accessibilityAddTraits(selected ? .isSelected : [])
-            Button(action: info) { Label("Exit Details", systemImage: "info.circle").labelStyle(.iconOnly).frame(width: 28, height: 28) }
-                .buttonStyle(.quiet).help("Details for \(ex?.name ?? "this exit")")
-                .accessibilityLabel("Details for \(ex?.name ?? "this exit")")
+            Button(action: info) { Label("Route Details", systemImage: "info.circle").labelStyle(.iconOnly).frame(width: 28, height: 28) }
+                .buttonStyle(.quiet).help("Details for \(ex?.name ?? "this route")")
+                .accessibilityLabel("Details for \(ex?.name ?? "this route")")
         }
         .padding(.vertical, 8).padding(.horizontal, 8).background(selected ? Ink.high : .clear, in: .rect(cornerRadius: Corner.inner, style: .continuous))
     }
@@ -315,9 +339,9 @@ private struct LaneBar: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 12) {
                     ForEach(top, id: \.self) { a in
-                        Text(AppModel.shared.appName(a.app) + " " + StatsMath.bytesText(a.bytes)).fixedSize()
+                        Text(programName(a.app) + " " + Units.bytes(a.bytes)).fixedSize()
                     }
-                    if !rest.isEmpty { Text("+\(rest.count) apps \(StatsMath.bytesText(restBytes))").foregroundStyle(Ink.dim).fixedSize() }
+                    if !rest.isEmpty { Text("+\(rest.count) apps \(Units.bytes(restBytes))").foregroundStyle(Ink.dim).fixedSize() }
                 }.font(.system(size: 12))
             }
         }
@@ -336,16 +360,16 @@ private struct ExitDetail: View {
     var body: some View {
         let ex = v.exits[exit]
         let test = v.tests[exit]
-        SheetFrame(title: ex?.name ?? "Exit", subtitle: "\(ex?.via ?? "") · \(period.label)", width: SheetWidth.form) {
+        SheetFrame(title: ex?.name ?? "Route", subtitle: "\(ex?.via ?? "") · \(period.label)", width: SheetWidth.form) {
             VStack(alignment: .leading, spacing: 16) {
                 Card {
                     Text("Speed test download").overline()
-                    Figure(value: test.map { StatsMath.mbps($0.down) } ?? "–", unit: "Mbps")
-                    Text("↑ \(test.map { StatsMath.mbps($0.up) } ?? "–") Mbps upload")
+                    Figure(value: test.map { Units.mbps(Double($0.down)) } ?? "–", unit: "Mbps")
+                    Text("↑ \(test.map { Units.mbps(Double($0.up)) } ?? "–") Mbps upload")
                         .font(.system(size: 12)).foregroundStyle(Ink.dim)
                 }
                 Card {
-                    Text("Servers · share of this exit's data").overline()
+                    Text("Servers · share of this route's data").overline()
                     let sum = max(1, servers.reduce(0) { $0 + $1.bytes })
                     if servers.isEmpty { Text("No data in this period yet.").foregroundStyle(Ink.dim) }
                     ForEach(servers, id: \.name) { s in
@@ -357,6 +381,7 @@ private struct ExitDetail: View {
             Button("Speed Test") { dismiss(); navigate(.speed) }.contentButton()
             Button("Done") { dismiss() }.contentButton(prominent: true).keyboardShortcut(.defaultAction)
         }
+        .onExitCommand { dismiss() }
         .font(.system(size: 13)).monospacedDigit()
         .task { servers = await Stats.shared.servers(exit: exit, from: v.from, to: v.to) } // epoch days
     }

@@ -329,4 +329,41 @@ final class SnapshotTests: XCTestCase {
         // Unchanged otherwise: the same content a minute after it was written needs nothing.
         XCTAssertTrue(s.change(from: s, now: later.addingTimeInterval(60), lastReload: later) == (false, false))
     }
+
+    /// A snapshot that says "connected" and was just written is what the widget placeholder draws.
+    func testAFreshConnectedSnapshotIsLive() {
+        XCTAssertTrue(Snapshot(phase: .on, exits: 3, updated: t0).fresh(at: t0))
+        XCTAssertFalse(Snapshot(phase: .on, exits: 3).fresh(at: t0))
+    }
+
+    // MARK: Units
+
+    /// Byte figures read the same as a number-and-unit pair and as one string, and halves round up.
+    func testUnitsByteFigures() {
+        XCTAssertTrue(Units.byteParts(1_234_000_000) == ("1.2", "GB"))
+        XCTAssertTrue(Units.byteParts(2_500_000) == ("3", "MB"))
+        XCTAssertTrue(Units.byteParts(999_700_000) == ("1.0", "GB"), "999.7 MB reads 1.0 GB everywhere, never 1000 MB")
+        XCTAssertEqual(Units.bytes(3_912_345_678), "3.9 GB")
+        XCTAssertTrue(Units.rateParts(48_300_000) == ("48.3", "Mbps"))
+        XCTAssertEqual(Units.rate(999_700), "1.0 Mbps")
+    }
+
+    /// One speed-test formatter: Gbps from 1000 Mbps for every reading, Mbps below.
+    func testUnitsSpeedSwitchesToGbpsFromAThousandMbps() {
+        XCTAssertTrue(Units.speed(1_250_000_000) == ("1.25", "Gbps"))
+        XCTAssertTrue(Units.speed(940_000_000) == ("940", "Mbps"))
+        XCTAssertTrue(Units.speed(48_300_000) == ("48.3", "Mbps"))
+    }
+
+    /// The usage chart's axis: as many decimals as the step needs, one unit for the whole axis, nothing repeated.
+    func testUnitsAxisLabelsNeverRepeat() {
+        func labels(step: Double, ticks: Int) -> [String] {
+            (0...ticks).map { Units.axisBytes(step * Double($0), step: step, ceiling: step * Double(ticks)) }
+        }
+        XCTAssertEqual(labels(step: 500_000, ticks: 4), ["0", "0.5 MB", "1.0 MB", "1.5 MB", "2.0 MB"])
+        XCTAssertEqual(labels(step: 2_500_000, ticks: 4), ["0", "2.5 MB", "5.0 MB", "7.5 MB", "10.0 MB"])
+        XCTAssertEqual(labels(step: 5_000_000, ticks: 3), ["0", "5 MB", "10 MB", "15 MB"])
+        XCTAssertEqual(labels(step: 500_000_000, ticks: 4), ["0", "0.5 GB", "1.0 GB", "1.5 GB", "2.0 GB"])
+        XCTAssertEqual(labels(step: 25, ticks: 4), ["0", "25 B", "50 B", "75 B", "100 B"])
+    }
 }

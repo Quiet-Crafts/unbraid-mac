@@ -12,6 +12,8 @@ struct SpeedTestView: View {
     @State private var pastTests: [TestResult] = []
     @State private var consent = false
     @State private var confirmNode = false
+    /// Set while the consent sheet closes after "Agree and Test", so the node warning appears once it is gone.
+    @State private var nodeWarningAfterConsent = false
     @State private var history = false
     @State private var width: CGFloat = 800
 
@@ -28,7 +30,7 @@ struct SpeedTestView: View {
         let gone = test.testing ? test.run.map(\.exit).flatMap { e in options.contains { $0.id == e } ? nil : e } : nil
         let picked = if let gone { ran(gone) } else { options.first { $0.id == (test.run?.exit ?? chosen) } ?? options.first }
         VStack(spacing: 0) {
-            PageHeader(title: "Speed Test", subtitle: "Measure a VPN exit with M-Lab")
+            PageHeader(title: "Speed Test", subtitle: "Measure a route's speed with M-Lab")
             Group {
                 if model.vpn.state.phase != .on {
                     preparation
@@ -37,7 +39,7 @@ struct SpeedTestView: View {
                 } else if model.setup.prefs.testAllRoutes, (Connection.shared.running ?? model.setup).routes.count >= 2 {
                     content(options, Choice(id: "all", name: "All", via: "", node: false, mark: Palette.direct, text: Palette.direct))
                 } else {
-                    ContentUnavailableView("No VPN exits to test", systemImage: "gauge.with.dots.needle.33percent", description: Text("Move an app to a VPN route, or make one the default, to test its speed."))
+                    ContentUnavailableView("No VPN routes to test", systemImage: "gauge.with.dots.needle.33percent", description: Text("Move an app to a VPN route, or make one the default, to test its speed."))
                 }
             }
             .frame(maxHeight: .infinity)
@@ -90,12 +92,18 @@ struct SpeedTestView: View {
             .task { pastTests = await Stats.shared.tests() }
         }
         .sheet(isPresented: $history) { HistorySheet().environment(model) }
-        .sheet(isPresented: $consent) {
+        .sheet(isPresented: $consent, onDismiss: {
+            if nodeWarningAfterConsent { nodeWarningAfterConsent = false; confirmNode = true }
+        }) {
             ConsentSheet(title: Text("Speed tests use M-Lab").font(.system(size: 15, weight: .semibold)), rows: [
                 ("speedometer", "Measurement Lab (M-Lab) is an open platform run by researchers. A test asks for one of its servers in the exit's country; for your own servers and Tailscale nodes M-Lab picks a nearby one. Ten seconds each way."),
                 ("clock.arrow.circlepath", "M-Lab publishes every test's results openly and keeps them, with the public IP address of the exit you test: a VPN server's, or your home's for a home or Tailscale exit."),
                 ("nosign", "Also sent: the time, the app's name and version, and the exit's country when it's known. Nothing about your Mac or accounts. Up to \(SpeedTest.perDay) tests a day."),
-            ], action: "Agree and Test", width: 480, buttonSpacing: 12, footerTop: 8, accept: { test.consented = true; if chosen == "all" || options.isEmpty { beginAll() } else if let picked { start(picked) } }) {
+            ], action: "Agree and Test", width: 480, buttonSpacing: 12, footerTop: 8, accept: {
+                test.consented = true
+                if chosen == "all" || options.isEmpty { beginAll() }
+                else if let picked { if needsNodeWarning(picked) { nodeWarningAfterConsent = true } else { start(picked) } }
+            }) {
                 SwiftUI.Link("M-Lab privacy policy", destination: URL(string: "https://www.measurementlab.net/privacy/")!)
             }
             .font(.system(size: 13)).monospacedDigit()
@@ -142,8 +150,12 @@ struct SpeedTestView: View {
     /// First the M-Lab terms, then (for a node, while a route uses Tailscale) the warning, then the test.
     private func start(_ c: Choice) {
         if !test.consented { consent = true; return }
-        if c.node && (model.setup.tsExit != nil || Connection.shared.running?.tsExit != nil) { confirmNode = true; return }
+        if needsNodeWarning(c) { confirmNode = true; return }
         begin(c)
+    }
+
+    private func needsNodeWarning(_ c: Choice) -> Bool {
+        c.node && (model.setup.tsExit != nil || Connection.shared.running?.tsExit != nil)
     }
 
     private func beginAll() {
@@ -168,23 +180,29 @@ struct SpeedTestView: View {
 
     private var preparation: some View {
         let s = model.setup, route = s.route(s.defaultRoute)
+        let phase = model.vpn.state.phase
         return ContentUnavailableView {
-            Label("Ready when you connect", systemImage: "gauge.with.dots.needle.67percent")
+            Label(phase == .paused ? "Paused" : phase == .connecting ? "Connecting…" : "Ready when you connect", systemImage: "gauge.with.dots.needle.67percent")
         } description: {
-            Text("Connect, then choose an exit and start a test.")
+            Text(phase == .paused ? "Resume, then choose a route and start a test."
+                 : phase == .connecting ? "You can start a test once your routes are connected."
+                 : "Connect, then choose a route and start a test.")
         } actions: {
             VStack(spacing: 12) {
                 HStack(spacing: 8) {
                     RouteBadge(route: route, id: s.defaultRoute, size: 24)
                     VStack(alignment: .leading, spacing: 4) {
-                        Text("Default destination").overline()
+                        Text("Default route").overline()
                         Text([s.label(s.defaultRoute), route.map { place($0, [:]) } ?? "Your own connection"].joined(separator: " · "))
                             .font(.system(size: 13, weight: .semibold))
                     }
                 }
-                Button("Connect") { model.connect() }
-                    .contentButton(prominent: true)
-                    .disabled(model.vpn.state.phase == .connecting)
+                if phase == .connecting {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button(phase == .paused ? "Resume" : "Connect") { model.connect() }
+                        .contentButton(prominent: true)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -197,16 +215,16 @@ struct SpeedTestView: View {
         return ScrollView {
             VStack(spacing: Layout.gap) {
                 HStack(spacing: 16) {
-                    Text("Exit").foregroundStyle(Ink.dim)
+                    Text("Route").foregroundStyle(Ink.dim)
                     GlassMenu(slash: c.mark, glass: false) {
-                        Picker("Exit", selection: Binding(get: { all ? "all" : c.id }, set: { chosen = $0; if $0 == "all" { selected = Set((Connection.shared.running ?? model.setup).activeRoutes.map(\.id)).intersection(Set(Connection.shared.tags.keys)) }; test.clear() })) {
+                        Picker("Route", selection: Binding(get: { all ? "all" : c.id }, set: { chosen = $0; if $0 == "all" { selected = Set((Connection.shared.running ?? model.setup).activeRoutes.map(\.id)).intersection(Set(Connection.shared.tags.keys)) }; test.clear() })) {
                             if model.setup.prefs.testAllRoutes && (Connection.shared.running ?? model.setup).routes.count >= 2 { Text("All").tag("all") }
                             ForEach(options.filter { !$0.node }) { Text($0.name).tag($0.id) }
                             if options.contains(where: \.node) && options.contains(where: { !$0.node }) { Divider() }
                             ForEach(options.filter(\.node)) { Text("\($0.name) · Tailscale").tag($0.id) }
                         }.pickerStyle(.inline).labelsHidden()
                     } label: { Text(all ? "All" : c.name).lineLimit(1) }
-                        .disabled(testing).accessibilityLabel("Exit")
+                        .disabled(testing).accessibilityLabel("Route")
                     Spacer()
                     if testing {
                         Button("Cancel") { test.cancel() }.contentButton().controlSize(.large).keyboardShortcut(.cancelAction)
@@ -284,9 +302,9 @@ struct SpeedTestView: View {
                         Circle().trim(from: 0, to: 0.75 * progress).stroke(Ink.text, style: StrokeStyle(lineWidth: 10, lineCap: .round))
                             .animation(.linear(duration: 0.25), value: progress)
                     }.rotationEffect(.degrees(135)).frame(width: 200, height: 200).overlay {
-                        Figure(value: reading > 0 ? (reading >= 1_000_000_000 ? String(format: "%.2f", Double(reading) / 1e9) : Units.mbps(Double(reading))) : "–", unit: reading >= 1_000_000_000 ? "Gbps" : "Mbps")
+                        Figure(value: reading > 0 ? Units.speed(Double(reading)).0 : "–", unit: reading > 0 ? Units.speed(Double(reading)).1 : "Mbps")
                     }.frame(maxWidth: .infinity)
-                    if let up = all.up { Text("Upload " + (up >= 1_000_000_000 ? "\(String(format: "%.2f", Double(up) / 1e9)) Gbps" : "\(Units.mbps(Double(up))) Mbps")) }
+                    if let up = all.up { Text("Upload \(Units.speed(Double(up)).0) \(Units.speed(Double(up)).1)") }
                     if let error = all.error { Text(error).foregroundStyle(Ink.failedText) }
                     if let notice = all.notice { Text(notice).foregroundStyle(Ink.failedText) }
                     ForEach(all.legs, id: \.exit) { leg in
@@ -294,7 +312,7 @@ struct SpeedTestView: View {
                         HStack {
                             Text(name); Spacer()
                             if let error = leg.error { Text(error).foregroundStyle(Ink.failedText) }
-                            else if let down = leg.down, let share = leg.share { Text("\(Int(share * 100))% · \(Units.mbps(Double(down))) Mbps") }
+                            else if let down = leg.down, let share = leg.share { Text("\(Int(share * 100))% · \(Units.speed(Double(down)).0) \(Units.speed(Double(down)).1)") }
                             else { Text("–") }
                         }
                     }
@@ -368,7 +386,7 @@ private struct Reading: View {
 
     private var summary: String {
         guard let run, run.down != nil || run.up != nil else { return "No measurement yet" }
-        return [run.down.map { "Download \(Units.mbps(Double($0))) Mbps" }, run.up.map { "Upload \(Units.mbps(Double($0))) Mbps" }].compactMap { $0 }.joined(separator: ", ")
+        return [run.down.map { "Download \(Units.speed(Double($0)).0) \(Units.speed(Double($0)).1)" }, run.up.map { "Upload \(Units.speed(Double($0)).0) \(Units.speed(Double($0)).1)" }].compactMap { $0 }.joined(separator: ", ")
     }
 }
 
@@ -415,11 +433,12 @@ private struct HeroNumber: View {
         TimelineView(.animation(minimumInterval: 0.1, paused: !measuring)) { time in
             let now = time.date.timeIntervalSinceReferenceDate
             let bits: Double? = measuring ? (trace.bps > 0 ? trace.speed(at: now) : nil) : phase == .done ? result.map(Double.init) : nil
-            let value = bits.map(Units.mbps) ?? "–"
+            let reading = bits.map(Units.speed)
+            let value = reading?.0 ?? "–"
             let progress = phase == .done ? 1 : measuring ? trace.progress(at: now) : 0
             VStack(spacing: 6) {
                 // Before a reading the dash stays faint, so it doesn't read as a value.
-                Figure(value: value, unit: "Mbps", font: .display(72)).opacity(bits == nil ? 0.35 : 1)
+                Figure(value: value, unit: reading?.1 ?? "Mbps", font: .display(72)).opacity(bits == nil ? 0.35 : 1)
                 Text(phase == .done ? "Download measured" : "\(Int(progress * 10)) of 10 seconds")
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
             }
@@ -541,8 +560,9 @@ private struct LiveMetric: View {
     private let trace = SpeedTest.shared.trace
 
     var body: some View {
-        Metric(title: title, value: measuring ? (trace.bps > 0 ? Units.mbps(Double(trace.bps)) : nil) : result.map { Units.mbps(Double($0)) },
-               unit: "Mbps", pending: pending, detail: measuring ? "measuring" : "", active: measuring, tint: tint)
+        let bps: Double? = measuring ? (trace.bps > 0 ? Double(trace.bps) : nil) : result.map(Double.init)
+        Metric(title: title, value: bps.map { Units.speed($0).0 },
+               unit: bps.map { Units.speed($0).1 } ?? "Mbps", pending: pending, detail: measuring ? "measuring" : "", active: measuring, tint: tint)
     }
 }
 
@@ -643,6 +663,7 @@ private struct HistorySheet: View {
         } actions: {
             Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
         }
+        .onExitCommand { dismiss() }
         .font(.system(size: 13)).monospacedDigit()
         .frame(height: 520)
         .task { let t = await Stats.shared.tests(); if !Task.isCancelled { tests = t } }

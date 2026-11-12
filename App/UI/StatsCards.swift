@@ -125,7 +125,7 @@ struct StatsOff: View {
 let consentText = """
 Statistics stay on this Mac. They are never uploaded.
 Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests.
-Only apps, exits, bytes, times, speeds and speed-test exit IPs. No browsing destinations, ever.
+Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as "Other programs". No browsing destinations, ever.
 Turn off or delete everything in Settings at any time.
 """
 
@@ -188,6 +188,15 @@ struct UsageCard: View {
     }
 
     private var order: [String] { v.byExit.map(\.exit).sorted() }
+    /// The legend reads like the split bar above the chart: biggest first, Direct last.
+    private var legend: [String] {
+        let bytes = Dictionary(v.byExit.map { ($0.exit, $0.bytes.total) }, uniquingKeysWith: +)
+        return order.sorted { a, b in
+            if (a == DIRECT) != (b == DIRECT) { return b == DIRECT }
+            return bytes[a, default: 0] != bytes[b, default: 0] ? bytes[a, default: 0] > bytes[b, default: 0] : a < b
+        }
+    }
+    private var hasData: Bool { v.columns.contains { usageTotal($0) > 0 } }
     private var bars: [Bar] {
         let order = order
         return v.columns.enumerated().flatMap { i, col in
@@ -214,13 +223,13 @@ struct UsageCard: View {
         Card(spacing: 12) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    ForEach(order, id: \.self) { e in
+                    ForEach(legend, id: \.self) { e in
                         HStack(spacing: 8) { RouteDot(color: v.exits[e]?.color ?? Ink.dim); Text(v.exits[e]?.name ?? "Removed route") }
                     }
                 }.font(.system(size: 12)).foregroundStyle(Ink.dim)
             }
             chart
-            Text("Traffic counted by unbraid.").font(.system(size: 12)).foregroundStyle(Ink.dim)
+            Text("Apps on Direct are counted only when they pass through unbraid.").font(.system(size: 12)).foregroundStyle(Ink.dim)
         }
         .onChange(of: v.from) { selected = nil }
         .onChange(of: v.columns.count) { selected = nil }
@@ -256,7 +265,9 @@ struct UsageCard: View {
         .chartYAxis {
             AxisMarks(position: .trailing, values: (0...ticks).map { step * Double($0) }) { value in
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 1 / scale)).foregroundStyle(Ink.separator)
-                AxisValueLabel { Text((value.as(Double.self) ?? 0) == 0 ? "0" : Units.bytes(Int64(value.as(Double.self) ?? 0))).foregroundStyle(Ink.dim) }
+                if hasData {
+                    AxisValueLabel { Text(Units.axisBytes(value.as(Double.self) ?? 0, step: step, ceiling: ceiling)).foregroundStyle(Ink.dim) }
+                }
             }
         }
         .chartOverlay { proxy in
@@ -280,8 +291,8 @@ struct UsageCard: View {
         }
         .onExitCommand { selected = nil }
         .font(.system(size: 12, design: .monospaced)).frame(height: 180)
-        .accessibilityLabel("Data per \(period == .day ? "hour" : "day") by exit")
-        .accessibilityValue(pick.map { "\(title($0)), \(usageTotal(v.columns[$0]).formatted()) bytes" } ?? "\(v.columns.reduce(0) { $0 + usageTotal($1) }.formatted()) bytes in total")
+        .accessibilityLabel("Data per \(period == .day ? "hour" : "day") by route")
+        .accessibilityValue(pick.map { "\(title($0)), \(Units.bytes(usageTotal(v.columns[$0])))" } ?? "\(Units.bytes(v.columns.reduce(0) { $0 + usageTotal($1) })) in total")
         .accessibilityHint("Use Left and Right Arrow to select a column")
     }
 
@@ -299,13 +310,13 @@ private struct Tooltip: View {
         let col = v.columns[column]
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.system(size: 12, weight: .semibold))
-            Text("\(usageTotal(col).formatted()) bytes").monospaced()
+            Text(Units.bytes(usageTotal(col))).monospaced()
             ForEach(col.keys.sorted(), id: \.self) { e in
                 HStack(spacing: 8) {
                     RouteDot(color: v.exits[e]?.color ?? Ink.dim)
                     Text(v.exits[e]?.name ?? "Removed route")
                     Spacer()
-                    Text("\((col[e]?.total ?? 0).formatted()) bytes").monospaced()
+                    Text(Units.bytes(col[e]?.total ?? 0)).monospaced()
                 }.foregroundStyle(Ink.dim)
             }
         }
@@ -350,7 +361,7 @@ struct LiveCard: View {
     var body: some View {
         let live = Stats.shared.live
         let exits = live.down.keys.sorted()
-        let down = StatsMath.rate(live.downNow)
+        let down = Units.rateParts(Double(live.downNow))
         Card(spacing: 8) {
             HStack(spacing: 12) {
                 Text("Live").overline(); Spacer()
@@ -359,15 +370,17 @@ struct LiveCard: View {
                 }
             }
             if !model.setup.prefs.stats || model.vpn.state.phase != .on {
+                let phase = model.vpn.state.phase
                 VStack(spacing: 8) {
-                    Text("No live measurements").font(.heading)
-                    Text(!model.setup.prefs.stats ? "Turn on statistics to measure live traffic." : "Connect to measure traffic through your exits.")
+                    Text(!model.setup.prefs.stats ? "No live measurements" : phase == .paused ? "Paused" : phase == .connecting ? "Connecting…" : "No live measurements").font(.heading)
+                    Text(!model.setup.prefs.stats ? "Turn on statistics to measure live traffic." : phase == .paused ? "Resume to measure traffic through your routes." : phase == .connecting ? "Live traffic appears once your routes are connected." : "Connect to measure traffic through your routes.")
                         .font(.system(size: 12)).foregroundStyle(Ink.dim)
-                    if model.vpn.state.phase != .on {
-                        Button { model.connect() } label: { Text("Connect") }
+                    if phase == .connecting {
+                        ProgressView().controlSize(.small).frame(height: 30)
+                    } else if phase != .on {
+                        Button { model.connect() } label: { Text(phase == .paused ? "Resume" : "Connect") }
                             .contentButton(prominent: true)
                             .frame(height: 30)
-                            .disabled(model.vpn.state.phase == .connecting)
                     }
                 }
                 .frame(maxWidth: .infinity).frame(height: 128)

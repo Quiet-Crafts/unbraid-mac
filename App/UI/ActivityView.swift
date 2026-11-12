@@ -96,8 +96,15 @@ private struct Hero: View {
 
 /// Discrete duration tones for the calendar; timeline length already shows duration.
 private func activityTone(_ hours: Float) -> Color {
-    let amount = hours <= 0 ? 0.0 : hours < 1 ? 0.25 : hours < 4 ? 0.5 : hours < 12 ? 0.75 : 1.0
-    return Ink.surface.mix(with: Ink.connected, by: amount)
+    let level = hours <= 0 ? 0 : hours < 1 ? 1 : hours < 4 ? 2 : hours < 12 ? 3 : 4
+    return heatTone(level)
+}
+
+/// How much of the deep green each level takes, from "none" to "12 h or more". The deep green (not the bright system
+/// green) keeps the top levels at 3:1 or more against the card in light mode; the lowest levels stay lighter and are
+/// also told by the legend, the tooltip and the line under the calendar.
+private func heatTone(_ level: Int) -> Color {
+    Ink.surface.mix(with: Ink.successText, by: [0, 0.4, 0.6, 0.8, 1.0][level])
 }
 
 private struct Hatching: View {
@@ -120,13 +127,13 @@ private struct Heatmap: View {
     @Environment(\.displayScale) private var scale
 
     var body: some View {
-        let names = StatsMath.dayNames(), months = monthLabels
+        let names = Self.dayNames, months = monthLabels
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 4) {
                 VStack(spacing: 4) {
                     Color.clear.frame(height: 14)
                     ForEach(0..<7) { row in
-                        Text(row.isMultiple(of: 2) ? names[row] : "").frame(width: 18, height: 18)
+                        Text(row.isMultiple(of: 2) ? names[row] : "").lineLimit(1).minimumScaleFactor(0.8).frame(width: 28, height: 18, alignment: .leading)
                     }
                 }
                 ForEach(0..<13) { week in
@@ -142,22 +149,28 @@ private struct Heatmap: View {
                 }
             }
             .font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
-            HStack(spacing: 8) {
-                ForEach(Array(["0", "<1", "1–<4", "4–<12", "≥12 h"].enumerated()), id: \.offset) { i, label in
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 96), spacing: 8, alignment: .leading)], alignment: .leading, spacing: 6) {
+                ForEach(Array(["None", "Under 1 h", "1 to 4 h", "4 to 12 h", "12 h or more"].enumerated()), id: \.offset) { i, label in
                     HStack(spacing: 4) {
-                        RoundedRectangle(cornerRadius: Corner.mark - 2).fill(Ink.surface.mix(with: Ink.connected, by: Double(i) / 4))
+                        RoundedRectangle(cornerRadius: Corner.mark - 2).fill(heatTone(i))
                             .overlay(RoundedRectangle(cornerRadius: Corner.mark - 2).strokeBorder(Ink.separator, lineWidth: 1 / scale))
                             .frame(width: 12, height: 12)
-                        Text(label)
+                        Text(label).lineLimit(1)
                     }
                 }
-            }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
+            }.font(.system(size: 12)).foregroundStyle(Ink.dim)
             Text(description(selected)).font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
                 .fixedSize(horizontal: false, vertical: true)
         }
         .frame(width: 320, alignment: .leading)
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Hours connected per day, last 13 weeks")
+    }
+
+    /// Monday first, as the rows run: "Mon", "Tue" … "Sun", so Saturday and Sunday are never both "S".
+    private static var dayNames: [String] {
+        let s = Calendar.current.shortStandaloneWeekdaySymbols
+        return (0..<7).map { s[($0 + 1) % 7] }
     }
 
     private func cell(_ i: Int) -> some View {
@@ -229,7 +242,7 @@ private struct TimelineCard: View {
                     ForEach(Array(spans.enumerated()), id: \.offset) { _, s in
                         let a = max(s.start, start), b = min(s.end, end)
                         if b > a {
-                            Rectangle().fill(s.paused ? Ink.surface : Ink.connected)
+                            Rectangle().fill(s.paused ? Ink.surface : Ink.successText)
                                 .overlay { if s.paused { Hatching() } }
                                 .frame(width: max(1, g.size.width * Double(b - a) / length))
                                 .offset(x: g.size.width * Double(a - start) / length)
@@ -249,7 +262,7 @@ private struct TimelineCard: View {
                 }
             }.font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
             HStack(spacing: 16) {
-                Label { Text("Connected") } icon: { RoundedRectangle(cornerRadius: Corner.mark - 2).fill(Ink.connected).frame(width: 12, height: 12) }
+                Label { Text("Connected") } icon: { RoundedRectangle(cornerRadius: Corner.mark - 2).fill(Ink.successText).frame(width: 12, height: 12) }
                 Label { Text("Paused") } icon: { Hatching().frame(width: 12, height: 12) }
                 Label { Text("Off") } icon: { RoundedRectangle(cornerRadius: Corner.mark - 2).fill(Ink.high).frame(width: 12, height: 12) }
             }.font(.system(size: 12)).foregroundStyle(Ink.dim)
