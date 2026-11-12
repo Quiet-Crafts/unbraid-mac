@@ -65,7 +65,8 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         status = manager?.connection.status ?? .invalid
         if initial { statusLoaded = true }
         guard initial || previous != status else { return }
-        if status == .disconnected, let c = manager?.connection {
+        // Only a stop seen this session has a reason worth reading: the one left by an earlier run is old news.
+        if status == .disconnected, !initial, let c = manager?.connection {
             let g = previous == .disconnecting && disconnectReason.pending ? disconnectReason.generation : disconnectReason.begin()
             c.fetchLastDisconnectError { e in
                 let text = e.map { Redact.clean(($0 as NSError).localizedDescription) }
