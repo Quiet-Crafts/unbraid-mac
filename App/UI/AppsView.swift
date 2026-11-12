@@ -267,8 +267,7 @@ struct AppsView: View {
         }
         let key = model.apps.add(url)
         // From a route's page the app goes onto that route and is shown there.
-        if let route { model.move([key], to: route, undo: undo) }
-        reveal(key)
+        if let route { model.move([key], to: route, undo: undo) { if $0 { reveal(key) } } } else { reveal(key) }
     }
 
     /// Finds an added app in the list and selects it.
