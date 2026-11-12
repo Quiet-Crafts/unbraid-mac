@@ -743,8 +743,8 @@ final class Connection {
             do { stopped = try await tunnel.stop(userInitiated: true) } catch {
                 // Recorded even if a newer operation arrived meanwhile, as for a confirmed stop: that one starts from this state.
                 // Connect on Demand couldn't be turned off (the stop is still asked for): turned off again until saved, unless a
-                // newer operation or the Settings toggle owns it by now.
-                if g == generation, cleared == offCleared { offLater() }
+                // Connect, Resume or the Settings toggle owns it by now (they bump `offCleared`; any other operation doesn't).
+                if cleared == offCleared { offLater() }
                 let failure = message(error, "Could not stop the VPN")
                 // Off as with any Disconnect, once the stop is through, with the reason: a pause ends (nothing reconciling it
                 // starts its blocking engine again, and none stays behind with nothing to resume it), and the stop isn't
@@ -765,8 +765,8 @@ final class Connection {
                     // real status is read again once the queue is free. Recorded even if a newer operation arrived meanwhile, as
                     // for a confirmed stop: that one starts from this state.
                     // The user's Off, still: the tunnel that may be up when the status is read again must not bring Connect on
-                    // Demand back (only a newer operation of theirs, which owns it, may).
-                    if g == generation, cleared == offCleared { offLater() }
+                    // Demand back (only a Connect, Resume or the Settings toggle, which bump `offCleared`, may).
+                    if cleared == offCleared { offLater() }
                     off(forget: false)
                     state.error = Self.stopUnconfirmed
                     Task { await statusChanged() }
