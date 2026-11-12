@@ -523,7 +523,7 @@ final class Connection {
                         recordRun { $0.foreign() }
                         let shown = fallback ? Self.othersFallbackRuns : failure
                         // A pause stays what it is (its record stays too): Off here would leave a record nothing clears.
-                        if paused.phase == .paused { state = paused; state.error = shown } else { state = VpnState(error: shown) }
+                        if paused.phase == .paused { state = paused; state.error = shown; startWatching() } else { state = VpnState(error: shown) }
                         return
                     }
                     if paused.phase == .paused {
