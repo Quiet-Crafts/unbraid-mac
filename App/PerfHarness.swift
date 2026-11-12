@@ -137,7 +137,9 @@ private final class Meter: NSObject {
         let launched = Meter.now - ProcessInfo.processStartMs
         report(String(format: "[Perf] launch-to-first-list %.0f ms, apps %d", launched, model.apps.apps.count))
         appKeys = model.apps.apps.map(\.id)
-        if PerfFake.apps != nil { seedShotTraffic() } else { await seedTraffic() }
+        // EMPTY=1: the pictures without any traffic, to show the pages as they are on a first day.
+        let emptyShots = getenv("UNBRAID_PERF_SHOTS") != nil && getenv("UNBRAID_PERF_EMPTY") != nil
+        if PerfFake.apps != nil { if !emptyShots { seedShotTraffic() } } else { await seedTraffic() }
         Connection.shared.perfConnected()
         if let dir = ProcessInfo.processInfo.environment["UNBRAID_PERF_SHOTS"] { await shots(dir); exit(0) }
         // Stay open with the fake data, to try things by hand in this copy.
@@ -253,33 +255,81 @@ private final class Meter: NSObject {
         Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id), exits: exits)
     }
 
-    /// Each page in light and dark, the location picker, and the menu bar panel: the real window as macOS draws it.
+    /// The Settings panes by the number the window takes to open one, in the order they are shot.
+    private static let settingsPanes: [(name: String, tab: Int, title: String)] = [
+        ("general", 5, "General"), ("providers", 0, "Providers"), ("home", 6, "Home access"), ("tailscale", 1, "Tailscale"),
+        ("protection", 2, "Protection"), ("statistics", 3, "Statistics"), ("about", 4, "About"),
+    ]
+
+    /// Every main page (All Apps, a route, Direct, Blocked, Traffic, Activity, Speed Test) at the usual size and at the
+    /// smallest the window goes, the location picker, the menu bar panel and every Settings pane, in light and dark: the
+    /// real windows as macOS draws them. Everything is done by posting to this copy's own state, never by driving a
+    /// window from outside. With no traffic (EMPTY) the pages and the panel are shot as they are on a first day.
     private func shots(_ dir: String) async {
-        window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true)
+        let empty = getenv("UNBRAID_PERF_EMPTY") != nil
+        let prefix = empty ? "empty-" : ""
+        let normal = NSRect(x: 80, y: 80, width: 1100, height: 760)
+        window.setFrame(normal, display: true)
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         FrontApp.shared.perfShow(model.apps.app("com.apple.TV"))
-        for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) }
+        if !empty { for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) } }
         go("traffic"); await meter.frames(20)
+        let pages = [("apps", "apps"), ("route", "route:us"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
+                     ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             NSApp.appearance = NSAppearance(named: look); await meter.frames(30)
             Connection.shared.perfConnected()
-            for (name, target) in [("apps", "apps"), ("route", "route:us"), ("traffic", "traffic")] {
+            for (name, target) in pages {
                 go(target); await meter.frames(90)
-                await shoot(window, "\(dir)/\(name)\(suffix).png")
+                await shoot(window, "\(dir)/\(prefix)\(name)\(suffix).png")
             }
-            go("route:it"); await meter.frames(40)
-            Presentation.shared.picker = PickerTarget(id: "it"); await meter.frames(120)
-            // The window's picture holds its sheet. No blinking caret or focus ring in the search field.
-            if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet") }
-            await shoot(window, "\(dir)/picker\(suffix).png")
-            Presentation.shared.picker = nil; await meter.frames(45)
+            // The smallest the window goes: AppKit holds the frame at its minimum, whatever is asked.
+            window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+            report("[Perf] minimum window \(Int(window.frame.width))x\(Int(window.frame.height))")
+            for (name, target) in pages where name != "direct" && name != "blocked" {
+                go(target); await meter.frames(60)
+                await shoot(window, "\(dir)/\(prefix)min-\(name)\(suffix).png")
+            }
+            window.setFrame(normal, display: true); await meter.frames(45)
+            if !empty {
+                go("route:it"); await meter.frames(40)
+                Presentation.shared.picker = PickerTarget(id: "it"); await meter.frames(120)
+                // The window's picture holds its sheet. No blinking caret or focus ring in the search field.
+                if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet") }
+                await shoot(window, "\(dir)/picker\(suffix).png")
+                Presentation.shared.picker = nil; await meter.frames(45)
+            }
             openPanel(solid: true); await meter.frames(50)
-            if let panel { await shoot(panel, "\(dir)/panel\(suffix).png") }
+            if let panel { await shoot(panel, "\(dir)/\(prefix)panel\(suffix).png") }
             closePanel()
+            if !empty { await settingsShots(dir, suffix) }
+            window.makeKeyAndOrderFront(nil)
         }
         NSApp.appearance = nil
         report("[Perf] shots in \(dir)")
+    }
+
+    /// Each Settings pane, opened through this copy's own settings link and window opener.
+    private func settingsShots(_ dir: String, _ suffix: String) async {
+        let titles = Set(Self.settingsPanes.map(\.title))
+        func settingsWindow() -> NSWindow? {
+            NSApp.windows.first { $0 !== window && $0.canBecomeMain && $0.contentView != nil && (titles.contains($0.title) || $0.identifier?.rawValue.contains("Settings") == true) }
+        }
+        var last: NSWindow?
+        for pane in Self.settingsPanes {
+            Presentation.shared.settingsTab = pane.tab
+            if settingsWindow() == nil { AppDelegate.openSettings?() }
+            for _ in 0..<100 where settingsWindow() == nil { await meter.frames(3) }
+            guard let w = settingsWindow() else { report("[Perf] no settings window for \(pane.name)"); continue }
+            last = w
+            w.appearance = NSApp.appearance
+            w.orderFrontRegardless()
+            await meter.frames(60)
+            await shoot(w, "\(dir)/settings-\(pane.name)\(suffix).png")
+        }
+        last?.close()
+        await meter.frames(20)
     }
 
     /// With nothing really connected, the copy drifts back to connecting now and then: shown connected, with a fresh
