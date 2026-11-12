@@ -2278,7 +2278,9 @@ final class Connection {
         if let error { Notifier.post(title: "unbraid is off", body: error) }
         // Connect on Demand stays on only with something of this user's to start. A revocation turned it off already;
         // another user's engine is theirs.
-        if !revoke, stop { await holdOnDemand(g ?? generation) }
+        // Unstructured: this teardown may run inside the task `clearRunning` just cancelled (the health watch, the change
+        // observer), and a cancelled lookup would wrongly answer "nothing to start" and turn Connect on Demand off.
+        if !revoke, stop { let hold = g ?? generation; await Task { await self.holdOnDemand(hold) }.value }
     }
 
     private func cancelResume() { resumeGeneration += 1; resume?.cancel(); resume = nil }
