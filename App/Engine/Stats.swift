@@ -138,6 +138,7 @@ final class Stats {
         Task { await StatsWriter.shared.seedForPerf(apps: apps, routes: routes.map(id), exits: exits?.map(id)) }
         var l = Live()
         for r in routes { l.down[r] = (0..<60).map { Float(($0 * 37) % 90) * 100_000 } }
+        l.direct = (0..<60).map { Float(($0 * 23) % 70) * 100_000 }
         l.downNow = 2_000_000
         l.upNow = 240_000
         live = l
@@ -146,6 +147,7 @@ final class Stats {
     func perfPokeLive() {
         var l = live
         for k in l.down.keys { l.down[k]?.append(Float.random(in: 0..<9_000_000)); l.down[k]?.removeFirst() }
+        if !l.direct.isEmpty { l.direct.append(Float.random(in: 0..<9_000_000)); l.direct.removeFirst() }
         l.downNow += 1
         live = l
     }
@@ -635,8 +637,9 @@ actor StatsWriter {
         for c in counted {
             pending.add(now: now, app: c.app, exit: c.exit, server: c.server, up: c.up, down: c.down)
             if pending.labels[c.exit] == nil { pending.labels[c.exit] = StatsMath.capturedLabel(c.exit, setup: ctx.setup, tsNames: ctx.tsNames) ?? StatsMath.capturedLabel(c.exit, setup: ctx.running, tsNames: ctx.tsNames) }
-            // The live window takes only what flowed just now: never a replay's catch-up or a New's backlog.
-            guard fast, !reset, c.exit != DIRECT else { continue }
+            // The live window takes only what flowed just now: never a replay's catch-up or a New's backlog. Direct
+            // goes in too, kept apart for its page's graph (see `LiveWindow`).
+            guard fast, !reset else { continue }
             if c.app == ctx.own || c.kind == .closed { window.close(exit: StatsMath.routeId(c.exit), up: c.up, down: c.down) }
             else if c.kind == .update { window.update(exit: StatsMath.routeId(c.exit), up: c.up, down: c.down) }
         }

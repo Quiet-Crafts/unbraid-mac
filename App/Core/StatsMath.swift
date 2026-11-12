@@ -75,6 +75,9 @@ nonisolated struct Live: Hashable, Sendable {
     var down: [String: [Float]] = [:]
     var downNow: Int64 = 0
     var upNow: Int64 = 0
+    /// Download through Direct, for its page's graph. Kept apart from `down`, so the totals and the per-exit charts
+    /// stay about the exits.
+    var direct: [Float] = []
 }
 
 nonisolated enum Period: Int, CaseIterable, Sendable {
@@ -634,11 +637,16 @@ nonisolated struct LiveWindow {
     private var up: Int64 = 0
     private var closing: [String: Int64] = [:]
     private var closingUp: Int64 = 0
+    private var direct: Int64 = 0
 
     mutating func update(exit: String, up: Int64, down: Int64) {
+        if exit == DIRECT { direct += down; return }
         window[exit, default: 0] += down; upBy[exit, default: 0] += up; self.up += up
     }
-    mutating func close(exit: String, up: Int64, down: Int64) { closing[exit, default: 0] += down; closingUp += up }
+    mutating func close(exit: String, up: Int64, down: Int64) {
+        if exit == DIRECT { direct += down; return }
+        closing[exit, default: 0] += down; closingUp += up
+    }
 
     /// Closes the window into a new `Live`, filling quiet seconds and updating the headline.
     mutating func sample(prev: Live, seconds: Int, active: Set<String> = []) -> Live {
@@ -653,7 +661,10 @@ nonisolated struct LiveWindow {
             // Retired exits disappear only after their history drains; keep upload-only and configured exits.
             if !active.contains(k), upBps == 0, down[k]?.allSatisfy({ $0 == 0 }) == true { down[k] = nil }
         }
-        let live = Live(down: down, downNow: Int64(down.values.reduce(0.0) { $0 + Double($1.last ?? 0) }), upNow: (up + closingUp) * 8 / s)
+        let direct = Array((prev.direct.isEmpty ? [Float](repeating: 0, count: 60) : prev.direct).dropFirst(n))
+            + [Float](repeating: Float(self.direct * 8 / s), count: n)
+        let live = Live(down: down, downNow: Int64(down.values.reduce(0.0) { $0 + Double($1.last ?? 0) }), upNow: (up + closingUp) * 8 / s,
+                        direct: direct)
         self = LiveWindow()
         return live
     }

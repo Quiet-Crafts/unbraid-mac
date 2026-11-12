@@ -89,6 +89,7 @@
 		4BD6B80FEF68B4AD9F99BF1D /* TsLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6E69C354579E2A39529D6A /* TsLogin.swift */; };
 		4C240FBFCC218D475FFF48F3 /* Catalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD2ACFB5613385EB016CE9D6 /* Catalog.swift */; };
 		4D9FEBEF61793E88BCBA409C /* RouteText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A97F4F1DEB354DA17A0545E /* RouteText.swift */; };
+		4DD10AE5BC150B86FCBF138C /* PerfFake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0FEDEE337217524D91E019 /* PerfFake.swift */; };
 		4DF8070839F2147F60DA3170 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = D52255D7E21F9B3CE0F381FA /* Fixtures */; };
 		4E325AC6B801B718761E2804 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C6912E62E3933537ACE101C1 /* Assets.xcassets */; };
 		5072647D3FD8AA8166A8544D /* PiaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC45E3DFD0B6401D5DB1C22 /* PiaTests.swift */; };
@@ -204,6 +205,7 @@
 		C313C5FC8E91DD0FD963465A /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ECEFE7303AC82AD7ED4B93D /* WidgetIntents.swift */; };
 		C473C7D2848A9DB053F57A1D /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98821B9E3C4EA8B23F047FA7 /* AppGroup.swift */; };
 		C51DAD6D7FFB0DE138D871F7 /* DiagnosticsCopy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2ABA185763FD22E18C27CAD9 /* DiagnosticsCopy.swift */; };
+		C5E70A8509169F6EC6924338 /* PerfFake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0FEDEE337217524D91E019 /* PerfFake.swift */; };
 		C5F47100A731A41D13EAEF3C /* ProtonFree.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDEFDF1996E23DF0CC856DD4 /* ProtonFree.swift */; };
 		C692987879EB927C97E8D665 /* ExitAddressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EC733C20C0B81072D2C80BC /* ExitAddressTests.swift */; };
 		C80ADEBF23F6CC8C25D47DEC /* NordApi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E382C322FAFD326AAF63181 /* NordApi.swift */; };
@@ -350,6 +352,7 @@
 		29E083404E2FAC9CF4062D45 /* MullvadTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MullvadTests.swift; sourceTree = "<group>"; };
 		2ABA185763FD22E18C27CAD9 /* DiagnosticsCopy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticsCopy.swift; sourceTree = "<group>"; };
 		2CE42234FB0D15D8D344FEE7 /* PinnedServerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PinnedServerTests.swift; sourceTree = "<group>"; };
+		2D0FEDEE337217524D91E019 /* PerfFake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PerfFake.swift; sourceTree = "<group>"; };
 		2E382C322FAFD326AAF63181 /* NordApi.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NordApi.swift; sourceTree = "<group>"; };
 		2EDCDE8D5D44946B6EEEA92F /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		305CD0EA4C26C5554744DE14 /* TailscaleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleSignIn.swift; sourceTree = "<group>"; };
@@ -722,6 +725,7 @@
 				96A02AE0280FDB914D162F3B /* Model.swift */,
 				56ED0C7B0B2F9A4D9317A8A8 /* MonotoneCurve.swift */,
 				8B106CFCAC881E2F3C2C58DC /* Ndt7.swift */,
+				2D0FEDEE337217524D91E019 /* PerfFake.swift */,
 				74E1A9850A23A9F05D2A74FD /* Provider.swift */,
 				8591ED5655491897B5E01B38 /* ProviderStatus.swift */,
 				0FDDF7466E86AA480872C0D2 /* QR.swift */,
@@ -1070,6 +1074,7 @@
 				DE0D6A50FA80DDDB73274FAB /* NordApi.swift in Sources */,
 				B2BC684E93D345265EB4F389 /* Notifier.swift in Sources */,
 				D40588E9663D57D1173295A7 /* Palette.swift in Sources */,
+				4DD10AE5BC150B86FCBF138C /* PerfFake.swift in Sources */,
 				DC7EC593DAB699F007C46AB0 /* PerfHarness.swift in Sources */,
 				3C504F6939E6839979E6CE63 /* Pia.swift in Sources */,
 				2B3F6F7B63A6BF3B1F36771A /* PickerSheet.swift in Sources */,
@@ -1193,6 +1198,7 @@
 				66D96B71C8B7FBF37A6F3A07 /* Nord.swift in Sources */,
 				C80ADEBF23F6CC8C25D47DEC /* NordApi.swift in Sources */,
 				F25D54193F71690595B4100E /* NordTests.swift in Sources */,
+				C5E70A8509169F6EC6924338 /* PerfFake.swift in Sources */,
 				49C8F8B79873F673812051B1 /* Pia.swift in Sources */,
 				5072647D3FD8AA8166A8544D /* PiaTests.swift in Sources */,
 				055A7AB4DBF29656F0C40FDB /* PinnedServerTests.swift in Sources */,

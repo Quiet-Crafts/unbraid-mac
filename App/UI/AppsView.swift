@@ -27,14 +27,23 @@ struct AppsView: View {
         let rows = shown(s)
         VStack(spacing: 0) {
             header(s)
-            if let id = route ?? (s.route(s.defaultRoute) == nil ? nil : s.defaultRoute) {
+            if let id = route {
+                // Every route's page keeps the address line's room, with or without an address (Direct, Blocked, a
+                // route still being checked or without apps), so its title, graph and list sit where the others' do.
+                ZStack(alignment: .leading) {
+                    ExitLine.room
+                    ExitLine(route: id)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
+            } else if s.route(s.defaultRoute) != nil {
                 // On All Apps it's the default route's exit, so it says whose it is.
-                ExitLine(route: id, prefix: route == nil ? "\(s.route(id)?.name ?? "Default route") exits as" : nil)
+                ExitLine(route: s.defaultRoute, prefix: "\(s.route(s.defaultRoute)?.name ?? "Default route") exits as")
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
             }
-            if let id = route, let r = s.route(id) {
-                LiveStrip(route: r.id, color: r.color, week: week)
+            if let id = route, id == DIRECT || s.route(id) != nil {
+                LiveStrip(route: id, color: s.color(id), week: week)
             }
             banners(s)
             table(rows)
@@ -306,6 +315,7 @@ struct MoveItems: View {
 }
 
 /// A route's speed now, its last minute and its week, under the page header while connected with statistics on.
+/// Direct has one too, so every page with apps that go somewhere looks the same.
 private struct LiveStrip: View {
     let route: String
     let color: Color
@@ -315,7 +325,7 @@ private struct LiveStrip: View {
 
     var body: some View {
         if model.vpn.state.phase == .on && model.setup.prefs.stats {
-            let series = Stats.shared.live.down[route] ?? []
+            let series = route == DIRECT ? Stats.shared.live.direct : Stats.shared.live.down[route] ?? []
             let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route)
             let now = Units.rate(Double(series.last ?? 0))
             HStack(spacing: 24) {
@@ -361,6 +371,16 @@ struct ExitLine: View {
     /// Words before the address where the page doesn't already name the route ("Netherlands exits as").
     var prefix: String? = nil
     private let checks = ExitCheck.shared
+
+    /// The height of one address line in either of its fonts, kept by a route's page while it shows none.
+    static var room: some View {
+        ZStack {
+            Text(verbatim: "0").font(.system(size: 12))
+            Text(verbatim: "0").font(.system(size: 12, design: .monospaced))
+        }
+        .hidden().accessibilityHidden(true)
+    }
+
     var body: some View {
         if checks.state.routes[route] != nil {
             if let address = checks.state.answers[route] {

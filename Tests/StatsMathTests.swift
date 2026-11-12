@@ -406,6 +406,25 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(l.upNow, 1_000_000)
     }
 
+    func testDirectIsDrawnApartFromTheExits() throws {
+        var w = LiveWindow()
+        w.update(exit: "nl", up: 0, down: 125_000)
+        w.update(exit: DIRECT, up: 50_000, down: 250_000)
+        w.close(exit: DIRECT, up: 0, down: 125_000)
+        var l = w.sample(prev: Live(), seconds: 1)
+        XCTAssertEqual(l.direct.count, 60)
+        XCTAssertEqual(l.direct.last, 3_000_000)
+        // The headline, upload and per-exit series stay about the exits.
+        XCTAssertNil(l.down[DIRECT])
+        XCTAssertEqual(l.downNow, 1_000_000)
+        XCTAssertEqual(l.upNow, 0)
+        // It scrolls like an exit's series, quiet seconds as zeros.
+        l = w.sample(prev: l, seconds: 2)
+        let d = l.direct
+        XCTAssertEqual(d.count, 60)
+        XCTAssertEqual(Array(d.suffix(3)), [3_000_000, 0, 0])
+    }
+
     func testAClosingOnlyExitIsDrawn() {
         var w = LiveWindow()
         w.close(exit: "own", up: 10, down: 500_000)

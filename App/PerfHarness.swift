@@ -14,7 +14,7 @@ private nonisolated final class MenuBox: @unchecked Sendable {
 
 /// Pictures for the README and the website (`SHOTS=<folder>`, or `UNBRAID_PERF_FAKE=1` with HOLD): made-up data only.
 /// The apps are macOS's own, at their usual places, so the icons are real and nothing installed here shows.
-nonisolated enum PerfFake {
+nonisolated extension PerfFake {
     static let apps: [AppInfo]? = {
         let env = ProcessInfo.processInfo.environment
         guard env["UNBRAID_PERF"] != nil, env["UNBRAID_PERF_SHOTS"] != nil || env["UNBRAID_PERF_FAKE"] != nil else { return nil }
@@ -37,11 +37,6 @@ nonisolated enum PerfFake {
         return list.map { AppInfo(id: $0.0, name: $0.1, path: $0.2, system: false) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }()
-
-    /// The test copy never reaches a provider: its accounts are made up.
-    static func offline() throws {
-        if getenv("UNBRAID_PERF") != nil { throw Fail("No network in the test copy") }
-    }
 }
 
 enum PerfCount {
