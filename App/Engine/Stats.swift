@@ -385,6 +385,8 @@ actor StatsWriter {
             try? FileManager.default.removeItem(atPath: bad)
             try FileManager.default.moveItem(atPath: Self.file.path, toPath: bad)
             chmod(bad, 0o600)
+            // Its age counts from now, not from the file's last write (the month's retention starts at the set-aside).
+            try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: bad)
             for suffix in ["-wal", "-shm", "-journal"] { try? FileManager.default.removeItem(atPath: Self.file.path + suffix) }
             return try openFile()
         }
