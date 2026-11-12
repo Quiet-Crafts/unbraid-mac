@@ -141,7 +141,7 @@ private final class Meter: NSObject {
         let emptyShots = getenv("UNBRAID_PERF_SHOTS") != nil && getenv("UNBRAID_PERF_EMPTY") != nil
         if PerfFake.apps != nil { if !emptyShots { seedShotTraffic() } } else { await seedTraffic() }
         Connection.shared.perfConnected()
-        if let dir = ProcessInfo.processInfo.environment["UNBRAID_PERF_SHOTS"] { await shots(dir); exit(0) }
+        if let dir = ProcessInfo.processInfo.environment["UNBRAID_PERF_SHOTS"] { await shots(dir); exit(shotsMissing == 0 ? 0 : 4) }
         // Stay open with the fake data, to try things by hand in this copy.
         if getenv("UNBRAID_PERF_HOLD") != nil {
             NSApp.activate()
@@ -296,7 +296,7 @@ private final class Meter: NSObject {
                 go("route:it"); await meter.frames(40)
                 Presentation.shared.picker = PickerTarget(id: "it"); await meter.frames(120)
                 // The window's picture holds its sheet. No blinking caret or focus ring in the search field.
-                if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet") }
+                if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet"); shotsMissing += 1 }
                 await shoot(window, "\(dir)/picker\(suffix).png")
                 Presentation.shared.picker = nil; await meter.frames(45)
             }
@@ -321,7 +321,7 @@ private final class Meter: NSObject {
             Presentation.shared.settingsTab = pane.tab
             if settingsWindow() == nil { AppDelegate.openSettings?() }
             for _ in 0..<100 where settingsWindow() == nil { await meter.frames(3) }
-            guard let w = settingsWindow() else { report("[Perf] no settings window for \(pane.name)"); continue }
+            guard let w = settingsWindow() else { report("[Perf] no settings window for \(pane.name)"); shotsMissing += 1; continue }
             last = w
             w.appearance = NSApp.appearance
             w.orderFrontRegardless()
@@ -612,6 +612,7 @@ private final class Meter: NSObject {
 
     // MARK: The matrix
 
+    private var shotsMissing = 0
     private var page = "apps"
     private func go(_ name: String) { page = name; NotificationCenter.default.post(name: DebugHooks.pageNote, object: name) }
 
