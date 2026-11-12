@@ -521,7 +521,9 @@ final class Connection {
                         let fallback = await tunnel.revisions(timeout: 5)?.foreignFallback == true
                         guard g == generation else { return }
                         recordRun { $0.foreign() }
-                        state = VpnState(error: fallback ? Self.othersFallbackRuns : failure)
+                        let shown = fallback ? Self.othersFallbackRuns : failure
+                        // A pause stays what it is (its record stays too): Off here would leave a record nothing clears.
+                        if paused.phase == .paused { state = paused; state.error = shown } else { state = VpnState(error: shown) }
                         return
                     }
                     if paused.phase == .paused {
