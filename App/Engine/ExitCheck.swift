@@ -59,10 +59,20 @@ import Observation
             guard revision == self.revision, let engine = state.engine, let endpoint = vpn.probe else { return }
             let routes = state.begin()
             guard !routes.isEmpty else { return }
+            // A speed test of another Tailscale exit node switches the one Tailscale tag's exit for its length: what comes
+            // back through it is that node's address, not the route's.
+            var tags = Set(routes.values.map(\.tag))
+            if Store.shared.tsTestNode { tags.remove(Compiler.tsTag) }
+            guard !tags.isEmpty else {
+                state.cancelAttempt(engine: engine)
+                nextAttempt = Date().addingTimeInterval(10)
+                continue
+            }
             checkingEngine = engine
             checking = true
-            let answers = await Self.ask(Set(routes.values.map(\.tag)), probe: endpoint)
+            var answers = await Self.ask(tags, probe: endpoint)
             guard !Task.isCancelled, revision == self.revision else { return }
+            if Store.shared.tsTestNode { answers[Compiler.tsTag] = nil }
             checkingEngine = nil
             checking = false
             state.accept(answers, engine: engine, routes: routes)
