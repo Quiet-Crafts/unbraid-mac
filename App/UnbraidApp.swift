@@ -9,33 +9,35 @@ import WidgetKit
 @main
 struct UnbraidApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var delegate
-    @State private var model: AppModel
+    /// Nil in a copy that will only say it must be moved to Applications: it never reads the saved setup or sets up the
+    /// connection, and its scenes stay empty.
+    @State private var model: AppModel?
 
     init() {
         // Before the saved setup is loaded: a second copy must not read it, let alone write it.
         #if !DEBUG
         SingleCopy.handOverIfRunning()
         #endif
-        _model = State(wrappedValue: AppModel.shared)
+        _model = State(wrappedValue: SingleCopy.outsideApplications ? nil : AppModel.shared)
     }
 
     var body: some Scene {
         Window("unbraid", id: "main") {
-            RootView().environment(model)
+            if let model { RootView().environment(model) }
         }
         .defaultSize(width: 1040, height: 700)
         .windowToolbarStyle(.unified)
-        .commands { UnbraidCommands(model: model) }
+        .commands { if let model { UnbraidCommands(model: model) } }
 
-        MenuBarExtra {
-            MenuBarPanel().environment(model)
+        MenuBarExtra(isInserted: .constant(model != nil)) {
+            if let model { MenuBarPanel().environment(model) }
         } label: {
-            MenuBarIcon()
+            if model != nil { MenuBarIcon() }
         }
         .menuBarExtraStyle(.window)
 
         Settings {
-            SettingsView().environment(model)
+            if let model { SettingsView().environment(model) }
         }
         .windowToolbarStyle(.unifiedCompact)
     }
@@ -65,12 +67,23 @@ enum SingleCopy {
         exit(0)
     }
 
-    /// A copy that macOS can't install the VPN extension for (a disk image, Downloads): said plainly, then it quits.
+    /// Whether this copy runs from somewhere macOS can't install the VPN extension for (a disk image, Downloads). Debug
+    /// builds run from the build folder, so they never count.
+    static var outsideApplications: Bool {
+        #if DEBUG
+        return false
+        #else
+        return !InstallPlace.isInApplications(Bundle.main.bundleURL.path)
+        #endif
+    }
+
+    /// A copy that macOS can't install the VPN extension for: said plainly, then it quits. The alert runs once the app
+    /// has finished launching (a modal alert can't run earlier); the copy has already skipped loading anything.
     @MainActor static func refuseOutsideApplications() -> Bool {
         #if DEBUG
         return false
         #else
-        guard !InstallPlace.isInApplications(Bundle.main.bundleURL.path) else { return false }
+        guard outsideApplications else { return false }
         let alert = NSAlert()
         alert.messageText = "unbraid needs to be in your Applications folder"
         alert.informativeText = "Move unbraid to the Applications folder, then open it from there."
