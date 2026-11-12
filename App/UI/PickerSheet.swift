@@ -54,6 +54,8 @@ struct PickerSheet: View {
     @State private var timedOut = false
     /// Provider blocking chosen for this route in the sheet (nil = untouched; then nil = as set in Settings), applied on "Use".
     @State private var filterChoice: Bool??
+    /// A change waiting on the limit question: the sheet stays until it is answered, and Cancel waits with it.
+    @State private var applying = false
     /// A retry is under way: the earlier failure is not shown again until the new try has ended.
     @State private var retrying = false
     private var catalogFailed: Bool { !retrying && (provider.map { model.catalogFailures.contains($0.id) } ?? false) }
@@ -114,9 +116,9 @@ struct PickerSheet: View {
         } status: {
             status
         } actions: {
-            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(applying)
             Button(existingRoute != nil ? "Show \(picked ?? "…")" : "Use \(picked ?? "…")") { apply() }
-                .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil)
+                .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil || applying)
         }
         .frame(height: 620)
         .task(id: "\(provider?.id ?? "")\(group ?? "")") {
@@ -471,7 +473,8 @@ struct PickerSheet: View {
                 // The place and the filter choice are one change, so a Cancel at the limit question leaves both as they were.
                 var filter: Bool??
                 if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { filter = choice }
-                model.setLocation(target, l, filter: filter) { if $0 { dismiss() } }
+                applying = true
+                model.setLocation(target, l, filter: filter) { applying = false; if $0 { dismiss() } }
                 return
             }
         case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s) }

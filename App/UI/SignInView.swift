@@ -185,6 +185,8 @@ private struct ProviderForm: View {
     private func clearPastedSecrets() {
         let fields = provider.fields + [model.challenges[provider.id]?.field].compactMap { $0 }
         for f in fields where f.secret { if let v = values[f.key], !v.isEmpty { model.clearClipboardIf(v) } }
+        // A pasted QR image is cleared too, if the clipboard still holds that paste.
+        if let qr = pastedQR, values[qr.key] == qr.value, NSPasteboard.general.changeCount == qr.changeCount { NSPasteboard.general.clearContents() }
     }
 
     @ViewBuilder private func field(_ f: Field) -> some View {
