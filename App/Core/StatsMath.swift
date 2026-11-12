@@ -404,8 +404,8 @@ nonisolated enum StatsMath {
     /// The key a process's traffic is counted under: the listed app or added tool that holds it, else the app bundle it
     /// sits in, else its own path (a program outside any app, such as ssh or a background service of macOS, named after
     /// its file and the same key it gets once added as a tool), else "?" when the engine didn't say.
-    static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, bundleId: (String) -> String?) -> String {
-        appKey(path: path, bundles: bundles, tools: tools) ?? outerApp(path).flatMap(bundleId) ?? (path.hasPrefix("/") ? path : "?")
+    static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, toolPatterns: [String: [String]] = [:], bundleId: (String) -> String?) -> String {
+        appKey(path: path, bundles: bundles, tools: tools, toolPatterns: toolPatterns) ?? outerApp(path).flatMap(bundleId) ?? (path.hasPrefix("/") ? path : "?")
     }
 
     /// The path of the outermost app bundle a process lives in ("/Applications/Foo.app" for a helper deep inside it).
@@ -415,10 +415,13 @@ nonisolated enum StatsMath {
     }
 
     /// The app key (bundle identifier, or the path of a tool the user added) for the process at `path`: the listed app
-    /// whose bundle contains it (longest match), a tool the user routes, else nil.
-    static func appKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>) -> String? {
+    /// whose bundle contains it (longest match), a tool the user routes, else nil. A tool reached through a link
+    /// (Homebrew's bin/curl, a /usr/bin shim) runs from the file the link points to, so a process also belongs to the
+    /// tool whose routing patterns (`toolPatterns`, as the engine matches them) hold its path; the longest key wins.
+    static func appKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, toolPatterns: [String: [String]] = [:]) -> String? {
         if path.isEmpty { return nil }
         if tools.contains(path) { return path }
+        if let t = tools.filter({ toolPatterns[$0].map { AppPaths.matches($0, path) } ?? false }).max(by: { $0.count != $1.count ? $0.count < $1.count : $0 > $1 }) { return t }
         var best: (prefix: String, id: String)?
         for b in bundles where path == b.prefix || path.hasPrefix(b.prefix + "/") {
             if best == nil || b.prefix.count > best!.prefix.count { best = b }

@@ -22,6 +22,8 @@ nonisolated struct StatsContext: Sendable {
     var testTags: [String: String]
     /// Command-line tools the user routes, by path.
     var tools: Set<String>
+    /// The engine's match patterns of those tools, so a process run from a link's target is counted under the tool.
+    var toolPatterns: [String: [String]] = [:]
     var own: String
 
     /// The exit a running speed test measures through `tag`, so its traffic is counted there.
@@ -112,12 +114,13 @@ final class Stats {
         let setup = Store.shared.setup
         let running = c.running ?? setup
         let testExit = t.testing ? t.run?.exit : nil
+        let tools = Set((Array(setup.apps.keys) + Array(running.apps.keys)).filter { $0.hasPrefix("/") })
         return StatsContext(
             setup: setup, running: running, tags: c.tags, servers: c.state.servers.mapValues(\.name),
             tsNames: Dictionary(c.state.tsExitNodes.map { (SpeedTest.node + $0.ip, $0.name) }) { $1 },
             testExit: testExit, testTag: testExit.map { $0.hasPrefix(SpeedTest.node) ? Compiler.tsTag : c.tags[$0] ?? "" },
             testTags: t.testing ? Dictionary((t.all?.legs ?? []).compactMap { leg in c.tags[leg.exit].map { ($0, leg.exit) } }, uniquingKeysWith: { first, _ in first }) : [:],
-            tools: Set((Array(setup.apps.keys) + Array(running.apps.keys)).filter { $0.hasPrefix("/") }),
+            tools: tools, toolPatterns: tools.isEmpty ? [:] : AppCatalog.shared.patterns(for: Array(tools)),
             own: Bundle.main.bundleIdentifier ?? "app.unbraid")
     }
 
@@ -660,7 +663,7 @@ actor StatsWriter {
         if let k = owners[path] { return k }
         // Paths can include a fresh version directory on every app update. Bound both successful and failed lookups.
         if owners.count >= 4096 { owners.removeAll(keepingCapacity: true) }
-        let key = StatsMath.ownerKey(path: path, bundles: bundles.map { ($0.prefix, $0.id) }, tools: ctx.tools) { Bundle(path: $0)?.bundleIdentifier }
+        let key = StatsMath.ownerKey(path: path, bundles: bundles.map { ($0.prefix, $0.id) }, tools: ctx.tools, toolPatterns: ctx.toolPatterns) { Bundle(path: $0)?.bundleIdentifier }
         owners[path] = key
         return key
     }

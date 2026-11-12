@@ -437,6 +437,16 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(key("", []), "?")
     }
 
+    func testAToolReachedThroughALinkIsCountedUnderItsKeyAcrossVersions() {
+        let tool = "/opt/homebrew/bin/curl"
+        let patterns = [tool: [Compiler.pattern(forPath: tool),
+                               Compiler.pattern(forPath: "/opt/homebrew/Cellar/curl/8.11.0/bin/curl").replacingOccurrences(of: "8\\.11\\.0", with: "[^/]+")]]
+        let key = { (path: String) in StatsMath.ownerKey(path: path, bundles: [], tools: [tool], toolPatterns: patterns) { _ in nil } }
+        XCTAssertEqual(key("/opt/homebrew/Cellar/curl/8.11.0/bin/curl"), tool)
+        XCTAssertEqual(key("/opt/homebrew/Cellar/curl/8.12.1/bin/curl"), tool) // after `brew upgrade`
+        XCTAssertEqual(key("/opt/homebrew/Cellar/wget/1.0/bin/wget"), "/opt/homebrew/Cellar/wget/1.0/bin/wget") // another tool stays apart
+    }
+
     func testAClosingOnlyExitIsDrawn() {
         var w = LiveWindow()
         w.close(exit: "own", up: 10, down: 500_000)
