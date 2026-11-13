@@ -82,6 +82,7 @@ private struct TourCard: View {
 struct RootView: View {
     private let model = AppModel.shared
     private let loginItem = LoginItem.shared
+    private let updates = Updates.shared
     @Bindable private var presentation = Presentation.shared
     @State private var adding = false
     @State private var addAfterPicker = false
@@ -95,6 +96,13 @@ struct RootView: View {
             || presentation.picker != nil || adding || addAfterPicker
     }
 
+    /// The one-time update question: after the terms, never over another sheet, question or the tour, and before the
+    /// tour is offered (which waits for a sign-in). Nothing waits on the answer, Connect included.
+    private var askUpdates: Bool {
+        updates.askPending && model.store.disclosed && model.store.termsAccepted && !busy && presentation.tourStep == nil
+            && !(model.signedIn && model.store.tourPending)
+    }
+
     var body: some View {
         Group {
             if model.signedIn {
@@ -106,7 +114,7 @@ struct RootView: View {
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
                     DetailPage().frame(minWidth: 560, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
                         // What needs attention shows above every page, not only the one it was raised on.
-                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice() } }
+                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateNotice() } }
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -173,7 +181,7 @@ struct RootView: View {
         }) { SignInView(first: false, saveOnly: resumePicker != nil) }
         // Asked once, after the first connection works, when nothing else is on screen; only an answer settles it (closing
         // the window keeps it for next time).
-        .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy }, set: { _ in })) {
+        .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy && !askUpdates }, set: { _ in })) {
             Button("Open at Login") { loginItem.answer(true) }
             Button("Not Now", role: .cancel) { loginItem.answer(false) }
         } message: { Text("unbraid lives in the menu bar. It can open automatically when you log in. You can change this in Settings › General.") }
@@ -184,6 +192,11 @@ struct RootView: View {
             Button("Show Tour") { model.store.tourPending = false; presentation.startTour() }
             Button("Not Now", role: .cancel) { model.store.tourPending = false }
         } message: { Text("Take a quick tour of unbraid. You can show it again from Help.") }
+        // Asked once, on a first run or after updating from a version without the check; only an answer settles it.
+        .alert("Check for updates?", isPresented: Binding(get: { askUpdates }, set: { _ in })) {
+            Button("Check for Updates") { updates.answer(true) }
+            Button("Don't Check", role: .cancel) { updates.answer(false) }
+        } message: { Text(UpdateText.question) }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugHooks.pageNote)) { n in
             switch n.object as? String {
@@ -490,6 +503,39 @@ private struct SettingsToolbarItem: ToolbarContent {
                 Label { Text("Settings") } icon: { Image(systemName: "gearshape.fill").foregroundStyle(Ink.accentText) }
             }
             .help("Settings (⌘,)").tourAnchor(4)
+        }
+    }
+}
+
+/// A newer release is out (the update check is on and found one): Download opens the release page, Dismiss hides it
+/// until a newer one.
+private struct UpdateNotice: View {
+    private let updates = Updates.shared
+    private var buttons: some View {
+        HStack {
+            Button("Download…") { UpdateText.openReleasePage() }
+            Button("Dismiss") { updates.dismiss() }
+        }.contentButton().controlSize(.small).fixedSize(horizontal: true, vertical: false)
+    }
+
+    var body: some View {
+        if updates.showNotice, let version = updates.newer {
+            let label = Label("unbraid \(version) is out. Download it and drag it over this one; your setup stays.", systemImage: "arrow.down.circle")
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    label.fixedSize()
+                    Spacer(minLength: 8)
+                    buttons
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    label
+                    buttons
+                }
+            }
+            .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Layout.gutter).padding(.vertical, 10).background(Ink.surface)
+            .overlay(alignment: .bottom) { Hairline() }
+            .fadesIn()
         }
     }
 }

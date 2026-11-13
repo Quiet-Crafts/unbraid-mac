@@ -11,7 +11,8 @@ import SwiftUI
 /// a plain file and seconds old; it is removed first, so it runs once. Its result goes to
 /// ~/Library/Application Support/unbraid/debug.txt. Commands: state, connect, disconnect, pause:<min>,
 /// setup:<json file>, assign:<app>=<route>, default:<route|direct>, health, test:<exit>, speed (the last test),
-/// live:<seconds> (each change of the live rates), apps (today's bytes per app and exit).
+/// live:<seconds> (each change of the live rates), apps (today's bytes per app and exit), updates:<state|check|auto|on|
+/// off|reset> (the update check; `defaults write app.unbraid debugUpdateAnswer <file|offline>` gives it a local answer).
 enum DebugHooks {
     static func install() {
         if let f = UserDefaults.standard.string(forKey: "debugNordTokenFile"), AppModel.shared.accounts["nord"] == nil,
@@ -52,6 +53,22 @@ enum DebugHooks {
         let m = AppModel.shared
         let (name, arg) = cmd.split(separator: ":", maxSplits: 1).map(String.init).splitPair
         switch name {
+        case "updates":
+            // The update check: state, check (Check Now), auto (an automatic check, if due), on, off, reset (a fresh
+            // install's state, so the one-time question comes back). The answer comes from debugUpdateAnswer if set.
+            let u = Updates.shared
+            switch arg {
+            case "check": await u.checkNow()
+            case "auto": await u.check(user: false)
+            case "on": u.setEnabled(true)
+            case "off": u.setEnabled(false)
+            case "reset": u.resetForTesting()
+            default: break
+            }
+            let s = u.state
+            out("updates enabled=\(s.enabled) asked=\(s.asked) latest=\(s.latest ?? "-") failed=\(s.failed) dismissed=\(s.dismissed ?? "-") "
+                + "last=\(s.lastAttempt.map { String(Int($0.timeIntervalSince1970)) } ?? "-") newer=\(u.newer?.description ?? "-") "
+                + "notice=\(u.showNotice) manual=\(u.lastManual.map { "\($0)" } ?? "-") checking=\(u.checking)")
         case "connect": await m.vpn.connect(); out(state())
         case "disconnect": await m.vpn.disconnect(); out(state())
         case "pause": await m.vpn.pause(minutes: Int(arg) ?? 1); out(state())

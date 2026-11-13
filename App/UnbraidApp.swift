@@ -179,8 +179,12 @@ struct UnbraidCommands: Commands {
             SwiftUI.Link("Guides", destination: URL(string: Site.guides)!)
             SwiftUI.Link("Contact", destination: URL(string: Site.contact)!)
             Divider()
-            // No update check of its own (unbraid.app publishes no version to ask for yet): the download page instead.
-            SwiftUI.Link("Check for Updates…", destination: URL(string: Site.download)!)
+            // One check the user asked for, whatever the setting: its result shows in Settings › About.
+            Button("Check for Updates…") {
+                Presentation.shared.settingsTab = 4
+                AppDelegate.openSettingsWindow()
+                Task { await Updates.shared.checkNow() }
+            }
             Divider()
             SwiftUI.Link("Privacy Policy", destination: URL(string: Site.privacy)!)
         }
@@ -232,6 +236,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return await Stats.shared.week()
         }
         Snapshot.startPublishing()
+        // Only while the user has turned it on, at most once a day.
+        Updates.shared.start()
         // Show the window on a first launch (nothing set up yet) or when opened by hand rather than at login.
         let atLogin = NSAppleEventManager.shared().currentAppleEvent?.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem
         // Started to act on a widget, Control or Shortcut request: it runs without taking the screen, unless there is

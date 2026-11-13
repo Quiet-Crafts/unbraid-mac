@@ -1066,6 +1066,7 @@ private struct AboutTab: View {
                     }
                 }.frame(maxWidth: .infinity).padding(.vertical, 8)
             }
+            UpdatesSection()
             Section("Links") {
                 LinkRow("Website", "unbraid.app", Site.home, symbol: "globe")
                 LinkRow("Support unbraid", "Made by one person. A donation keeps it going.", Site.donate, symbol: "heart")
@@ -1107,6 +1108,40 @@ enum Site {
     /// The Mac app's public repository, shown in About. Nil would point that row to the source archive published
     /// beside each release's download instead.
     static let source: String? = "https://github.com/Quiet-Crafts/unbraid-mac"
+}
+
+/// The update check's switch, what it last found, Check Now and, when a newer release is out, Download.
+private struct UpdatesSection: View {
+    private let updates = Updates.shared
+
+    var body: some View {
+        Section {
+            SubToggle("Check for updates", UpdateText.setting, symbol: "arrow.down.circle",
+                      isOn: Binding(get: { updates.state.enabled }, set: { updates.setEnabled($0) }))
+            SettingsRow(title: title, caption: caption, symbol: "shippingbox") {
+                HStack {
+                    if updates.newer != nil { Button("Download…") { UpdateText.openReleasePage() }.contentButton(prominent: true) }
+                    Button("Check Now") { Task { await updates.checkNow() } }.contentButton().disabled(updates.checking)
+                }
+            }
+        } header: { Text("Updates") } footer: {
+            Text("unbraid never updates itself: download the new version and drag it over this one in Applications. Your setup stays.")
+        }
+    }
+
+    private var title: String {
+        if let newer = updates.newer { return "Version \(newer) is out" }
+        if updates.lastManual == .current || updates.state.latest != nil { return "You have the latest version" }
+        return "Version \(updates.installed?.description ?? "")"
+    }
+
+    private var caption: String {
+        if updates.checking { return "Checking…" }
+        if updates.lastManual == .failed { return "Couldn't reach unbraid.app. Try again later." }
+        guard let last = updates.state.lastAttempt else { return "Not checked yet" }
+        let when = last.formatted(.relative(presentation: .named))
+        return updates.state.failed ? "Last tried \(when)" : "Last checked \(when)"
+    }
 }
 
 private struct LinkRow: View {
