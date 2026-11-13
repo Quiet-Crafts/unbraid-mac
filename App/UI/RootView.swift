@@ -57,7 +57,7 @@ private struct TourCard: View {
     let step: Int
     private let titles = ["Your routes", "Connect, pause, stop", "Choose per app", "Speed Test", "Settings"]
     private let bodies = [
-        "Every app uses the default route unless you give it another. Add a route to choose another route.",
+        "Every app uses the default route unless you give it another. Add a route to send apps another way, such as through a VPN location.",
         "Connect here. Once connected, you can pause or disconnect.",
         "Choose a route for each app in the Route column. Direct skips the VPN.",
         "Test the speed of a route. M-Lab publishes speed test results.",

@@ -61,7 +61,7 @@ struct SignInView: View {
                     }
                 }
                 Section {
-                    row("Import WireGuard or OpenVPN File…", ".conf or .ovpn, from any provider, or for My Servers", symbol: "doc") { importer.file() }
+                    row("Import WireGuard or OpenVPN File…", ".conf or .ovpn, from any provider or your own server", symbol: "doc") { importer.file() }
                     row("Add Shadowsocks Link…", "Paste an ss:// access key", symbol: "link") { importer.shadowsocks() }
                     if first {
                         row("Use Tailscale Only", "No VPN provider, just your tailnet", symbol: "circle.grid.3x3", color: IconTile.Tile.indigo) { model.useTailscaleOnly() }
