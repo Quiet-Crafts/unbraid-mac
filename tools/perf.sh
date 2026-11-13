@@ -46,7 +46,9 @@ PERF_HOME=$(mktemp -d "${TMPDIR:-/tmp}/unbraid-perf-home/XXXXXX" 2>/dev/null || 
 # The copy's preferences live in macOS's preferences service, outside the home folder above. Clear that one domain (the
 # test copy's own, never the real app's) before the run, so it starts clean, and after it.
 PERF_DOMAIN=app.unbraid.perf
-trap 'rm -rf "$PERF_HOME"; defaults delete "$PERF_DOMAIN" 2>/dev/null || true' EXIT
+# macOS's preferences service can write the emptied domain back as an empty file: that one file goes too.
+PERF_PLIST="$HOME/Library/Preferences/$PERF_DOMAIN.plist"
+trap 'rm -rf "$PERF_HOME"; defaults delete "$PERF_DOMAIN" 2>/dev/null || true; rm -f "$PERF_PLIST"' EXIT
 defaults delete "$PERF_DOMAIN" 2>/dev/null || true
 [ -z "${SHOTS:-}" ] || mkdir -p "$SHOTS"
 [ -z "${CHECKS:-}" ] || mkdir -p "$CHECKS"
