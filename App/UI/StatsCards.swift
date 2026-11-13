@@ -125,7 +125,7 @@ struct StatsOff: View {
 let consentText = """
 Statistics stay on this Mac. They are never uploaded.
 Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests.
-Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as "Other programs". No browsing destinations, ever.
+Only apps (by identifier), tools you added (by full path) and other programs (by their location on this Mac, with your home folder shown as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as "Other programs". No browsing destinations.
 Turn off or delete everything in Settings at any time.
 """
 
