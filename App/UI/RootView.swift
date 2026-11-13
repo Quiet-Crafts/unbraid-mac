@@ -95,6 +95,11 @@ struct RootView: View {
             || presentation.picker != nil || adding || addAfterPicker
     }
 
+    /// The update question waits while another question, sheet or the tour (or its offer) is up.
+    private var holdUpdateAsk: Bool {
+        busy || model.limitAsk != nil || loginItem.offer || model.store.tourPending || presentation.tourStep != nil
+    }
+
     var body: some View {
         Group {
             if model.signedIn {
@@ -106,7 +111,7 @@ struct RootView: View {
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
                     DetailPage().frame(minWidth: 560, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
                         // What needs attention shows above every page, not only the one it was raised on.
-                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(); UpdateNotice() } }
+                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice() } }
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -495,13 +500,15 @@ private struct SettingsToolbarItem: ToolbarContent {
 }
 
 /// The one-time update question, above every page once the terms are accepted, until it is answered: a banner rather
-/// than a dialog, so it never covers another question or holds up Connect.
+/// than a dialog, so it never holds up Connect, and it steps aside while anything else asks something.
 private struct UpdateAsk: View {
+    /// Another question, sheet or the tour is up: the question waits and comes back after it.
+    let hold: Bool
     private let model = AppModel.shared
     private let updates = Updates.shared
 
     var body: some View {
-        if updates.askPending && model.store.disclosed && model.store.termsAccepted {
+        if updates.askPending && model.store.disclosed && model.store.termsAccepted && !hold {
             VStack(alignment: .leading, spacing: 8) {
                 Label { Text("Check for updates?").fontWeight(.semibold) } icon: { Image(systemName: "arrow.down.circle") }
                 Text(UpdateText.question).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
