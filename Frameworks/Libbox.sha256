@@ -1,4 +1,4 @@
-0b88198cee7ac7681d4a3bbb35c3eeada775b7f80cdb9da78ccaac20fea73a5c  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
+8ab1407464c53a54adc0fd2dc2b30fac593c779994427cf9a8891ef5756d5760  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
 54808197c77fea31eb2c22504c5f2b8c817d8eef1c06dd40affb23d2619a76cf  Libbox.xcframework/Info.plist
 link Versions/Current/Headers  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Headers
 link Versions/Current/Libbox  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Libbox
