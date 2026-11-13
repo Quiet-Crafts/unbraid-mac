@@ -15,9 +15,12 @@
 #                                     every Settings pane (settings-general, -providers, -home, -tailscale, -protection,
 #                                     -statistics, -about, and -about-update with a newer release found), the update
 #                                     notice at both sizes (update-notice, min-update-notice) and the one-time update
-#                                     question (update-ask); dark ones end in -dark
+#                                     question at both sizes (update-ask, min-update-ask); dark ones end in -dark
 #   EMPTY=1 SHOTS=<folder> tools/perf.sh   the same pages and panel with no traffic at all, as on a first day
 #                                     (empty-apps, empty-route, ..., empty-min-*, empty-panel, with -dark too)
+#   CACHE=1 SHOTS=<folder> tools/perf.sh   the windows drawn by the app itself instead (works on a locked screen,
+#                                     where screencapture is black; the glass sidebar comes out blank), sheets beside
+#                                     them as <name>-sheet.png
 #   FAKE=1 HOLD=1 tools/perf.sh       stays open with that same made-up setup
 #   HOLD=1 tools/perf.sh              no timing: stays open with the fake data, to try things by hand
 #   HOLD=1 UNBRAID_PERF_SELECT=4 tools/perf.sh   the same, with the first four rows already selected
@@ -54,6 +57,7 @@ VARS=(UNBRAID_PERF=1 "CFFIXED_USER_HOME=$PERF_HOME")
 [ -z "${REPS:-}" ] || VARS+=("UNBRAID_PERF_REPS=$REPS")
 [ -z "${SHOTS:-}" ] || VARS+=("UNBRAID_PERF_SHOTS=$SHOTS")
 [ -z "${EMPTY:-}" ] || VARS+=(UNBRAID_PERF_EMPTY=1)
+[ -z "${CACHE:-}" ] || VARS+=(UNBRAID_PERF_CACHE=1)
 [ -z "${HOLD:-}" ] || VARS+=(UNBRAID_PERF_HOLD=1)
 [ -z "${FAKE:-}" ] || VARS+=(UNBRAID_PERF_FAKE=1)
 [ -z "${STRESS:-}" ] || VARS+=(UNBRAID_PERF_STRESS=1)

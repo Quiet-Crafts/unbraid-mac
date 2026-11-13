@@ -82,7 +82,6 @@ private struct TourCard: View {
 struct RootView: View {
     private let model = AppModel.shared
     private let loginItem = LoginItem.shared
-    private let updates = Updates.shared
     @Bindable private var presentation = Presentation.shared
     @State private var adding = false
     @State private var addAfterPicker = false
@@ -96,13 +95,6 @@ struct RootView: View {
             || presentation.picker != nil || adding || addAfterPicker
     }
 
-    /// The one-time update question: after the terms, never over another sheet, question or the tour, and before the
-    /// tour is offered (which waits for a sign-in). Nothing waits on the answer, Connect included.
-    private var askUpdates: Bool {
-        updates.askPending && model.store.disclosed && model.store.termsAccepted && !busy && presentation.tourStep == nil
-            && !(model.signedIn && model.store.tourPending)
-    }
-
     var body: some View {
         Group {
             if model.signedIn {
@@ -114,7 +106,7 @@ struct RootView: View {
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
                     DetailPage().frame(minWidth: 560, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
                         // What needs attention shows above every page, not only the one it was raised on.
-                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateNotice() } }
+                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(); UpdateNotice() } }
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -181,7 +173,7 @@ struct RootView: View {
         }) { SignInView(first: false, saveOnly: resumePicker != nil) }
         // Asked once, after the first connection works, when nothing else is on screen; only an answer settles it (closing
         // the window keeps it for next time).
-        .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy && !askUpdates }, set: { _ in })) {
+        .alert("Open unbraid at login?", isPresented: Binding(get: { loginItem.offer && !busy }, set: { _ in })) {
             Button("Open at Login") { loginItem.answer(true) }
             Button("Not Now", role: .cancel) { loginItem.answer(false) }
         } message: { Text("unbraid lives in the menu bar. It can open automatically when you log in. You can change this in Settings › General.") }
@@ -192,11 +184,6 @@ struct RootView: View {
             Button("Show Tour") { model.store.tourPending = false; presentation.startTour() }
             Button("Not Now", role: .cancel) { model.store.tourPending = false }
         } message: { Text("Take a quick tour of unbraid. You can show it again from Help.") }
-        // Asked once, on a first run or after updating from a version without the check; only an answer settles it.
-        .alert("Check for updates?", isPresented: Binding(get: { askUpdates }, set: { _ in })) {
-            Button("Check for Updates") { updates.answer(true) }
-            Button("Don't Check", role: .cancel) { updates.answer(false) }
-        } message: { Text(UpdateText.question) }
         #if DEBUG
         .onReceive(NotificationCenter.default.publisher(for: DebugHooks.pageNote)) { n in
             switch n.object as? String {
@@ -503,6 +490,31 @@ private struct SettingsToolbarItem: ToolbarContent {
                 Label { Text("Settings") } icon: { Image(systemName: "gearshape.fill").foregroundStyle(Ink.accentText) }
             }
             .help("Settings (⌘,)").tourAnchor(4)
+        }
+    }
+}
+
+/// The one-time update question, above every page once the terms are accepted, until it is answered: a banner rather
+/// than a dialog, so it never covers another question or holds up Connect.
+private struct UpdateAsk: View {
+    private let model = AppModel.shared
+    private let updates = Updates.shared
+
+    var body: some View {
+        if updates.askPending && model.store.disclosed && model.store.termsAccepted {
+            VStack(alignment: .leading, spacing: 8) {
+                Label { Text("Check for updates?").fontWeight(.semibold) } icon: { Image(systemName: "arrow.down.circle") }
+                Text(UpdateText.question).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
+                HStack {
+                    Button("Check for Updates") { updates.answer(true) }
+                    Button("Don't Check") { updates.answer(false) }
+                }.contentButton().controlSize(.small).fixedSize(horizontal: true, vertical: false)
+            }
+            .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Layout.gutter).padding(.vertical, 10).background(Ink.surface)
+            .overlay(alignment: .bottom) { Hairline() }
+            .accessibilityElement(children: .contain)
+            .fadesIn()
         }
     }
 }

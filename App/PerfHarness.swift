@@ -317,7 +317,7 @@ private final class Meter: NSObject {
     private static let updatesAnswered = UpdateCheck.State(asked: true)
     private static let updatesNewer = UpdateCheck.State(enabled: true, asked: true, lastAttempt: .now, latest: "1.2.0")
 
-    /// The update notice at the usual and the smallest size, and the one-time question, over All Apps.
+    /// The update notice and the one-time question, each at the usual and the smallest size, over All Apps.
     private func updateShots(_ dir: String, _ prefix: String, _ suffix: String, _ normal: NSRect) async {
         go("apps"); await meter.frames(30)
         Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
@@ -326,8 +326,10 @@ private final class Meter: NSObject {
         await shoot(window, "\(dir)/\(prefix)min-update-notice\(suffix).png")
         window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(UpdateCheck.State()); await meter.frames(90)
-        if window.attachedSheet == nil { report("[Perf] no update question"); shotsMissing += 1 }
         await shoot(window, "\(dir)/\(prefix)update-ask\(suffix).png")
+        window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+        await shoot(window, "\(dir)/\(prefix)min-update-ask\(suffix).png")
+        window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
     }
 
@@ -369,12 +371,34 @@ private final class Meter: NSObject {
         capture(w, path)
     }
 
-    /// One window as macOS draws it (`cacheDisplay` leaves the glass sidebar blank), without its shadow.
+    /// One window as macOS draws it (`cacheDisplay` leaves the glass sidebar blank), without its shadow. CACHE=1 draws
+    /// it with `cacheDisplay` instead, on the window's own background, for a locked screen (where screencapture is
+    /// black); a sheet over it is drawn beside it, as <name>-sheet.png.
     private func capture(_ w: NSWindow, _ path: String) {
+        if getenv("UNBRAID_PERF_CACHE") != nil {
+            draw(w, path)
+            if let sheet = w.attachedSheet { draw(sheet, path.replacingOccurrences(of: ".png", with: "-sheet.png")) }
+            return
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
         p.arguments = ["-x", "-o", "-l", String(w.windowNumber), path]
         try? p.run(); p.waitUntilExit()
+    }
+
+    private func draw(_ w: NSWindow, _ path: String) {
+        guard let view = w.contentView?.superview ?? w.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let image = NSImage(size: view.bounds.size)
+        image.lockFocus()
+        (w.appearance ?? NSApp.effectiveAppearance).performAsCurrentDrawingAppearance {
+            NSColor.windowBackgroundColor.setFill()
+            view.bounds.fill()
+        }
+        rep.draw(in: view.bounds)
+        image.unlockFocus()
+        guard let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else { return }
+        try? png.write(to: URL(fileURLWithPath: path))
     }
 
     // MARK: The apps list, driven with real events
