@@ -71,15 +71,15 @@ struct SpeedTestView: View {
                         let best = going.compactMap { leg in pastTests.filter { $0.exit == StatsMath.idOf(leg.exit, setup: setup) }.max { $0.down + $0.up < $1.down + $1.up } }
                         if best.count == going.count && !best.isEmpty {
                             let gb = best.reduce(0.0) { $0 + Double($1.down + $1.up) * 10 / 8 / 1_000_000_000 }
-                            Text("On a metered connection: about \(gb.formatted(.number.precision(.fractionLength(1)))) GB in 20 seconds, from each exit's best test. Actual use may differ.")
-                        } else { Text("This network is metered. Data use can't be estimated for every exit and may be several GB.") }
+                            Text("On a metered connection: about \(gb.formatted(.number.precision(.fractionLength(1)))) GB in 20 seconds, from each route's best test. Actual use may differ.")
+                        } else { Text("This network is metered. Data use can't be estimated for every route and may be several GB.") }
                     }
                     Text("Up to \(max(0, SpeedTest.perDay - Store.shared.testsToday)) tests left today.")
                     ForEach(test.all?.legs ?? [], id: \.exit) { leg in
                         let name = options.first(where: { $0.id == leg.exit })?.name ?? leg.exit
                         if leg.missing && leg.server != nil {
                             Toggle("\(name): use the nearest server", isOn: Binding(get: { nearest.contains(leg.exit) }, set: { if $0 { nearest.insert(leg.exit) } else { nearest.remove(leg.exit) } }))
-                        } else if leg.limited { Text("\(name): M-Lab is limiting tests from this exit.") }
+                        } else if leg.limited { Text("\(name): M-Lab is limiting tests from this route.") }
                         else if let error = leg.error { Text("\(name): \(error)") }
                         else if leg.server == nil { Text("\(name): no test server found.") }
                     }
@@ -96,9 +96,9 @@ struct SpeedTestView: View {
             if nodeWarningAfterConsent { nodeWarningAfterConsent = false; confirmNode = true }
         }) {
             ConsentSheet(title: Text("Speed tests use M-Lab").font(.system(size: 15, weight: .semibold)), rows: [
-                ("speedometer", "Measurement Lab (M-Lab) is an open platform run by researchers. A test asks for one of its servers in the exit's country; for your own servers and Tailscale nodes M-Lab picks a nearby one. Ten seconds each way."),
-                ("clock.arrow.circlepath", "M-Lab publishes every test's results openly and keeps them, with the public IP address of the exit you test: a VPN server's, or your home's for a home or Tailscale exit."),
-                ("nosign", "Also sent: the time, the app's name and version, and the exit's country when it's known. Nothing about your Mac or accounts. Up to \(SpeedTest.perDay) tests a day."),
+                ("speedometer", "Measurement Lab (M-Lab) is an open platform run by researchers. A test asks for one of its servers in your route's country; for your own servers and Tailscale nodes M-Lab picks a nearby one. Ten seconds each way."),
+                ("clock.arrow.circlepath", "M-Lab publishes every test's results openly and keeps them, with the public IP address of the route you test: a VPN server's, or your home's for a home or Tailscale route."),
+                ("nosign", "Also sent: the time, the app's name and version, the route's country when it's known, and, when routes are tested together, how many. Nothing about your Mac or accounts. Up to \(SpeedTest.perDay) tests a day."),
             ], action: "Agree and Test", width: 480, buttonSpacing: 12, footerTop: 8, accept: {
                 test.consented = true
                 if chosen == "all" || options.isEmpty { beginAll() }
