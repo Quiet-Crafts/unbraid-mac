@@ -181,6 +181,7 @@ private final class Meter: NSObject {
         Store.shared.disclosed = true
         Store.shared.termsAccepted = true
         Store.shared.tourPending = false
+        Updates.shared.setForTesting(Self.updatesAnswered)
         model.acceptDisclosureForPerf()
     }
 
@@ -244,6 +245,7 @@ private final class Meter: NSObject {
         Store.shared.disclosed = true
         Store.shared.termsAccepted = true
         Store.shared.tourPending = false
+        Updates.shared.setForTesting(Self.updatesAnswered)
         model.acceptDisclosureForPerf()
     }
 
@@ -303,11 +305,30 @@ private final class Meter: NSObject {
             openPanel(solid: true); await meter.frames(50)
             if let panel { await shoot(panel, "\(dir)/\(prefix)panel\(suffix).png") }
             closePanel()
+            await updateShots(dir, prefix, suffix, normal)
             if !empty { await settingsShots(dir, suffix) }
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.appearance = nil
         report("[Perf] shots in \(dir)")
+    }
+
+    /// The update question answered with no, as the pictures start; and the check on with a newer release found.
+    private static let updatesAnswered = UpdateCheck.State(asked: true)
+    private static let updatesNewer = UpdateCheck.State(enabled: true, asked: true, lastAttempt: .now, latest: "1.2.0")
+
+    /// The update notice at the usual and the smallest size, and the one-time question, over All Apps.
+    private func updateShots(_ dir: String, _ prefix: String, _ suffix: String, _ normal: NSRect) async {
+        go("apps"); await meter.frames(30)
+        Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
+        await shoot(window, "\(dir)/\(prefix)update-notice\(suffix).png")
+        window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+        await shoot(window, "\(dir)/\(prefix)min-update-notice\(suffix).png")
+        window.setFrame(normal, display: true); await meter.frames(45)
+        Updates.shared.setForTesting(UpdateCheck.State()); await meter.frames(90)
+        if window.attachedSheet == nil { report("[Perf] no update question"); shotsMissing += 1 }
+        await shoot(window, "\(dir)/\(prefix)update-ask\(suffix).png")
+        Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
     }
 
     /// Each Settings pane, opened through this copy's own settings link and window opener.
@@ -327,6 +348,13 @@ private final class Meter: NSObject {
             w.orderFrontRegardless()
             await meter.frames(60)
             await shoot(w, "\(dir)/settings-\(pane.name)\(suffix).png")
+        }
+        // About again, with the update check on and a newer release found.
+        if let w = last {
+            Updates.shared.setForTesting(Self.updatesNewer)
+            Presentation.shared.settingsTab = 4; await meter.frames(60)
+            await shoot(w, "\(dir)/settings-about-update\(suffix).png")
+            Updates.shared.setForTesting(Self.updatesAnswered)
         }
         last?.close()
         await meter.frames(20)

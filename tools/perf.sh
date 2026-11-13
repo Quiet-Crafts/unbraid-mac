@@ -13,7 +13,9 @@
 #                                     and Blocked at the smallest window, 770x564 (min-apps, min-route, min-traffic,
 #                                     min-activity, min-speed), the location picker (picker), the menu bar panel (panel) and
 #                                     every Settings pane (settings-general, -providers, -home, -tailscale, -protection,
-#                                     -statistics, -about); dark ones end in -dark
+#                                     -statistics, -about, and -about-update with a newer release found), the update
+#                                     notice at both sizes (update-notice, min-update-notice) and the one-time update
+#                                     question (update-ask); dark ones end in -dark
 #   EMPTY=1 SHOTS=<folder> tools/perf.sh   the same pages and panel with no traffic at all, as on a first day
 #                                     (empty-apps, empty-route, ..., empty-min-*, empty-panel, with -dark too)
 #   FAKE=1 HOLD=1 tools/perf.sh       stays open with that same made-up setup
