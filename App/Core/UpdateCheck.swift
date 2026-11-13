@@ -184,6 +184,7 @@ final class Updates {
     private let now: () -> Date
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var current: Task<Void, Never>?
+    @ObservationIgnored private var attempt = 0
 
     init(defaults: UserDefaults, installed: UpdateCheck.Version?, now: @escaping () -> Date, fetch: @escaping @Sendable () async -> Data?) {
         self.defaults = defaults
@@ -231,20 +232,27 @@ final class Updates {
     func checkNow() async { await check(user: true, force: true) }
 
     /// One attempt at a time: a second caller waits for the running one. The attempt is recorded before the request,
-    /// so a crash or quit mid-check still counts. An automatic check whose answer arrives after the user turned checks
-    /// off records nothing.
+    /// so a crash or quit mid-check still counts. An automatic check sends nothing once the user turned checks off,
+    /// and one whose answer arrives after that records nothing.
     func check(user: Bool, force: Bool = false) async {
         if let running = current {
             await running.value
             // An automatic check that found one running has nothing left to do.
             if !user { return }
         }
+        // A running attempt clears `current` itself before it ends, so this never waits on a finished one.
         while let running = current { await running.value }
         guard force || UpdateCheck.due(state, now: now()) else { return }
         if user { lastManual = nil }
+        attempt += 1
+        let id = attempt
         let task = Task { [fetch] in
+            defer {
+                checking = false
+                if attempt == id { current = nil }
+            }
+            guard user || state.enabled else { return }
             checking = true
-            defer { checking = false }
             change { $0.lastAttempt = now() }
             let answer = await fetch().flatMap(UpdateCheck.parse)
             if !user && !state.enabled { return }
@@ -253,7 +261,6 @@ final class Updates {
         }
         current = task
         await task.value
-        current = nil
     }
 
     private func change(_ f: (inout UpdateCheck.State) -> Void) {

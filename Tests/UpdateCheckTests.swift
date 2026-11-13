@@ -159,7 +159,6 @@ final class UpdatesTests: XCTestCase {
     private final class Fake: Sendable {
         let answer = Mutex<Data?>(nil)
         let calls = Mutex(0)
-        func fetch() -> Data? { calls.withLock { $0 += 1 }; return answer.withLock { $0 } }
     }
 
     private var defaults: UserDefaults!
@@ -171,9 +170,13 @@ final class UpdatesTests: XCTestCase {
         fake.answer.withLock { $0 = Data(#"{"versionName": "1.2.0"}"#.utf8) }
     }
 
-    private func updates() -> Updates {
+    private func updates(delay: Duration = .zero) -> Updates {
         let fake = fake
-        return Updates(defaults: defaults, installed: UpdateCheck.Version("1.1.0"), now: { [unowned self] in clock }, fetch: { fake.fetch() })
+        return Updates(defaults: defaults, installed: UpdateCheck.Version("1.1.0"), now: { [unowned self] in clock }, fetch: {
+            fake.calls.withLock { $0 += 1 }
+            if delay > .zero { try? await Task.sleep(for: delay) }
+            return fake.answer.withLock { $0 }
+        })
     }
 
     func testOneTimeQuestionIsAskedExactlyOnce() async {
@@ -242,14 +245,38 @@ final class UpdatesTests: XCTestCase {
         XCTAssertEqual(u.lastManual, .failed)
     }
 
-    func testAnAnswerArrivingAfterChecksWereTurnedOffIsDropped() async {
+    func testTurningChecksOffBeforeTheFirstCheckStartsSendsNothing() async {
         let u = updates()
         u.answer(true)
         u.setEnabled(false)
+        for _ in 0..<20 { await Task.yield() }
+        await settle(u)
+        XCTAssertEqual(fake.calls.withLock { $0 }, 0)
+        XCTAssertNil(u.state.lastAttempt)
+    }
+
+    func testAnAnswerArrivingAfterChecksWereTurnedOffIsDropped() async {
+        let u = updates(delay: .milliseconds(200))
+        u.answer(true)
         await waitForCalls(1)
+        u.setEnabled(false)
         await settle(u)
         XCTAssertNil(u.state.latest)
+        XCTAssertFalse(u.state.failed)
         XCTAssertFalse(u.showNotice)
+    }
+
+    func testOverlappingChecksAllFinishWithOneRequestEach() async {
+        let u = updates(delay: .milliseconds(50))
+        u.setEnabled(true)
+        await waitForCalls(1)
+        async let a: Void = u.checkNow()
+        async let b: Void = u.checkNow()
+        async let c: Void = u.check(user: false)
+        _ = await (a, b, c)
+        XCTAssertFalse(u.checking)
+        XCTAssertEqual(fake.calls.withLock { $0 }, 3, "the automatic one rode on the running check; each Check Now asked once")
+        XCTAssertEqual(u.lastManual, .newer(UpdateCheck.Version("1.2.0")!))
     }
 
     func testDismissHidesTheNoticeUntilANewerRelease() async {
