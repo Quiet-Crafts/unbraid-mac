@@ -14,7 +14,7 @@ a libbox build.
 | [wireguard-go](https://github.com/sagernet/wireguard-go) (SagerNet fork) | WireGuard inside the engine | MIT, Copyright WireGuard LLC |
 | [Tailscale](https://github.com/sagernet/tailscale) (SagerNet fork) | Tailscale and Headscale inside the engine | BSD-3-Clause |
 | [gVisor](https://github.com/sagernet/gvisor) (SagerNet fork) | The engine's network stack | Apache-2.0 |
-| Go standard library and runtime | Part of the engine | BSD-3-Clause |
+| Go standard library and runtime (Go 1.26.11) | Part of the engine | BSD-3-Clause |
 | [sagernet/gomobile](https://github.com/sagernet/gomobile) | The engine's Objective-C bindings (generated code and its runtime) | BSD-3-Clause |
 | Go modules linked into the engine | Protocols, crypto and networking in sing-box | Each module's own licence (GPL-3.0, LGPL-3.0, MPL-2.0, Apache-2.0, BSD, MIT, ISC, Unlicense, CC0), listed with its full text in `notices.txt` |
 | [uTLS](https://github.com/metacubex/utls) | TLS fingerprints | BSD-3-Clause, with parts under LGPL-3.0 (with a static-linking exception) and MIT |

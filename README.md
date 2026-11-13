@@ -24,12 +24,12 @@ all at the same time. If you use Tailscale, your home network stays reachable to
 
 <table align="center">
   <tr>
-    <td align="center" width="38%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/apps-dark.png"><img src=".github/screenshots/apps.png" alt="All Apps: each app with its route, TV, Safari and Podcasts in the United States, Music in Japan, Maps and Weather in Italy, Photos Direct and most others on the default exit in the Netherlands, with this week's data per app" width="260"></picture></td>
+    <td align="center" width="38%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/apps-dark.png"><img src=".github/screenshots/apps.png" alt="All Apps: each app with its route, TV, Safari and Podcasts in the United States, Music in Japan, Maps and Weather in Italy, Photos Direct and most others following the default route in the Netherlands, with this week's data per app" width="260"></picture></td>
     <td align="center" width="38%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/route-dark.png"><img src=".github/screenshots/route.png" alt="The United States route on Mullvad in New York: live download speed, this week's total and the five apps that use it" width="260"></picture></td>
-    <td align="center" rowspan="4" width="24%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/panel-dark.png"><img src=".github/screenshots/panel.png" alt="The menu bar panel: connected with four VPN exits, live speed, the app in front with its route one click away, a profile menu and the download speed of each route" width="150"></picture><br><sub>The app in front, one click from another route</sub></td>
+    <td align="center" rowspan="4" width="24%"><picture><source media="(prefers-color-scheme: dark)" srcset=".github/screenshots/panel-dark.png"><img src=".github/screenshots/panel.png" alt="The menu bar panel: connected with four VPN routes, live speed, the app in front with its route one click away, a profile menu and the download speed of each route" width="150"></picture><br><sub>The app in front, one click from another route</sub></td>
   </tr>
   <tr>
-    <td align="center"><sub>Each app gets its own exit</sub></td>
+    <td align="center"><sub>Each app gets its own route</sub></td>
     <td align="center"><sub>Every route with its apps and live speed</sub></td>
   </tr>
   <tr>
@@ -57,7 +57,7 @@ providers. It needs Android 13 or later.
   where it has one.
 - Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets and Control Center
   controls.
-- Stats on this Mac: data per route and app, live speed and connected time, and M-Lab speed tests through one exit
+- Stats on this Mac: data per route and app, live speed and connected time, and M-Lab speed tests through one route
   or several at once.
 - No ads, no unbraid account and no analytics. Free software under the GPL.
 
@@ -81,7 +81,7 @@ Routes can mix providers. One app can use Mullvad in Sweden while another uses N
    Extensions. unbraid lives in the menu bar; its window opens from there.
 3. Accept the terms and choose your VPN. You can sign in to a provider, import a WireGuard or OpenVPN file (*Your own
    server*), paste a Shadowsocks key, or use Tailscale on its own.
-4. Select the default route in the sidebar and choose *Change Server…* to pick a country. This is where every app
+4. Select the default route in the sidebar and choose *Change Location…* to pick a country. This is where every app
    goes unless you say otherwise. Then click *Connect* and allow the VPN configuration when macOS asks.
 5. To send some apps somewhere else, click *Add Route* and choose another country or server. In *All Apps*, click
    *Show My Apps* (the list stays on your Mac), then drag apps onto a route in the sidebar or use *Move To*. Choose
@@ -112,7 +112,7 @@ Settings › About), unbraid looks about once a day for a newer version and tell
 ### How is this different from the split tunneling in my VPN app?
 
 In many VPN apps, split tunneling means you can pick apps that skip the VPN, while every other app leaves from the
-same place. unbraid lets you choose an exit for each app, and those exits can come from different providers.
+same place. unbraid lets you choose a route for each app, and those routes can come from different providers.
 
 ### Can I use it without a VPN subscription?
 
@@ -122,7 +122,7 @@ paste a Shadowsocks key, or use only Tailscale, for example with an exit node at
 ### Can I reach my home network while I use a VPN?
 
 Yes. With Tailscale (plus a subnet router for devices that aren't on your tailnet), or with your router's WireGuard
-config added as a home tunnel, apps can reach devices at home and still use their VPN exit for everything else.
+config added as a home tunnel, apps can reach devices at home and still use their VPN route for everything else.
 
 ### Does it have a kill switch?
 
@@ -154,7 +154,7 @@ apps -> utun -> sing-box -> rules: DNS, blocked, home, LAN, the app's route, def
 
 Each TCP and UDP connection is routed by the program that opened it, matched by its path, including helpers inside an
 app's bundle. A connection macOS opens on an app's behalf, such as Safari's pages through WebKit or a download
-through nsurlsessiond, counts as that app's. DNS is answered with fake addresses and looked up again on the exit the
+through nsurlsessiond, counts as that app's. DNS is answered with fake addresses and looked up again on the route the
 app really uses, so a site sees the country you picked for that app. IPv6 follows an app's route or is refused. Only
 the default route and the routes your apps use are connected.
 
@@ -164,7 +164,7 @@ Server lists come from each provider's public API where there is one, and otherw
 ## Build
 
 You need macOS 26, Xcode 26, [XcodeGen](https://github.com/yonaskolb/XcodeGen) and Go 1.21 or later (Go fetches the
-exact toolchain itself through `GOTOOLCHAIN`).
+exact toolchain, 1.26.11, itself through `GOTOOLCHAIN`).
 
 ```bash
 tools/build-libbox.sh     # Frameworks/Libbox.xcframework from sing-box v1.14.4 with the patches in tools/
@@ -177,8 +177,11 @@ The build script keeps its work files in `~/Development/unbraid-mac-deps`. Set `
 patches in `tools/` stop the engine from writing the running configuration, which holds private keys, to disk, match
 connections opened for an app by another process to that app, hand the Tailscale node state to the app to be sealed,
 refuse files sent through Taildrop, give an OpenVPN tunnel a resolver inside it when its server pushes none, and let
-the app's connection checks look up their servers through the tunnel being checked. `tools/build-cli.sh` builds the
-engine's command-line version, which the tests use to check every generated configuration.
+the app's connection checks look up their servers through the tunnel being checked. They also put the network's IPv4
+DNS servers first, narrow how UDP traffic is matched to its app, keep a test or Tailscale sign-out that overlaps a
+reload from stopping the engine, bound OpenVPN's exit notifications and take security fixes of some dependencies (the
+full list: `tools/notices/changes-sing-box.txt`). `tools/build-cli.sh` builds the engine's command-line version, which
+the tests use to check every generated configuration.
 
 Running the app takes an Apple Developer Program membership, because the network extension needs a signing team with
 that capability. Put your own team ID and bundle-ID prefix in `Config/Local.xcconfig` (git ignores it), as
