@@ -995,7 +995,7 @@ private struct StatisticsTab: View {
             Section {
                 SubToggle("Record usage statistics", "Only on this Mac, never uploaded. Turning it off keeps what's saved.", symbol: "chart.bar",
                           isOn: Binding(get: { on }, set: { if $0 { consent = true } else { model.setStats(false) } }))
-                SettingsRow(title: "Saved history", caption: "Hourly for a week, daily for about a year", symbol: "clock") {
+                SettingsRow(title: "Saved history", caption: "Hourly for 9 days, daily for about 13 months", symbol: "clock") {
                     Text(amount).monospacedDigit().foregroundStyle(.secondary)
                 }
             } header: { Text("Recording") } footer: { Text("Apps (by identifier), tools you added (by full path) and other programs (by location on this Mac, home folder as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Other programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as \"Other programs\". No browsing destinations.") }
@@ -1017,7 +1017,7 @@ private struct StatisticsTab: View {
         .sheet(isPresented: $consent) {
             ConsentSheet(title: Text("Keep statistics?").font(.title2.bold()), rows: [
                 ("desktopcomputer", "Statistics stay on this Mac. They are never uploaded."),
-                ("clock", "Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests."),
+                ("clock", "Kept as hourly sums for today and the previous 8 days, daily sums for about 13 months, when the VPN was on or paused for 400 days, and your last 100 speed-test runs (routes tested together count as one) for up to 400 days."),
                 ("nosign", "Only apps (by identifier), tools you added (by full path) and other programs (by their location on this Mac, with your home folder shown as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Other programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as \"Other programs\". No browsing destinations."),
                 ("trash", "Turn off or delete everything in Settings at any time."),
             ], action: "Turn On", accept: { model.setStats(true) }) {}
