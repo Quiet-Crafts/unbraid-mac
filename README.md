@@ -104,7 +104,8 @@ connect as soon as an app is assigned to them, even if that app is idle.
 
 The app needs macOS 26 or later, on a Mac with Apple silicon or an Intel processor. It doesn't update itself: to
 update, quit unbraid, drag the new version from the DMG over the old one and open it. Your setup stays. macOS may ask
-you to allow the updated network extension again.
+you to allow the updated network extension again. If you say yes to *Check for updates* (asked once, and in
+Settings › About), unbraid looks about once a day for a newer version and tells you when one is out.
 
 ## Questions
 
@@ -125,9 +126,14 @@ config added as a home tunnel, apps can reach devices at home and still use thei
 
 ### Does it have a kill switch?
 
-Yes. In Settings › Protection, *Kill switch* blocks traffic outside the tunnel, for the internet or for the internet
-and your home network, and *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
-restarts. Apps you set to Direct still use your normal connection while unbraid is connected.
+Yes. In Settings › Protection, *Block traffic outside the VPN* has three levels. *Off*: apps that pick Wi-Fi or
+Ethernet themselves can skip the VPN, and while a VPN reconnects any app may use your normal connection. *Internet*:
+apps only go out the way you chose for them, so while a VPN reconnects its apps wait instead of using your normal
+connection. *Internet and home network*: the same, and blocked apps can't reach devices on your home network either.
+Blocking an app turns it on. *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
+restarts. At every level, apps you set to Direct use your normal connection, and nothing is covered while unbraid is
+disconnected. unbraid's own requests (signing in to your provider, server lists, and the update check if you turn it
+on) also use your normal connection, not the VPN, so your network can see which provider you use.
 
 ### Does it get around my provider's device limit?
 
@@ -184,7 +190,10 @@ signing, notarization and the DMG.
 We add no advertising or analytics. You don't need an unbraid account. Your provider credentials are sealed with a key
 kept in the Keychain and are only sent to the service they belong to. The list of installed apps is read on the Mac so
 you can assign routes, and it never leaves the Mac. Statistics are off until you turn them on and stay on the Mac. The
-privacy policy, with every service the app talks to, is at [unbraid.app/privacy](https://unbraid.app/privacy).
+update check is off until you say yes; when on, it asks unbraid.app for the newest version number and sends nothing
+else, so the site sees only your IP address, like any visit. unbraid's own requests to your providers and to
+unbraid.app use your normal connection, not the VPN. The privacy policy, with every service the app talks to, is at
+[unbraid.app/privacy](https://unbraid.app/privacy).
 
 To report a security problem, see [SECURITY.md](SECURITY.md).
 
