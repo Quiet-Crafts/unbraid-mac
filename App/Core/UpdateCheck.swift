@@ -133,9 +133,10 @@ nonisolated enum UpdateCheck {
         return URLSession(configuration: c, delegate: Http.NoRedirect(), delegateQueue: nil)
     }()
 
-    /// The answer's bytes, or nil for anything but a 200 from unbraid.app within the size cap: no network, the kill
-    /// switch or a blocked state holding the request back, a timeout, a redirect or an error status all end here,
-    /// silently.
+    /// The answer's bytes, or nil for anything but a 200 from unbraid.app within the size cap: no network, a timeout,
+    /// a redirect or an error status all end here, silently. unbraid's own process always goes out directly (the
+    /// compiled rules send it to the direct outbound before any route, and the kill switch and blocked-app refusals
+    /// leave it out), so this request is not held back by them.
     @concurrent static func fetch() async -> Data? {
         #if DEBUG
         // Debug builds can read a local answer instead (`defaults write app.unbraid debugUpdateAnswer <file>`, or
