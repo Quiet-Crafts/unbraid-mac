@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SB=${WORK:-$HOME/Development/unbraid-mac-deps}/sing-box
 TAGS=$(sed -n 's/.*-tags \([^ ]*\).*/\1/p' "$ROOT/tools/build-libbox.sh")
-export GOTOOLCHAIN=go1.26.10 GOFLAGS=-mod=mod GOWORK=off GOSUMDB=sum.golang.org \
+export GOTOOLCHAIN=go1.26.11 GOFLAGS=-mod=mod GOWORK=off GOSUMDB=sum.golang.org \
   GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GONOSUMCHECK= GOPRIVATE= GOINSECURE= GONOPROXY=
 OUT="$ROOT/Resources/notices.txt"
 mkdir -p "$(dirname "$OUT")"

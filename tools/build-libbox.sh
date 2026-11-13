@@ -40,7 +40,7 @@ FROM=$("$ROOT/tools/engine-manifest.sh" --provenance)
 git apply "$ROOT"/tools/sing-box-*.patch
 check_module_layout
 # ZERO_AR_DATE: libtool would stamp the archive's symbol table with the time of the build.
-export GOTOOLCHAIN=go1.26.10 GOFLAGS=-mod=readonly GOWORK=off GOSUMDB=sum.golang.org \
+export GOTOOLCHAIN=go1.26.11 GOFLAGS=-mod=readonly GOWORK=off GOSUMDB=sum.golang.org \
   GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GONOSUMCHECK= GOPRIVATE= GOINSECURE= GONOPROXY= ZERO_AR_DATE=1
 # The pinned gomobile and gobind are installed into a folder of this build's own, first on PATH: whatever GOBIN or an older
 # copy in GOPATH/bin says, neither can stand in for them (gomobile finds gobind by PATH).

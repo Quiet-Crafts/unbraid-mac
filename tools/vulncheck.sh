@@ -41,7 +41,7 @@ OVPN_PATCHES=("$TMP"/patches/sing-openvpn-*.patch)
 (
   cd "$TMP/src"
   SDK=$(xcrun --sdk macosx --show-sdk-path)
-  export GOTOOLCHAIN=go1.26.10 GOFLAGS=-mod=readonly GOWORK=off CGO_ENABLED=1 GOOS=darwin SDKROOT="$SDK" \
+  export GOTOOLCHAIN=go1.26.11 GOFLAGS=-mod=readonly GOWORK=off CGO_ENABLED=1 GOOS=darwin SDKROOT="$SDK" \
     GOSUMDB=sum.golang.org GOPROXY=https://proxy.golang.org,direct GONOSUMDB= GONOSUMCHECK= GOPRIVATE= GOINSECURE= GONOPROXY=
   go mod download github.com/sagernet/sing-openvpn
   go mod verify
