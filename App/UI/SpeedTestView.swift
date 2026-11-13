@@ -97,7 +97,7 @@ struct SpeedTestView: View {
         }) {
             ConsentSheet(title: Text("Speed tests use M-Lab").font(.system(size: 15, weight: .semibold)), rows: [
                 ("speedometer", "Measurement Lab (M-Lab) is an open platform run by researchers. A test asks for one of its servers in your route's country; for your own servers and Tailscale nodes M-Lab picks a nearby one. Ten seconds each way."),
-                ("clock.arrow.circlepath", "M-Lab publishes every test's results openly and keeps them, with the public IP address of the route you test: a VPN server's, or your home's for a home or Tailscale route."),
+                ("clock.arrow.circlepath", "M-Lab publishes every test's results openly and keeps them, with the public IP address of the route you test: a VPN server's, or your home's for a home route or a Tailscale exit node at home."),
                 ("nosign", "Also sent: the time, the app's name and version, the route's country when it's known, and, when routes are tested together, how many. Nothing about your Mac or accounts. Up to \(SpeedTest.perDay) tests a day."),
             ], action: "Agree and Test", width: 480, buttonSpacing: 12, footerTop: 8, accept: {
                 test.consented = true
