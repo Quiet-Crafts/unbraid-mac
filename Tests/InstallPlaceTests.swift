@@ -41,7 +41,21 @@ final class InstallPlaceTests: XCTestCase {
             XCTAssertNotEqual(InstallPlace.outranks(a, b), InstallPlace.outranks(b, a))
         }
         XCTAssertTrue(InstallPlace.outranks(low, high))
-        XCTAssertTrue(InstallPlace.outranks(low, dated))
+        // A copy with no known start date comes after every dated one.
+        XCTAssertTrue(InstallPlace.outranks(dated, low))
         XCTAssertTrue(InstallPlace.outranks(dated, high))
+    }
+
+    func testTheOrderOfThreeCopiesIsConsistentWhenADateIsMissing() {
+        let a = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: Date(timeIntervalSince1970: 100), pid: 90)
+        let b = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: Date(timeIntervalSince1970: 200), pid: 10)
+        let c = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: nil, pid: 40)
+        let d = InstallPlace.Copy(path: "/Applications/unbraid.app", launched: nil, pid: 20)
+        let all = [a, b, c, d]
+        // Exactly one copy outranks all the others, and sorting by it gives the same order from any start.
+        XCTAssertEqual(all.filter { me in all.allSatisfy { $0 == me || InstallPlace.outranks(me, $0) } }, [a])
+        let order = all.sorted { InstallPlace.outranks($0, $1) }
+        XCTAssertEqual(order, [a, b, d, c])
+        XCTAssertEqual(all.reversed().sorted { InstallPlace.outranks($0, $1) }, order)
     }
 }

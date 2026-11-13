@@ -24,9 +24,14 @@ nonisolated enum InstallPlace {
         guard other.pid != me.pid else { return false }
         let there = isInApplications(other.path), here = isInApplications(me.path)
         if there != here { return there }
-        // Without a start date on either side there is nothing to compare: the process number decides, so exactly one of
-        // two copies yields whatever is known about them.
-        if let a = other.launched, let b = me.launched, a != b { return a < b }
-        return other.pid < me.pid
+        // A strict order on (has no start date, start date, process number): a copy whose start date is unknown comes
+        // after every dated one, and the process number settles any tie, so of any two copies exactly one yields and the
+        // order agrees across three or more.
+        switch (other.launched, me.launched) {
+        case let (a?, b?) where a != b: return a < b
+        case (nil, .some): return false
+        case (.some, nil): return true
+        default: return other.pid < me.pid
+        }
     }
 }
