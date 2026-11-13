@@ -379,13 +379,13 @@ nonisolated enum StatsMath {
         return nil
     }
 
-    /// Who carried an exit's data: its provider's name, "Own servers" for imported configs (only their protocol is
+    /// Who carried an exit's data: its provider's name, "My Servers" for imported configs (only their protocol is
     /// known), Tailscale, or the home network. Drawn in neutral tones: route colours mean exits only.
     static func providerOf(_ id: String, _ ex: ExitInfo?) -> String {
         if id == DIRECT { return "Direct, no VPN" }
         if id == home { return "Home network" }
         guard let ex, !ex.via.isEmpty else { return "Other" }
-        if ["WireGuard", "OpenVPN", "Shadowsocks"].contains(ex.via) { return "Own servers" }
+        if ["WireGuard", "OpenVPN", "Shadowsocks"].contains(ex.via) { return "My Servers" }
         return Providers.all.first { Providers.short($0.id) == ex.via }?.name ?? ex.via
     }
 
