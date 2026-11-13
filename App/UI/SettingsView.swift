@@ -1080,7 +1080,7 @@ private struct AboutTab: View {
                 LinkRow("Terms of use", "unbraid.app/terms", Site.terms, symbol: "doc.text")
             }
             Section("Privacy") {
-                Text("No analytics, no ads, no accounts with us and no servers of our own. Provider logins, keys and your setup are stored on this Mac, sealed with keys kept in the Keychain.")
+                Text("No analytics, no ads, no accounts with us and no servers of our own that we send data to. Provider logins, keys and your setup are stored on this Mac, encrypted with keys kept in the Keychain.")
                 Text("Windows where you paste keys or sign in ask macOS to keep them out of screen sharing and captures. macOS may not always honour this.")
                 Text(Disclosure.text).font(.callout).foregroundStyle(.secondary)
             }
