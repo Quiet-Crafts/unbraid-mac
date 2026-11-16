@@ -12,7 +12,7 @@
 
 unbraid is a split tunneling VPN client for the Mac that lets every app take its own exit. Your banking app can skip
 the VPN while a streaming app leaves from the US, a second app from Italy and everything else from the Netherlands,
-all at the same time. If you use Tailscale, your home network stays reachable too.
+all at the same time. Tailscale runs inside it too, so you can reach your tailnet while those apps use their VPNs.
 
 <p align="center">
   <a href="https://github.com/quiet-crafts/unbraid-mac/releases/latest"><b>Download the DMG</b></a>
@@ -118,6 +118,15 @@ same place. unbraid lets you choose a route for each app, and those routes can c
 
 Yes. The free Proton VPN plan works, and so does a server of your own. You can import a WireGuard or OpenVPN file,
 paste a Shadowsocks key, or use only Tailscale, for example with an exit node at home.
+
+### Can I use Tailscale and a VPN at the same time?
+
+Yes. Tailscale is built in, so you don't need the Tailscale app. Turn the Tailscale app off while unbraid is
+connected, so the two don't compete for routes and DNS. Apps routed through unbraid can reach your tailnet devices and
+their MagicDNS names while their internet traffic uses a VPN exit, and a Tailscale exit node can be a route's exit.
+All Tailscale routes share one exit node. For now unbraid only connects out: other tailnet devices can't open
+connections to apps on the Mac, and Taildrop and Tailscale SSH are off. Letting them in, as options you turn on, is
+being worked on.
 
 ### Can I reach my home network while I use a VPN?
 
