@@ -18,8 +18,11 @@ nonisolated enum Sites {
         // Every leading "www." goes while a name is left, so what is kept reads back as itself.
         while name.hasPrefix("www."), name.dropFirst(4).contains(".") { name.removeFirst(4) }
         let labels = name.split(separator: ".", omittingEmptySubsequences: false)
-        // A last label of digits is an IP address, or nothing a name ends in.
-        guard name.utf8.count <= 253, labels.count >= 2, labels.allSatisfy(label), !labels[labels.count - 1].allSatisfy(\.isNumber) else { return nil }
+        // A last label that reads as a number (digits, or 0x and hex digits) makes it an IP address to a browser, which
+        // connects to it without a lookup: nothing a rule could match, and nothing a name ends in.
+        let last = labels[labels.count - 1]
+        let number = last.allSatisfy(\.isNumber) || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit))
+        guard name.utf8.count <= 253, labels.count >= 2, labels.allSatisfy(label), !number else { return nil }
         return name
     }
 

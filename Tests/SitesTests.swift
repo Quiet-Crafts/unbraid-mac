@@ -24,7 +24,9 @@ final class SitesTests: XCTestCase {
         }
         for bad in ["", "   ", "localhost", "com", "192.168.1.1", "http://10.0.0.1/x", "[2001:db8::1]", "exa mple.com", "-bad.com",
                     "bad-.com", "a_b.com", "*.example.com", "example..com", String(repeating: "a", count: 64) + ".com",
-                    String(repeating: String(repeating: "a", count: 60) + ".", count: 5) + "com", "a.b\u{0}.com", "exam\"ple.com", "ex\\ample.com"] {
+                    String(repeating: String(repeating: "a", count: 60) + ".", count: 5) + "com", "a.b\u{0}.com", "exam\"ple.com", "ex\\ample.com",
+                    // What a browser reads as an IPv4 address: a last part that is a number, hexadecimal included.
+                    "93.184.216.0x22", "0x7f.1", "example.0x1f", "example.0x", "1.2.3.04", "a.123"] {
             XCTAssertNil(Sites.clean(bad), bad)
         }
         // What is kept reads back as itself: a saved address is checked that way.

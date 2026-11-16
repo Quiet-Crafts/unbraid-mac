@@ -414,6 +414,18 @@ final class ProtectedTests: XCTestCase {
         XCTAssertTrue(p.prefs.threatProtection)
     }
 
+    /// Website blocks added and removed during the pause reach the protected setup the same way; no other website change does.
+    func testOnlyWebsiteBlocksChange() throws {
+        var ran = record
+        ran.sites = ["a.example": "us", "b.example": BLOCK, "c.example": BLOCK, "d.example": BLOCK, "e.example": DIRECT]
+        var store = ran
+        store.sites = ["a.example": BLOCK, "b.example": "us", "c.example": "de", "e.example": "de", "f.example": BLOCK, "g.example": "us"]
+        let p = try XCTUnwrap(Lifecycle.protected(record: ran, linked: ["nl", "us"], store: store))
+        // a and f newly blocked; b back on its route (it ran); c's route didn't run and d's rule is gone: their apps'
+        // routes again; e as it ran; g not added.
+        XCTAssertEqual(p.sites, ["a.example": BLOCK, "b.example": "us", "e.example": DIRECT, "f.example": BLOCK])
+    }
+
     /// The pause's baseline is compared with the record read back: the same setup gives the same digest after a round trip.
     func testTheBaselineDigestSurvivesTheRecord() throws {
         var s = record

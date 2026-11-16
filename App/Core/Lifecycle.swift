@@ -558,6 +558,12 @@ nonisolated extension Lifecycle {
             p.apps[app] = wanted.flatMap { $0 == DIRECT || ran.contains($0) ? $0 : nil }
         }
         for app in blocked { p.apps[app] = BLOCK }
+        // Websites the same way: one blocked now is blocked, one unblocked since goes where the user put it when that
+        // ran before the pause (or Direct), otherwise back to its app's route.
+        for (site, route) in record.sites where route == BLOCK && store.sites[site] != BLOCK {
+            p.sites[site] = store.sites[site].flatMap { $0 == DIRECT || ran.contains($0) ? $0 : nil }
+        }
+        for (site, route) in store.sites where route == BLOCK { p.sites[site] = BLOCK }
         p.prefs.killSwitch = store.prefs.killSwitch
         p.prefs.killSwitchHome = store.prefs.killSwitchHome
         guard p.activeRoutes.allSatisfy({ $0.tsExit != nil || linked.contains($0.id) || (ran.contains($0.id) && blockedRoutes.contains($0.id)) }) else { return nil }
