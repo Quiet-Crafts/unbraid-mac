@@ -153,6 +153,80 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(final(c), "direct")
     }
 
+    /// An own DNS server that lives at home is asked through the home tunnel, on VPN routes and on Direct; any other as before.
+    func testAFilterAtHomeGoesThroughTheHomeTunnel() throws {
+        func own(_ v: String, _ base: Setup? = nil, suffix: String? = nil) throws -> [String: O] {
+            var s = base ?? example
+            s.prefs.filter = Filter(id: "own", value: v, routes: true, directApps: true)
+            let c = try compile(s, tsSuffix: suffix)
+            return Dictionary(uniqueKeysWithValues: dnsServers(c).compactMap { d in (d["tag"] as? String).map { ($0, d) } })
+        }
+        let routes = ["dns-r-nl", "dns-r-us", "dns-r-it"]
+        // A tailnet address, or one in a home subnet behind Tailscale: every route and Direct ask through Tailscale, over UDP.
+        for ip in ["100.101.1.2", "192.168.178.5"] {
+            let d = try own(ip)
+            for t in routes + ["dns-filter"] {
+                XCTAssertEqual(d[t]?["detour"] as? String, "home-ts", "\(ip) \(t)")
+                XCTAssertEqual(d[t]?["server"] as? String, ip)
+                XCTAssertEqual(d[t]?["type"] as? String, "udp")
+            }
+            XCTAssertFalse(d.keys.contains { $0.hasPrefix("boot-") })
+        }
+        // Not at home: each route's own tunnel and straight out, as before. So is a tailnet address while the tailnet is off.
+        var noHome = example
+        noHome.home = Home()
+        for (ip, s) in [("192.168.1.5", example), ("1.1.1.1", example), ("100.101.1.2", noHome)] {
+            let d = try own(ip, s)
+            XCTAssertEqual(routes.map { d[$0]?["detour"] as? String }, ["r-nl", "r-us", "r-it"], ip)
+            XCTAssertNil(d["dns-filter"]?["detour"], ip)
+        }
+        // The home WireGuard tunnel for an address in its networks, before the tailnet.
+        var wg = example
+        wg.home.wg = WgPeer(name: "Home", privateKey: key, address: ["192.168.1.201/24"], publicKey: otherKey, endpoint: "home.example.org:51820",
+                            allowedIps: ["192.168.1.0/24", "100.64.0.0/10"])
+        for ip in ["192.168.1.5", "100.101.1.2"] {
+            let d = try own(ip, wg)
+            for t in routes + ["dns-filter"] { XCTAssertEqual(d[t]?["detour"] as? String, "home-wg", "\(ip) \(t)") }
+        }
+        // A name the tailnet's DNS answers is looked up there and reached through Tailscale; any other name through the route.
+        let named = try own("tls://box.tail1234.ts.net", suffix: "tail1234.ts.net")
+        for t in routes + ["dns-filter"] {
+            XCTAssertEqual(named[t]?["detour"] as? String, "home-ts")
+            XCTAssertEqual(named[t]?["domain_resolver"] as? String, "dns-tailnet")
+        }
+        XCTAssertFalse(named.keys.contains { $0.hasPrefix("boot-") })
+        XCTAssertNotNil(named["dns-tailnet"])
+        let elsewhere = try own("tls://dns.example.org")
+        XCTAssertEqual(elsewhere["dns-r-nl"]?["detour"] as? String, "r-nl")
+        XCTAssertEqual(elsewhere["dns-r-nl"]?["domain_resolver"] as? String, "boot-r-nl")
+        // On another control server only the tailnet's own domain counts, never ts.net.
+        var hs = example
+        hs.home.tsControlUrl = "https://hs.example.org"
+        XCTAssertEqual(try own("tls://box.tail1234.ts.net", hs, suffix: "hs.example.org")["dns-r-nl"]?["detour"] as? String, "r-nl")
+        XCTAssertEqual(try own("tls://box.hs.example.org", hs, suffix: "hs.example.org")["dns-r-nl"]?["detour"] as? String, "home-ts")
+        XCTAssertEqual(try own("100.101.1.2", hs)["dns-r-nl"]?["detour"] as? String, "home-ts")
+    }
+
+    func testTheOwnDnsLineSaysHowAServerAtHomeIsReached() {
+        func line(_ v: String, _ edit: (inout Setup) -> Void = { _ in }) -> String? {
+            var s = example
+            s.prefs.filter = Filter(id: "own", value: v, routes: true)
+            edit(&s)
+            return Compiler.ownDnsReach(s)
+        }
+        XCTAssertEqual(line("100.101.1.2"), "Reached through Tailscale")
+        XCTAssertEqual(line("192.168.178.5"), "Reached through Tailscale")
+        XCTAssertEqual(line("100.101.1.2") { $0.home.tailscale = false }, "Needs Home through Tailscale on, under Tailscale")
+        XCTAssertNil(line("1.1.1.1"))
+        XCTAssertNil(line("192.168.1.5"))
+        XCTAssertNil(line("tls://dns.example.org"))
+        XCTAssertEqual(line("tls://box.tail1234.ts.net"), "Reached through Tailscale")
+        XCTAssertEqual(line("192.168.1.5") { $0.home.wg = WgPeer(name: "Home", privateKey: "k", address: ["192.168.1.201/24"], publicKey: "p", endpoint: "home.example.org:51820", allowedIps: ["192.168.1.0/24"]) }, "Reached through your home tunnel")
+        var preset = example
+        preset.prefs.filter = Filter(id: "quad9", routes: true)
+        XCTAssertNil(Compiler.ownDnsReach(preset))
+    }
+
     // MARK: Websites
 
     /// NL default, A on US, X Direct, example.com on IT (no app uses IT), a name under it on US, bank.example Direct.
@@ -193,16 +267,31 @@ final class CompilerTests: XCTestCase {
         // Lookups: addresses stay stand-ins; HTTPS and SVCB records of a website are answered empty; other types go
         // to its exit, before any app's rule.
         let dns = dnsRules(c)
-        let fake = try XCTUnwrap(dns.firstIndex { $0["server"] as? String == "fake" })
         let site = dns.indices.filter { names(dns[$0]) != nil }
-        XCTAssertTrue(site.allSatisfy { $0 > fake })
+        // Before every exception for local and tailnet names, which answer with real addresses, and before any app's rule.
+        let exception = try XCTUnwrap(dns.firstIndex { names($0) == nil && $0["domain_suffix"] != nil })
+        XCTAssertTrue(site.allSatisfy { $0 < exception })
         let firstAppDns = try XCTUnwrap(dns.firstIndex { on($0, "com.a") })
         XCTAssertTrue(site.allSatisfy { $0 < firstAppDns })
+        // Per website, in this order: addresses, the records with hints, everything else.
+        XCTAssertEqual(site.count, 9)
+        for start in stride(from: 0, to: site.count, by: 3) {
+            let (a, h, o) = (dns[site[start]], dns[site[start + 1]], dns[site[start + 2]])
+            XCTAssertEqual(strings(a["query_type"]), ["A", "AAAA"])
+            XCTAssertEqual(a["server"] as? String, "fake")
+            XCTAssertEqual(strings(h["query_type"]), ["HTTPS", "SVCB"])
+            XCTAssertEqual(action(h), "predefined")
+            XCTAssertEqual(h["rcode"] as? String, "NOERROR")
+            XCTAssertNil(o["query_type"])
+            XCTAssertEqual(names(a), names(o))
+        }
         XCTAssertEqual(site.filter { dns[$0]["query_type"] == nil }.map { dns[$0]["server"] as? String }, ["dns-r-us", "local", "dns-r-it"])
-        let hints = site.filter { dns[$0]["query_type"] != nil }
-        XCTAssertEqual(hints.count, 3)
-        XCTAssertTrue(hints.allSatisfy { strings(dns[$0]["query_type"]) == ["HTTPS", "SVCB"] && action(dns[$0]) == "predefined" && dns[$0]["rcode"] as? String == "NOERROR" })
-        XCTAssertTrue(zip(hints, site.filter { dns[$0]["query_type"] == nil }).allSatisfy { $0 < $1 })
+        // A name under a local domain with a route of its own gets a stand-in address like any other website.
+        var lan = withSites
+        lan.sites = ["nas.lan": "it"]
+        let l = dnsRules(try compile(lan))
+        let own = try XCTUnwrap(l.firstIndex { names($0) == ["nas.lan"] && $0["server"] as? String == "fake" })
+        XCTAssertLessThan(own, try XCTUnwrap(l.firstIndex { strings($0["domain_suffix"]).contains("lan") && names($0) == nil }))
     }
 
     /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name

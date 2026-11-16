@@ -915,9 +915,11 @@ private struct ProtectionTab: View {
                     if filter.id == "own" && FilterServer.ipv4(dns.trimmingCharacters(in: .whitespacesAndNewlines)) {
                         Text("Not encrypted").font(.caption).foregroundStyle(.secondary)
                     }
+                    // The saved server, not what is being typed: this is how lookups go now.
+                    if dns == saved, let reach = Compiler.ownDnsReach(s) { Text(reach).font(.caption).foregroundStyle(.secondary) }
                 }
             } header: { Text("Filter") } footer: {
-                Text("A filter blocks ads, trackers or adult sites by refusing to look up their addresses. With Direct as the default route, a few of macOS's own lookups may skip the filter.")
+                Text("A filter blocks ads, trackers or adult sites by refusing to look up their addresses. With Direct as the default route, a few of macOS's own lookups may skip the filter. Your own server on your tailnet or home tunnel is reached through it.")
             }
             if filter.id != nil {
                 Section {

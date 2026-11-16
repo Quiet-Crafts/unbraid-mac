@@ -468,13 +468,21 @@ nonisolated enum Compiler {
         var servers: [J] = [["type": "fakeip", "tag": "fake", "inet4_range": .s(ConfigVet.fakeRanges[0])], ["type": "local", "tag": "local"]]
         var pushed = Set<String>()
         let filter = s.prefs.effectiveFilter
+        let suffix = tsSuffix(p.i.tsSuffix)
+        let official = officialTs(s.home)
+        let domains = Array(Set((official ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
+        // A filter that lives in a home network is asked through that tunnel, as any connection to its address goes:
+        // through a route's own tunnel, or straight out, a home address can't be reached.
+        let filterVia = filter.server.flatMap { homeVia(s, $0, tsDomains: domains) }
         if let server = filter.server, (p.defaultDns == "dns-filter" || p.sitesFiltered || p.perApp.contains(where: { $0.id == filteredDirect })) {
-            servers.append(filterDns(server, tag: "dns-filter", detour: nil, boot: "local"))
+            servers.append(filterDns(server, tag: "dns-filter", detour: filterVia, boot: filterVia != nil ? "dns-tailnet" : "local"))
         }
         for r in p.active {
             let link = p.i.links[r.id]
             if let server = filter.server, filter.routes {
                 guard pushed.insert("filter-\(p.tag(r.id))").inserted else { continue }
+                // At home: no lookup of its name on the route first (a tailnet name is the tailnet resolver's to answer).
+                if let filterVia { servers.append(filterDns(server, tag: p.dns(r.id), detour: filterVia, boot: "dns-tailnet")); continue }
                 let boot = "boot-\(p.tag(r.id))"
                 if server.byName, pushed.insert(boot).inserted {
                     if case .ovpn = link, r.imported || r.loc.provider != "nord" {
@@ -493,7 +501,6 @@ nonisolated enum Compiler {
         }
         if p.homeTs { servers.append(["type": "tailscale", "tag": "dns-tailnet", "endpoint": .s(tsTag), "accept_default_resolvers": false]) }
 
-        let suffix = tsSuffix(p.i.tsSuffix)
         var rules: [J] = []
         // Lookups from a tunnel's far side (a tailnet peer asking through Tailscale's peer API) are never answered.
         if !tunnels.isEmpty { rules.append(["inbound": J.strings(tunnels), "action": "predefined", "rcode": "REFUSED"]) }
@@ -504,8 +511,17 @@ nonisolated enum Compiler {
         // A blocked website has no address for anyone who asks through here: the system resolver's lookups are every
         // app's, so this holds for all of them at once.
         for (id, match) in p.sites where id == BLOCK { rules.append(.o(match.merging(["action": "predefined", "rcode": "NXDOMAIN"]) { $1 })) }
-        let official = officialTs(s.home)
-        let domains = Array(Set((official ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
+        // A website with a route of its own, before every exception below (a name under a local or tailnet domain
+        // would otherwise get a real address there and never meet its rule). Addresses are stand-ins, as for any name.
+        // HTTPS and SVCB records can carry addresses (hints) a browser would connect to as they are: not stand-in
+        // addresses, so the engine couldn't tell the website and its app's route would carry it. They are answered
+        // empty, at the price of those records' hints, protocol parameters and Encrypted Client Hello keys. Other types
+        // (TXT, SRV…) are asked at the website's exit, never the app's or the default's.
+        for (id, match) in p.sites where id != BLOCK {
+            rules.append(.o(match.merging(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1]) { $1 }))
+            rules.append(.o(match.merging(["query_type": ["HTTPS", "SVCB"], "action": "predefined", "rcode": "NOERROR"]) { $1 }))
+            rules.append(.o(match.merging(p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]) { $1 }))
+        }
         if p.homeTs && !domains.isEmpty { rules.append(["domain_suffix": J.strings(domains), "server": "dns-tailnet"]) }
         // Its reverse zones too, whatever the type: a lookup there names a tailnet address, which no other resolver should
         // see (the tailnet's answers NXDOMAIN, unless the tailnet routes those zones to a resolver of its own).
@@ -517,14 +533,6 @@ nonisolated enum Compiler {
         // With LAN access off too: it decides which apps reach those devices, not whose resolver names them.
         rules.append(["query_type": ["PTR"], "domain_suffix": J.strings(localReverse), "server": "local"])
         rules.append(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1])
-        // A website with a route of its own. HTTPS and SVCB records can carry addresses (hints) a browser would connect
-        // to as they are: not stand-in addresses, so the engine couldn't tell the website and its app's route would
-        // carry it. They are answered empty, at the price of those records' hints, protocol parameters and Encrypted
-        // Client Hello keys. Other types (TXT, SRV…) are asked at the website's exit, never the app's or the default's.
-        for (id, match) in p.sites where id != BLOCK {
-            rules.append(.o(match.merging(["query_type": ["HTTPS", "SVCB"], "action": "predefined", "rcode": "NOERROR"]) { $1 }))
-            rules.append(.o(match.merging(p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]) { $1 }))
-        }
         // Other query types (HTTPS, SVCB, TXT, SRV…) go to the asking app's own route, not the default one.
         for (id, match) in p.perApp where id != BLOCK {
             if p.i.blocked.contains(id) { rules.append(["process_path_regex": match, "action": "predefined", "rcode": "REFUSED"]) }
@@ -626,12 +634,35 @@ nonisolated enum Compiler {
     }
 
     /// True when the whole of `cidr` lies inside a private IPv4 range.
-    static func isPrivate(_ cidr: String) -> Bool {
-        guard let (a, l) = ipv4(cidr) else { return false }
-        return privateRanges.contains { r in
-            let (b, m) = ipv4(r)!
-            return l >= m && (m == 0 || (a ^ b) >> UInt32(32 - m) == 0)
-        }
+    static func isPrivate(_ cidr: String) -> Bool { privateRanges.contains { within(cidr, $0) } }
+
+    /// True when the whole of IPv4 address or network `cidr` lies inside `range`.
+    private static func within(_ cidr: String, _ range: String) -> Bool {
+        guard let (a, l) = ipv4(cidr), let (b, m) = ipv4(range) else { return false }
+        return l >= m && (m == 0 || (a ^ b) >> UInt32(32 - m) == 0)
+    }
+
+    /// The home tunnel that reaches DNS server `d`, or nil when it is out on the internet: the home WireGuard tunnel or
+    /// the tailnet for an address inside it, the tailnet for a name its DNS answers (`tsDomains`). The same order as
+    /// for an app's connection to that address. The local network is left out: there the address is whoever holds it.
+    static func homeVia(_ s: Setup, _ d: FilterServer, tsDomains: [String]? = nil) -> String? {
+        if let w = s.home.wg, homeCidrs(w).contains(where: { within(d.address, $0) }) { return "home-wg" }
+        guard s.home.tailscale else { return nil }
+        let domains = tsDomains ?? (officialTs(s.home) ? ["ts.net"] : [])
+        let name = d.address.lowercased()
+        return ([tailnet] + homeSubnets(s)).contains { within(d.address, $0) } || domains.contains { name.hasSuffix("." + $0) } ? tsTag : nil
+    }
+
+    /// How the user's own DNS server is reached when it lives at home, or what that still needs; nil when it is out
+    /// on the internet or none is set. Shown under its field.
+    static func ownDnsReach(_ s: Setup) -> String? {
+        let filter = s.prefs.effectiveFilter
+        guard filter.id == "own", let d = filter.server else { return nil }
+        let domains = (officialTs(s.home) ? ["ts.net"] : []) + [trustedStoredSuffix(s.home)].compactMap { $0 }
+        if let via = homeVia(s, d, tsDomains: domains) { return via == tsTag ? "Reached through Tailscale" : "Reached through your home tunnel" }
+        var on = s
+        on.home.tailscale = true
+        return homeVia(on, d, tsDomains: domains) != nil ? "Needs Home through Tailscale on, under Tailscale" : nil
     }
 
     /// Networks to send through the home tunnel: its private AllowedIPs, else the interface's own subnet.

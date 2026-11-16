@@ -197,10 +197,11 @@ nonisolated enum ConfigVet {
                   type(server) != "https" || ((server["path"] as? String)?.hasPrefix("/") == true) else { throw refused }
             guard ipv4(address) || server["domain_resolver"] is String else { throw refused }
             if let resolver = server["domain_resolver"] as? String {
+                // A tunnel's own resolver (an OpenVPN server's, the tailnet's) names a server reached through that tunnel.
                 guard let boot = servers.first(where: { $0["tag"] as? String == resolver }),
-                      ["udp", "openvpn", "local"].contains(type(boot)) else { throw refused }
+                      ["udp", "openvpn", "tailscale", "local"].contains(type(boot)) else { throw refused }
                 if let detour = server["detour"] as? String {
-                    guard boot["detour"] as? String == detour || type(boot) == "openvpn" && boot["endpoint"] as? String == detour else { throw refused }
+                    guard boot["detour"] as? String == detour || ["openvpn", "tailscale"].contains(type(boot)) && boot["endpoint"] as? String == detour else { throw refused }
                 } else if type(boot) != "local" { throw refused }
             }
         }
