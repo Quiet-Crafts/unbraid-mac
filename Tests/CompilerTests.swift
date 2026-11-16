@@ -153,6 +153,158 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(final(c), "direct")
     }
 
+    // MARK: Websites
+
+    /// NL default, A on US, X Direct, example.com on IT (no app uses IT), a name under it on US, bank.example Direct.
+    private var withSites: Setup {
+        var s = example
+        s.apps = ["com.a": "us", "com.x": DIRECT]
+        s.sites = ["example.com": "it", "api.example.com": "us", "bank.example": DIRECT]
+        return s
+    }
+
+    private func names(_ r: O) -> [String]? { r["domain"] as? [String] }
+    private func cidrs(_ r: O) -> [String] { strings(r["ip_cidr"]) }
+
+    /// A route only a website uses gets its tunnel, and the websites' rules come before every app's, after the home and
+    /// LAN rules; each website is looked up at its own exit first.
+    func testAWebsitesRouteBeatsItsApps() throws {
+        let c = try compile(withSites)
+        XCTAssertTrue(Set(endpointTags(c)).isSuperset(of: ["r-nl", "r-us", "r-it"]))
+        let all = rules(c)
+        let out = all.indices.filter { names(all[$0]) != nil && outbound(all[$0]) != nil }
+        XCTAssertEqual(out.map { outbound(all[$0]) }, ["r-us", "direct", "r-it"])
+        XCTAssertEqual(out.map { names(all[$0]) }, [["api.example.com"], ["bank.example"], ["example.com"]])
+        // The name itself and every name under it, never a name that only ends the same ("notexample.com").
+        XCTAssertEqual(strings(all[out[2]]["domain_suffix"]), [".example.com"])
+        XCTAssertNil(all[out[2]]["process_path_regex"])
+        let firstApp = try XCTUnwrap(all.firstIndex { on($0, "com.a") || on($0, "com.x") })
+        XCTAssertLessThan(out[2], firstApp)
+        let blockedOrLan = try XCTUnwrap(all.firstIndex { cidrs($0).contains("192.168.0.0/16") })
+        XCTAssertLessThan(blockedOrLan, out[0])
+        let look = all.indices.filter { names(all[$0]) != nil && action(all[$0]) == "resolve" }
+        XCTAssertEqual(look.map { all[$0]["server"] as? String }, ["dns-r-us", "local", "dns-r-it"])
+        // After each lookup the destination rules run again: the unspecified address, the home ranges, the LAN.
+        for i in look {
+            let next = all[(i + 1)...].prefix { names($0) == nil && $0["process_path_regex"] == nil }
+            XCTAssertTrue(next.contains { cidrs($0).contains("192.168.0.0/16") && outbound($0) == "direct" })
+            XCTAssertTrue(next.contains { cidrs($0).contains("192.168.178.0/24") })
+        }
+        // Lookups: addresses stay stand-ins; HTTPS and SVCB records of a website are answered empty; other types go
+        // to its exit, before any app's rule.
+        let dns = dnsRules(c)
+        let fake = try XCTUnwrap(dns.firstIndex { $0["server"] as? String == "fake" })
+        let site = dns.indices.filter { names(dns[$0]) != nil }
+        XCTAssertTrue(site.allSatisfy { $0 > fake })
+        let firstAppDns = try XCTUnwrap(dns.firstIndex { on($0, "com.a") })
+        XCTAssertTrue(site.allSatisfy { $0 < firstAppDns })
+        XCTAssertEqual(site.filter { dns[$0]["query_type"] == nil }.map { dns[$0]["server"] as? String }, ["dns-r-us", "local", "dns-r-it"])
+        let hints = site.filter { dns[$0]["query_type"] != nil }
+        XCTAssertEqual(hints.count, 3)
+        XCTAssertTrue(hints.allSatisfy { strings(dns[$0]["query_type"]) == ["HTTPS", "SVCB"] && action(dns[$0]) == "predefined" && dns[$0]["rcode"] as? String == "NOERROR" })
+        XCTAssertTrue(zip(hints, site.filter { dns[$0]["query_type"] == nil }).allSatisfy { $0 < $1 })
+    }
+
+    /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name
+    /// to take a website's route.
+    func testNoNameIsReadOffAConnection() throws {
+        XCTAssertFalse(try rules(compile(withSites)).contains { action($0) == "sniff" })
+        var none = withSites
+        none.sites = [:]
+        XCTAssertFalse(try rules(compile(none)).contains { names($0) != nil })
+        XCTAssertFalse(try dnsRules(compile(none)).contains { names($0) != nil })
+    }
+
+    /// A blocked website is refused before any other website's rule and has no address for anyone; a blocked app is
+    /// refused before any website's rule.
+    func testABlockedWebsiteGoesNowhere() throws {
+        var s = withSites
+        s.sites["tracker.example"] = BLOCK
+        s.sites["ok.tracker.example"] = "us"
+        s.apps["com.b"] = BLOCK
+        let c = try compile(s)
+        let all = rules(c)
+        let site = all.indices.filter { names(all[$0]) != nil }
+        XCTAssertEqual(names(all[site[0]]), ["tracker.example"])
+        XCTAssertEqual(action(all[site[0]]), "reject")
+        let blockedApp = try XCTUnwrap(all.firstIndex { on($0, "com.b") && action($0) == "reject" })
+        XCTAssertLessThan(blockedApp, site[0])
+        let dns = dnsRules(c)
+        let refusal = try XCTUnwrap(dns.firstIndex { names($0) == ["tracker.example"] })
+        XCTAssertEqual(dns[refusal]["rcode"] as? String, "NXDOMAIN")
+        XCTAssertLessThan(refusal, try XCTUnwrap(dns.firstIndex { $0["server"] as? String == "fake" }))
+        XCTAssertEqual(dns.filter { names($0) == ["tracker.example"] }.count, 1)
+        // A blocked website alone does not need the kill switch, and counts as no blocked app.
+        var only = withSites
+        only.sites = ["tracker.example": BLOCK]
+        only.requireKillSwitchForBlocks()
+        XCTAssertEqual(only.prefs.killLevel, .off)
+    }
+
+    /// A website on a route without a tunnel, or on one that is gone, is refused: never sent on with its app or the default.
+    func testAWebsiteWithoutATunnelIsRefused() throws {
+        var links = self.links(withSites)
+        links["it"] = nil
+        let config = try Compiler.compile(Compiler.Input(setup: withSites, links: links, blocked: ["it"], apps: patterns(withSites), selfPattern: Compiler.pattern(forPath: selfApp)))
+        XCTAssertNoThrow(try ConfigVet.check(config))
+        let c = try parse(config)
+        let r = try XCTUnwrap(rules(c).first { names($0) == ["example.com"] })
+        XCTAssertEqual(action(r), "reject")
+        XCTAssertEqual(r["no_drop"] as? Bool, true)
+        XCTAssertEqual(rules(c).filter { names($0) == ["example.com"] }.count, 1)
+        XCTAssertFalse(endpointTags(c).contains("r-it"))
+        let other = try XCTUnwrap(dnsRules(c).first { names($0) == ["example.com"] && $0["query_type"] == nil })
+        XCTAssertEqual(other["rcode"] as? String, "REFUSED")
+        XCTAssertEqual(try tagProblems(c), [])
+
+        var gone = withSites
+        gone.routes.removeAll { $0.id == "it" }
+        let g = try compile(gone)
+        XCTAssertEqual(action(try XCTUnwrap(rules(g).first { names($0) == ["example.com"] })), "reject")
+        XCTAssertNil(rules(g).first { names($0) == ["example.com"] && outbound($0) != nil })
+    }
+
+    /// A Direct website is looked up with the filter where the filter covers Direct traffic, also when nothing else uses it.
+    func testADirectWebsiteUsesTheFilterForDirectTraffic() throws {
+        var s = withSites
+        s.apps = ["com.a": "us"]
+        s.prefs.filter = Filter(id: "quad9", direct: true)
+        let c = try compile(s)
+        XCTAssertEqual(dnsServer(c, "dns-filter")?["type"] as? String, "https")
+        XCTAssertEqual(rules(c).first { names($0) == ["bank.example"] && action($0) == "resolve" }?["server"] as? String, "dns-filter")
+        s.prefs.filter = Filter(id: "quad9", routes: true)
+        let routesOnly = try compile(s)
+        XCTAssertNil(dnsServer(routesOnly, "dns-filter"))
+        XCTAssertEqual(rules(routesOnly).first { names($0) == ["bank.example"] && action($0) == "resolve" }?["server"] as? String, "local")
+    }
+
+    /// While Tailscale waits for a sign-in, a website on its exit that is itself a sign-in page goes Direct first.
+    func testAWebsiteOnATailscaleExitLeavesTheSignInPagesDirect() throws {
+        var s = example
+        s.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        s.apps = [:]
+        s.sites = ["login.tailscale.com": "ts"]
+        let c = try compile(s, login: true)
+        let all = rules(c)
+        let direct = try XCTUnwrap(all.firstIndex { $0["type"] as? String == "logical" && outbound($0) == "direct" && (($0["rules"] as? [O])?.contains { names($0) == ["login.tailscale.com"] } ?? false) })
+        let lookup = try XCTUnwrap(all.firstIndex { names($0) == ["login.tailscale.com"] && action($0) == "resolve" })
+        XCTAssertLessThan(direct, lookup)
+        XCTAssertEqual(all.first { names($0) == ["login.tailscale.com"] && outbound($0) != nil }.flatMap(outbound), Compiler.tsTag)
+    }
+
+    /// A change that failed twice leaves a deny-all: a website on a VPN route is refused there like an app on one, a
+    /// Direct website stays Direct.
+    func testDenyAllRefusesWebsitesOnVpnRoutes() throws {
+        var s = withSites
+        s.defaultRoute = DIRECT
+        let c = try denyAll(s)
+        let site = rules(c).filter { names($0) != nil }
+        XCTAssertTrue(site.contains { Set(names($0) ?? []) == ["api.example.com", "example.com"] || names($0) == ["api.example.com"] })
+        for r in site where names(r)?.contains("bank.example") != true { XCTAssertEqual(action(r), "reject") }
+        XCTAssertEqual(site.first { names($0) == ["bank.example"] && outbound($0) != nil }.flatMap(outbound), "direct")
+        XCTAssertFalse(site.contains { outbound($0)?.hasPrefix("r-") == true })
+    }
+
     private func raw(_ s: Setup, links: [String: Link]? = nil, apps: [String: [String]]? = nil, remembered: Set<String> = [], tsSuffix: String? = nil,
                      probe: (port: Int, password: String)? = nil, ownerless: Compiler.Ownerless = .refusedWhileSplit, login: Bool = false) throws -> String {
         let config = try Compiler.compile(Compiler.Input(setup: s, links: links ?? self.links(s), apps: apps ?? patterns(s), remembered: remembered,

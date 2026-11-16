@@ -721,7 +721,11 @@ final class ConfigVetTests: XCTestCase {
         XCTAssertFalse(try dns(["domain_suffix": ["x"]]))
         XCTAssertFalse(try dns(["domain_suffix": ["x"], "server": "local", "client_subnet": "1.2.3.0/24"]))
         XCTAssertFalse(try dns(["domain_suffix": ["x"], "action": "reject"]))
-        XCTAssertFalse(try dns(["domain": ["x"], "server": "local"]))
+        // A website's rules name it exactly and by suffix; no other way of matching names is taken.
+        XCTAssertTrue(try dns(["domain": ["x.example"], "domain_suffix": [".x.example"], "server": "local"]))
+        XCTAssertTrue(try dns(["domain": ["x.example"], "domain_suffix": [".x.example"], "action": "predefined", "rcode": "NXDOMAIN"]))
+        XCTAssertFalse(try dns(["domain_keyword": ["x"], "server": "local"]))
+        XCTAssertFalse(try dns(["domain_regex": ["x"], "server": "local"]))
         XCTAssertFalse(try dns(["type": "logical", "mode": "or", "rules": [["domain_suffix": ["x"]]], "server": "local"]))
         // A tunnel's resolver asks through an endpoint of its own kind.
         XCTAssertFalse(passes(try item("example", "dns.servers", "tailscale") { $0["endpoint"] = "direct" }))

@@ -78,7 +78,7 @@ nonisolated enum ConfigVet {
                                            "network", "protocol", "ip_version")
     /// What each routing action may say beyond its matches.
     private static let routeActions: [String: Set<String>] = ["route": ["outbound"], "reject": ["no_drop"], "hijack-dns": [], "resolve": ["server"]]
-    private static let dnsMatch = fields("inbound", "process_path_regex", "domain_suffix", "query_type")
+    private static let dnsMatch = fields("inbound", "process_path_regex", "domain", "domain_suffix", "query_type")
     private static let dnsActions: [String: Set<String>] = ["route": ["server", "rewrite_ttl"], "predefined": ["rcode"]]
 
     /// The tun as the compiler writes it: its addresses (the resolver the system is given is the next one), every address
@@ -212,7 +212,8 @@ nonisolated enum ConfigVet {
         guard noDrop.allSatisfy({ rule in
             let keys = Set(rule.keys)
             return rule["action"] as? String == "reject" && isFlag(rule["no_drop"]) && rule["no_drop"] as? Bool == true
-                && (keys == ["action", "no_drop"] || keys == ["process_path_regex", "action", "no_drop"] || keys == ["ip_cidr", "action", "no_drop"])
+                && (keys == ["action", "no_drop"] || keys == ["process_path_regex", "action", "no_drop"] || keys == ["ip_cidr", "action", "no_drop"]
+                    || keys == ["domain", "domain_suffix", "action", "no_drop"])
         }) else { throw refused }
         let cidrRefusals = noDrop.filter { $0["ip_cidr"] != nil }
         let unspecified = Set(["0.0.0.0/32", "::/128"])

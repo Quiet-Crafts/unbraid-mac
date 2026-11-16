@@ -13,6 +13,7 @@
 		055A7AB4DBF29656F0C40FDB /* PinnedServerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CE42234FB0D15D8D344FEE7 /* PinnedServerTests.swift */; };
 		07CAB75F748920FAEC89DEFD /* RedactTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DDEE78DD04165096E13E8F37 /* RedactTests.swift */; };
 		0C1331269A7CA62B5ECB0A4A /* InstallPlace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6EF40FAB7814AE98735D76C /* InstallPlace.swift */; };
+		0C589CCC94B65B2CB5837985 /* SitesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1266ABF408263C5BA4F2A98D /* SitesTests.swift */; };
 		0C77A2E74EB42FD10A801DA4 /* AirVpn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A7A9C8E3A54436DC18B1527D /* AirVpn.swift */; };
 		0E42290690D77E94EF569E7B /* Profiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = B6944A8F14196C3770A1140F /* Profiles.swift */; };
 		0F20B82732B746167D9D4167 /* SealedKeyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C0514AECD553BC17B7DF530 /* SealedKeyTests.swift */; };
@@ -26,6 +27,7 @@
 		14D9501FB2B53EBA0ED3FF62 /* UpdateCheckTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E8799A35616F3FAC5FD7C58 /* UpdateCheckTests.swift */; };
 		156D71625EDB9EC5BF4FCA3C /* FileWorkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56132231BD27DDAEDE916B3E /* FileWorkTests.swift */; };
 		15BB609665F2BA6D08B5CA92 /* Surfshark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2587E9972CE4D006CFB5B2FC /* Surfshark.swift */; };
+		167675AEA7550FD694F2D9FE /* Sites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145F6B890393446EC35B4E06 /* Sites.swift */; };
 		18DD475E3A569E5CF30B88C6 /* ProviderFixesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10CDF892D2E0475652CD4A6 /* ProviderFixesTests.swift */; };
 		196C996DBC05A56130A929E7 /* SpeedTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4785607FED79AD809FBF193E /* SpeedTestView.swift */; };
 		1A3F4506A0FA31CF6ED9B476 /* ConfigVet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D82318930587017455D7D9 /* ConfigVet.swift */; };
@@ -240,6 +242,7 @@
 		DF5D3B59557E2039DB37AEA5 /* ExitCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D0A6757D4D70A5FFA05AC53 /* ExitCheck.swift */; };
 		DF7EDB3CF19F6C58E25C723C /* UnbraidWidgets.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BC7FF123A44A862101F8D71 /* UnbraidWidgets.swift */; };
 		DFA907EE26C1B6C7C2A36EB6 /* SignInView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19627767C9EF257C3B8C6744 /* SignInView.swift */; };
+		DFD6A716240DA75F3884A8B7 /* Sites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145F6B890393446EC35B4E06 /* Sites.swift */; };
 		E010B2982BFEE35B6102CA35 /* AppsSort.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B859E3A743C15303DA309B /* AppsSort.swift */; };
 		E10A8C0111BCE6BB3F7C39F9 /* Probe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EC062A703D4194DE36D1B23 /* Probe.swift */; };
 		E14E847FBB4F088D0E01FFCF /* DiagnosticsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92986639822973FDCBD92DCD /* DiagnosticsTests.swift */; };
@@ -335,6 +338,8 @@
 		0E499A5A7E73816C47F584BF /* AppsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsView.swift; sourceTree = "<group>"; };
 		0FDDF7466E86AA480872C0D2 /* QR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QR.swift; sourceTree = "<group>"; };
 		1254283A3240167FE700B663 /* CommandXPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandXPC.swift; sourceTree = "<group>"; };
+		1266ABF408263C5BA4F2A98D /* SitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SitesTests.swift; sourceTree = "<group>"; };
+		145F6B890393446EC35B4E06 /* Sites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sites.swift; sourceTree = "<group>"; };
 		156446EA824E4731A51964B8 /* unbraid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = unbraid.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		16540D9011D973EC4593EA77 /* LifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleTests.swift; sourceTree = "<group>"; };
 		16CD0DED827CEBC398505429 /* CompilerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompilerTests.swift; sourceTree = "<group>"; };
@@ -620,6 +625,7 @@
 				1C0514AECD553BC17B7DF530 /* SealedKeyTests.swift */,
 				21F65DB16FC16B36303194F4 /* SetupImportTests.swift */,
 				829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */,
+				1266ABF408263C5BA4F2A98D /* SitesTests.swift */,
 				C2168603DE95FFE54996E54B /* SnapshotTests.swift */,
 				4E53942020FC006F068397D6 /* StagingTests.swift */,
 				E8602961C76A7B318535AA4E /* StatsInboxTests.swift */,
@@ -751,6 +757,7 @@
 				9640535C88C8838D9B31E1DE /* RunState.swift */,
 				955ED297B6D9901F19F3974B /* SetupImport.swift */,
 				E3D7D10659C3A1AA56A97A4F /* SetupSignOut.swift */,
+				145F6B890393446EC35B4E06 /* Sites.swift */,
 				5C3CE97A9815E711F5AC6939 /* StatsInbox.swift */,
 				4FBF9D44B32EBAF555ADB997 /* StatsMath.swift */,
 				D52A8C23D88B07CF3AC7159E /* Store.swift */,
@@ -1117,6 +1124,7 @@
 				6BDBEBA29B10741ED05AC6D2 /* SetupImport.swift in Sources */,
 				00F25EB0FDC3FF481E7CC543 /* SetupSignOut.swift in Sources */,
 				DFA907EE26C1B6C7C2A36EB6 /* SignInView.swift in Sources */,
+				167675AEA7550FD694F2D9FE /* Sites.swift in Sources */,
 				D882C3D64E870EDB2146E6FA /* Slash.swift in Sources */,
 				89F808B183715EF9310A8652 /* Snapshot.swift in Sources */,
 				5ECAF4151CAFD1F393CDF722 /* SpeedTest.swift in Sources */,
@@ -1250,6 +1258,8 @@
 				C94055860E77CF830C82FA3E /* SetupImportTests.swift in Sources */,
 				C16EA1E99C62CE6C83EB046C /* SetupSignOut.swift in Sources */,
 				6E551F7EA3DBA2FF7276B306 /* SetupSignOutTests.swift in Sources */,
+				DFD6A716240DA75F3884A8B7 /* Sites.swift in Sources */,
+				0C589CCC94B65B2CB5837985 /* SitesTests.swift in Sources */,
 				A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */,
 				C0586C72403D0FC916501837 /* SnapshotTests.swift in Sources */,
 				34065A345520EF823EF3A18A /* Staging.swift in Sources */,

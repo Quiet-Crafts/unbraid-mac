@@ -5,7 +5,7 @@ import Foundation
 /// Turns a Setup into a sing-box config.
 ///
 /// Order of decisions for every connection: anything coming in through a tunnel is refused → DNS → unbraid itself →
-/// blocked apps → home networks → LAN → the app's route → default route. On macOS every app goes through the tunnel and is matched by the path of the process that
+/// blocked apps → home networks → LAN → the website's route → the app's route → default route. On macOS every app goes through the tunnel and is matched by the path of the process that
 /// owns the connection: Direct apps leave through the engine's `direct` outbound, blocked apps are refused.
 nonisolated enum Compiler {
     static let nordDns = "103.86.96.100"
@@ -108,7 +108,10 @@ nonisolated enum Compiler {
         var apps = s.apps.mapValues { $0 == DIRECT ? DIRECT : BLOCK }
         // An app on a VPN default inside a Direct app's bundle (`nestedDefaults`) is blocked with the other VPN apps.
         if deny { for key in nestedDefaults(s, i.apps) { apps[key] = BLOCK } }
-        blocking.setup = Setup(routes: [], defaultRoute: deny ? denied : DIRECT, apps: apps, favorites: [], prefs: prefs)
+        // A website on a VPN route is refused like an app on one: left out, it would follow its app out, a Direct one's
+        // from the Mac's own address.
+        let sites = s.sites.mapValues { $0 == DIRECT ? DIRECT : BLOCK }
+        blocking.setup = Setup(routes: [], defaultRoute: deny ? denied : DIRECT, apps: apps, sites: sites, favorites: [], prefs: prefs)
         blocking.links = [:]
         blocking.blocked = []
         blocking.probe = nil
@@ -171,6 +174,12 @@ nonisolated enum Compiler {
         /// Apps with their own route (or the default one, inside a bundle with another), grouped by route, matched by the
         /// paths of their processes. Apps not installed match nothing and are left out, unless remembered where they were.
         let perApp: [(id: String, match: J)]
+        /// Websites with a route of their own, most specific first, as runs that share a route: what each matches (the
+        /// names and every name under them). Matched on the name the engine itself answered a lookup for (a fake-IP
+        /// connection reaches the rules as that name), never on one read off the connection: an app could write any
+        /// name there and take a website's route, Direct included, to an address of its choosing. So an app that looks
+        /// names up itself keeps its own route.
+        let sites: [(id: String, match: [String: J])]
         /// Whether an app installed here is blocked, and whether one is on an exit of its own (see `Input.remembered`).
         let blocking: Bool
         let appsOnExits: Bool
@@ -233,6 +242,9 @@ nonisolated enum Compiler {
             appsOnExits = liveRoutes.contains { $0 != DIRECT && $0 != Compiler.filteredDirect && $0 != BLOCK }
             home = (s.home.tailscale ? homeSubnets(s) : []) + (s.home.wg.map(homeCidrs) ?? [])
             defaultDns = s.defaultRoute == DIRECT && s.prefs.effectiveFilter.server != nil && s.prefs.effectiveFilter.direct && !deny ? "dns-filter" : s.defaultRoute == DIRECT || active.isEmpty || i.blocked.contains(s.defaultRoute) ? "local" : Self.dns(s.defaultRoute, s, shared, i.links)
+            sites = Sites.runs(s.sites.filter { Sites.isClean($0.key) }).map { run in
+                (id: run.id, match: ["domain": J.strings(run.names), "domain_suffix": J.strings(run.names.map { "." + $0 })])
+            }
             // Tailscale even without an exit route (its nodes). Health checks distinguish failed exits from an offline Mac,
             // including when STUN is blocked, so Direct joins any other.
             var probeTags: [String: String] = [:]
@@ -259,6 +271,19 @@ nonisolated enum Compiler {
         func dns(_ id: String) -> String { Self.dns(id, s, shared, i.links) }
         func onTs(_ id: String) -> Bool { s.route(id)?.tsExit != nil }
         var homeTs: Bool { s.home.tailscale }
+        /// A website's traffic is refused: Block, a route without a tunnel right now, or one the setup no longer has
+        /// (never sent to its app's route or the default instead).
+        func refused(site id: String) -> Bool { id == BLOCK || i.blocked.contains(id) || (id != DIRECT && s.route(id) == nil) }
+        /// Where a website's names are looked up: at its route's exit; a Direct one with the filter where the filter
+        /// covers Direct traffic.
+        func siteDns(_ id: String) -> String {
+            id == DIRECT && sitesFiltered ? "dns-filter" : dns(id)
+        }
+        /// A Direct website's lookups use the filter: one is set, and it covers Direct traffic or Direct apps.
+        var sitesFiltered: Bool {
+            let f = s.prefs.effectiveFilter
+            return f.server != nil && (f.direct || f.directApps) && sites.contains { $0.id == DIRECT }
+        }
         /// OpenVPN routes use the DNS their server pushes, except NordVPN's own: those keep Nord's resolvers.
         func pushedDns(_ r: Route) -> Bool { !s.prefs.effectiveFilter.coversRoutes && (r.imported || r.loc.provider != "nord") }
         /// The match of the blocked apps, installed here or remembered where they were; a block with nothing to match
@@ -361,6 +386,18 @@ nonisolated enum Compiler {
             rules += network
             if match != nil { rules.append(rule(["outbound": .s(p.tag(id))])) }
         }
+        // A website's route beats its app's (a blocked app was refused above, whatever it opens). Block first: a name
+        // under a blocked website goes nowhere, whatever else is set for a name above it. Then, as for an app: looked up
+        // at the route's exit, the home and LAN rules again, the exit.
+        for (id, match) in p.sites.sorted(by: { ($0.id == BLOCK ? 0 : 1) < ($1.id == BLOCK ? 0 : 1) }) {
+            func rule(_ fields: [String: J]) -> J { .o(match.merging(fields) { $1 }) }
+            if p.refused(site: id) { rules.append(rule(["action": "reject", "no_drop": true])); continue }
+            // A website on a Tailscale exit that is itself a sign-in page skips the exit while the sign-in waits.
+            if p.onTs(id) { rules += tsLogin.map { k, v in ["type": "logical", "mode": "and", "outbound": "direct", "rules": [.o(match), [k: v]]] } }
+            rules.append(rule(["action": "resolve", "server": .s(p.siteDns(id))]))
+            rules += network
+            rules.append(rule(["outbound": .s(p.tag(id))]))
+        }
         for (id, match) in p.perApp where id != BLOCK {
             if p.i.blocked.contains(id) { rules.append(["process_path_regex": match, "action": "reject", "no_drop": true]) }
             else { wayOut(id, match, dns: p.dns(id)) }
@@ -431,7 +468,7 @@ nonisolated enum Compiler {
         var servers: [J] = [["type": "fakeip", "tag": "fake", "inet4_range": .s(ConfigVet.fakeRanges[0])], ["type": "local", "tag": "local"]]
         var pushed = Set<String>()
         let filter = s.prefs.effectiveFilter
-        if let server = filter.server, (p.defaultDns == "dns-filter" || p.perApp.contains(where: { $0.id == filteredDirect })) {
+        if let server = filter.server, (p.defaultDns == "dns-filter" || p.sitesFiltered || p.perApp.contains(where: { $0.id == filteredDirect })) {
             servers.append(filterDns(server, tag: "dns-filter", detour: nil, boot: "local"))
         }
         for r in p.active {
@@ -464,6 +501,9 @@ nonisolated enum Compiler {
         // the like included) would otherwise be a way out. Their lookups through mDNSResponder can't be told apart from
         // anyone else's and follow the rules below; the addresses they get lead nowhere for them.
         rules += p.blocked.map { ["process_path_regex": $0, "action": "predefined", "rcode": "REFUSED"] }
+        // A blocked website has no address for anyone who asks through here: the system resolver's lookups are every
+        // app's, so this holds for all of them at once.
+        for (id, match) in p.sites where id == BLOCK { rules.append(.o(match.merging(["action": "predefined", "rcode": "NXDOMAIN"]) { $1 })) }
         let official = officialTs(s.home)
         let domains = Array(Set((official ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
         if p.homeTs && !domains.isEmpty { rules.append(["domain_suffix": J.strings(domains), "server": "dns-tailnet"]) }
@@ -477,6 +517,14 @@ nonisolated enum Compiler {
         // With LAN access off too: it decides which apps reach those devices, not whose resolver names them.
         rules.append(["query_type": ["PTR"], "domain_suffix": J.strings(localReverse), "server": "local"])
         rules.append(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1])
+        // A website with a route of its own. HTTPS and SVCB records can carry addresses (hints) a browser would connect
+        // to as they are: not stand-in addresses, so the engine couldn't tell the website and its app's route would
+        // carry it. They are answered empty, at the price of those records' hints, protocol parameters and Encrypted
+        // Client Hello keys. Other types (TXT, SRV…) are asked at the website's exit, never the app's or the default's.
+        for (id, match) in p.sites where id != BLOCK {
+            rules.append(.o(match.merging(["query_type": ["HTTPS", "SVCB"], "action": "predefined", "rcode": "NOERROR"]) { $1 }))
+            rules.append(.o(match.merging(p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]) { $1 }))
+        }
         // Other query types (HTTPS, SVCB, TXT, SRV…) go to the asking app's own route, not the default one.
         for (id, match) in p.perApp where id != BLOCK {
             if p.i.blocked.contains(id) { rules.append(["process_path_regex": match, "action": "predefined", "rcode": "REFUSED"]) }

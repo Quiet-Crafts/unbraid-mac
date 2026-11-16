@@ -229,7 +229,18 @@ nonisolated struct Profile: Codable, Hashable, Sendable, Identifiable {
     var name: String
     var defaultRoute: String
     var apps: [String: String] = [:]
+    /// Websites with a route of their own in this profile (see `Setup.sites`).
+    var sites: [String: String] = [:]
     var id: String { name }
+
+    enum CodingKeys: String, CodingKey { case name, defaultRoute, apps, sites }
+
+    /// A profile without websites is written exactly as before they existed.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(name, forKey: .name); try c.encode(defaultRoute, forKey: .defaultRoute); try c.encode(apps, forKey: .apps)
+        if !sites.isEmpty { try c.encode(sites, forKey: .sites) }
+    }
 }
 
 /// Everything the user configures. Apps are keyed by bundle identifier, or by full path for a command-line tool.
@@ -252,6 +263,7 @@ nonisolated struct ProfileSwitch: Codable, Hashable, Sendable {
             ran.profile = selection.name.isEmpty ? nil : selection.name
             ran.defaultRoute = selection.defaultRoute
             ran.apps = selection.apps
+            ran.sites = selection.sites
         }
         // Older pending switches didn't record protection. Keep it rather than guess what they changed.
         ran.prefs = beforePrefs ?? current.prefs
@@ -259,6 +271,7 @@ nonisolated struct ProfileSwitch: Codable, Hashable, Sendable {
         switched.profile = target
         switched.defaultRoute = self.switched.defaultRoute
         switched.apps = self.switched.apps
+        switched.sites = self.switched.sites
         switched.prefs = switchedPrefs ?? current.prefs
         current.back(to: ran, after: switched)
     }
@@ -275,8 +288,8 @@ nonisolated struct ProfileSwitch: Codable, Hashable, Sendable {
         if stopped { return .stopped }
         if let refused, refused.pendingSwitch?.id == id, refused.profile == target { return .refused }
         if standIn != .none { return .waiting }
-        if let running, (running.defaultRoute == current.defaultRoute && running.apps == current.apps) ||
-            (running.defaultRoute == switched.defaultRoute && running.apps == switched.apps) { return .applied }
+        if let running, (running.defaultRoute == current.defaultRoute && running.apps == current.apps && running.sites == current.sites) ||
+            (running.defaultRoute == switched.defaultRoute && running.apps == switched.apps && running.sites == switched.sites) { return .applied }
         return .waiting
     }
 }
@@ -290,6 +303,9 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     }
     var defaultRoute = "nl"
     var apps: [String: String] = [:]
+    /// Websites with a route of their own: address (as `Sites.clean` writes it) → a route's id, DIRECT or BLOCK. A
+    /// website's route comes before its app's. Saved with each profile, like `apps`.
+    var sites: [String: String] = [:]
     /// Starred countries, cities or pinned servers, shown first in the picker.
     var favorites = [
         Location(countryId: 228, countryCode: "US", country: "United States"),
@@ -310,18 +326,30 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     /// part of the setup's identity; the app tells the user once.
     var blockedForLostRoute = 0
 
-    enum CodingKeys: String, CodingKey { case routes, defaultRoute, apps, favorites, home, prefs, servers, opts, profiles, profile, pendingSwitch, profileSalt }
+    enum CodingKeys: String, CodingKey { case version, routes, defaultRoute, apps, sites, favorites, home, prefs, servers, opts, profiles, profile, pendingSwitch, profileSalt }
+
+    /// The newest saved format this build reads. 1: everything before websites (no number written). 2: websites.
+    static let format = 2
+    /// The format a setup is written in: the lowest that holds what it has, so a setup without websites still opens in
+    /// a build from before them, and one with them is refused there by a build that knows to check.
+    var format: Int {
+        let pending = [pendingSwitch?.switched, pendingSwitch?.previous, pendingSwitch?.before].compactMap { $0 }
+        return sites.isEmpty && profiles.allSatisfy(\.sites.isEmpty) && pending.allSatisfy(\.sites.isEmpty) ? 1 : 2
+    }
+
+    /// A setup saved in a format newer than this build reads: never read in part, and never saved over.
+    struct Newer: Error, Equatable { var format: Int }
 
     /// Profile request identity is not part of the setup the engine runs.
     static func == (lhs: Setup, rhs: Setup) -> Bool {
-        lhs.routes == rhs.routes && lhs.defaultRoute == rhs.defaultRoute && lhs.apps == rhs.apps &&
+        lhs.routes == rhs.routes && lhs.defaultRoute == rhs.defaultRoute && lhs.apps == rhs.apps && lhs.sites == rhs.sites &&
         lhs.favorites == rhs.favorites && lhs.home == rhs.home && lhs.prefs == rhs.prefs &&
         lhs.servers == rhs.servers && lhs.opts == rhs.opts && lhs.profiles == rhs.profiles &&
         lhs.profile == rhs.profile && lhs.pendingSwitch == rhs.pendingSwitch && lhs.testing == rhs.testing
     }
 
     func hash(into hasher: inout Hasher) {
-        hasher.combine(routes); hasher.combine(defaultRoute); hasher.combine(apps); hasher.combine(favorites)
+        hasher.combine(routes); hasher.combine(defaultRoute); hasher.combine(apps); hasher.combine(sites); hasher.combine(favorites)
         hasher.combine(home); hasher.combine(prefs); hasher.combine(servers); hasher.combine(opts)
         hasher.combine(profiles); hasher.combine(profile); hasher.combine(pendingSwitch); hasher.combine(testing)
     }
@@ -331,8 +359,11 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
+        // Without websites nothing new is written: the bytes, and so every revision made of them, stay as they were.
+        if format > 1 { try c.encode(format, forKey: .version) }
         try c.encode(routes, forKey: .routes); try c.encode(defaultRoute, forKey: .defaultRoute)
-        try c.encode(apps, forKey: .apps); try c.encode(favorites, forKey: .favorites)
+        try c.encode(apps, forKey: .apps); if !sites.isEmpty { try c.encode(sites, forKey: .sites) }
+        try c.encode(favorites, forKey: .favorites)
         try c.encode(home, forKey: .home); try c.encode(prefs, forKey: .prefs)
         try c.encode(servers, forKey: .servers); try c.encode(opts, forKey: .opts)
         try c.encode(profiles, forKey: .profiles); try c.encodeIfPresent(profile, forKey: .profile)
@@ -355,9 +386,9 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     func route(_ id: String?) -> Route? { routes.first { $0.id == id } }
     func routeOf(_ app: String) -> String { apps[app] ?? defaultRoute }
     var allAppsUseDefault: Bool { apps.values.allSatisfy { $0 == defaultRoute } }
-    /// Routes that carry traffic right now: the default plus any with apps.
+    /// Routes that carry traffic right now: the default plus any with apps or websites.
     var activeRoutes: [Route] {
-        let used = Set(apps.values)
+        let used = Set(apps.values).union(sites.values)
         return routes.filter { $0.id == defaultRoute || used.contains($0.id) || testing.contains($0.id) }
     }
     /// The Tailscale exit node in use, if an active route goes out through one (Tailscale allows one at a time).
@@ -441,10 +472,14 @@ nonisolated extension Setup {
     nonisolated init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         let s = Setup()
+        // Saved by a newer unbraid: nothing of it is read, so nothing it holds that this build doesn't know (a blocked
+        // website, say) is dropped without a word. A number that can't be read is no number: the file is read as it is.
+        if let saved = try? c.decodeIfPresent(Int.self, forKey: .version), saved > Self.format { throw Newer(format: saved) }
         // Read leniently, a route that can't be read is left out on its own, not the whole list (see `Route.init`).
         if SavedDecoding.strict || !c.contains(.routes) { routes = try c.saved(.routes, s.routes) }
         else { routes = (try? c.decode([Unreadable<Route>].self, forKey: .routes))?.compactMap(\.value) ?? s.routes }
         defaultRoute = try c.saved(.defaultRoute, s.defaultRoute); apps = try c.saved(.apps, s.apps)
+        sites = Self.readable(try c.saved(.sites, [:]))
         profiles = try c.saved(.profiles, []); profile = try c.saved(.profile, nil); pendingSwitch = try c.saved(.pendingSwitch, nil)
         profileSalt = try c.saved(.profileSalt, nil)
         favorites = try c.saved(.favorites, s.favorites); home = try c.saved(.home, s.home); prefs = try c.saved(.prefs, s.prefs); servers = try c.saved(.servers, s.servers); opts = try c.saved(.opts, [:])
@@ -463,15 +498,20 @@ nonisolated extension Setup {
         // default goes: that is visible in the list, and the user moves it to a route they choose.
         let known = Set(routes.map(\.id))
         for (app, route) in apps where route != DIRECT && route != BLOCK && !known.contains(route) { apps[app] = BLOCK; blockedForLostRoute += 1 }
+        // A website on a route that is gone is blocked as well: left out, it would follow its app's route.
+        func sitesBlockingLost(_ sites: [String: String]) -> [String: String] { sites.mapValues { $0 == DIRECT || $0 == BLOCK || known.contains($0) ? $0 : BLOCK } }
+        sites = sitesBlockingLost(sites)
         // The same for each saved profile, before `repairProfiles` would let such an app follow that profile's default.
         // (A profile whose own default names no route is still repaired to the first route.)
         for i in profiles.indices {
             for (app, route) in profiles[i].apps where route != DIRECT && route != BLOCK && !known.contains(route) { profiles[i].apps[app] = BLOCK }
+            profiles[i].sites = sitesBlockingLost(profiles[i].sites)
         }
         // And for the selections a pending profile switch keeps to roll back to.
         func blockingLost(_ profile: Profile?) -> Profile? {
             guard var p = profile else { return nil }
             for (app, route) in p.apps where route != DIRECT && route != BLOCK && !known.contains(route) { p.apps[app] = BLOCK }
+            p.sites = sitesBlockingLost(p.sites)
             return p
         }
         if var pending = pendingSwitch {
@@ -481,6 +521,14 @@ nonisolated extension Setup {
         }
         repairProfiles()
         requireKillSwitchForBlocks()
+    }
+
+    /// Websites as a saved setup may hold them: addresses written as `Sites.clean` writes them, no more than a profile
+    /// holds. Anything else (a file edited by hand, or damaged) is left out: the compiler writes these names into rules.
+    static func readable(_ saved: [String: String]) -> [String: String] {
+        let clean = saved.filter { Sites.isClean($0.key) }
+        guard clean.count > Sites.max else { return clean }
+        return Dictionary(uniqueKeysWithValues: clean.sorted { $0.key < $1.key }.prefix(Sites.max).map { ($0.key, $0.value) })
     }
 
     /// The home network bypasses the tunnel: as the prefs say, and never while an app is blocked, whatever they say (the
@@ -582,28 +630,28 @@ nonisolated extension Setup {
     }
 
     var saved: [Profile] {
-        profiles.map { $0.name == profile ? Profile(name: $0.name, defaultRoute: defaultRoute, apps: apps) : $0 }
+        profiles.map { $0.name == profile ? Profile(name: $0.name, defaultRoute: defaultRoute, apps: apps, sites: sites) : $0 }
     }
 
     mutating func use(_ name: String) {
         guard name != profile, let target = profiles.first(where: { $0.name == name }) else { return }
-        profiles = saved; profile = target.name; defaultRoute = target.defaultRoute; apps = target.apps
+        profiles = saved; profile = target.name; defaultRoute = target.defaultRoute; apps = target.apps; sites = target.sites
         requireKillSwitchForBlocks()
     }
 
     mutating func beginProfileSwitch(_ name: String, id: UUID, running: Setup?, engine: String?) {
         guard name != profile, profiles.contains(where: { $0.name == name }) else { return }
-        let before = Profile(name: profile ?? "", defaultRoute: defaultRoute, apps: apps), beforePrefs = prefs
+        let before = Profile(name: profile ?? "", defaultRoute: defaultRoute, apps: apps, sites: sites), beforePrefs = prefs
         use(name)
         pendingSwitch = ProfileSwitch(id: id, target: name, from: before.name.isEmpty ? nil : before.name, when: .now,
-            switched: Profile(name: name, defaultRoute: defaultRoute, apps: apps),
-            previous: running.map { Profile(name: $0.profile ?? "", defaultRoute: $0.defaultRoute, apps: $0.apps) },
+            switched: Profile(name: name, defaultRoute: defaultRoute, apps: apps, sites: sites),
+            previous: running.map { Profile(name: $0.profile ?? "", defaultRoute: $0.defaultRoute, apps: $0.apps, sites: $0.sites) },
             previousEngine: engine, before: before, beforePrefs: beforePrefs, switchedPrefs: prefs)
     }
 
     mutating func saveAs(_ raw: String) {
         guard profiles.count < Self.maxProfiles, let name = profileName(raw) else { return }
-        profiles = saved + [Profile(name: name, defaultRoute: defaultRoute, apps: apps)]; profile = name
+        profiles = saved + [Profile(name: name, defaultRoute: defaultRoute, apps: apps, sites: sites)]; profile = name
     }
 
     mutating func rename(_ old: String, _ raw: String) {
@@ -628,6 +676,7 @@ nonisolated extension Setup {
         for index in profiles.indices {
             if !valid.contains(profiles[index].defaultRoute) { profiles[index].defaultRoute = routes.first?.id ?? DIRECT }
             profiles[index].apps = profiles[index].apps.filter { valid.contains($0.value) }
+            profiles[index].sites = profiles[index].sites.filter { valid.contains($0.value) }
         }
     }
 
@@ -644,15 +693,18 @@ nonisolated extension Setup {
 
     mutating func back(to ran: Setup, after switched: Setup? = nil) {
         if let switched {
-            let currentDefault = defaultRoute, currentApps = apps, currentProfile = profile
+            let currentDefault = defaultRoute, currentApps = apps, currentSites = sites, currentProfile = profile
             let currentPrefs = prefs
             back(to: ran)
             if currentDefault != switched.defaultRoute { defaultRoute = currentDefault }
             for key in Set(currentApps.keys).union(switched.apps.keys) where currentApps[key] != switched.apps[key] {
                 apps[key] = currentApps[key]
             }
+            for key in Set(currentSites.keys).union(switched.sites.keys) where currentSites[key] != switched.sites[key] {
+                sites[key] = currentSites[key]
+            }
             if currentProfile != switched.profile { profile = currentProfile }
-            if defaultRoute != ran.defaultRoute || apps != ran.apps { profile = nil }
+            if defaultRoute != ran.defaultRoute || apps != ran.apps || sites != ran.sites { profile = nil }
             if currentPrefs.killLevel != switched.prefs.killLevel || currentPrefs.killSwitchHome != switched.prefs.killSwitchHome {
                 prefs.killSwitch = currentPrefs.killSwitch
                 prefs.killSwitchHome = currentPrefs.killSwitchHome
@@ -661,12 +713,13 @@ nonisolated extension Setup {
             return
         }
         let valid = Set(routes.map(\.id) + [DIRECT, BLOCK])
-        let same = profiles.first { $0.name == ran.profile && $0.defaultRoute == ran.defaultRoute && $0.apps == ran.apps }
+        let same = profiles.first { $0.name == ran.profile && $0.defaultRoute == ran.defaultRoute && $0.apps == ran.apps && $0.sites == ran.sites }
         profiles = saved
         profile = same?.name
         defaultRoute = valid.contains(ran.defaultRoute) ? ran.defaultRoute : (routes.first?.id ?? DIRECT)
         // An app whose route is gone is blocked, as at load, not left out (it would follow the default).
         apps = ran.apps.mapValues { valid.contains($0) ? $0 : BLOCK }
+        sites = ran.sites.mapValues { valid.contains($0) ? $0 : BLOCK }
         prefs.killSwitch = ran.prefs.killSwitch
         prefs.killSwitchHome = ran.prefs.killSwitchHome
         requireKillSwitchForBlocks()
@@ -679,5 +732,6 @@ nonisolated extension Profile {
         name = try c.saved(.name, "")
         defaultRoute = try c.saved(.defaultRoute, DIRECT)
         apps = try c.saved(.apps, [:])
+        sites = Setup.readable(try c.saved(.sites, [:]))
     }
 }
