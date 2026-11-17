@@ -393,10 +393,12 @@ nonisolated enum Compiler {
             rules += network
             if match != nil { rules.append(rule(["outbound": .s(p.tag(id))])) }
         }
-        // A website's route beats its app's (a blocked app was refused above, whatever it opens). Block first: a name
-        // under a blocked website goes nowhere, whatever else is set for a name above it. Then, as for an app: looked up
-        // at the route's exit, the home and LAN rules again, the exit.
-        for (id, match) in p.sites.sorted(by: { ($0.id == BLOCK ? 0 : 1) < ($1.id == BLOCK ? 0 : 1) }) {
+        // A website's route beats its app's (a blocked app was refused above, whatever it opens), the most specific
+        // website first, Block included: a name under a blocked website with a route of its own takes that route, as
+        // one under a routed website does. Unbraid itself went direct above, so a block never cuts it off from what it
+        // needs (its update check, a provider's sign-in and server list). Then, as for an app: looked up at the route's
+        // exit, the home and LAN rules again, the exit.
+        for (id, match) in p.sites {
             func rule(_ fields: [String: J]) -> J { .o(match.merging(fields) { $1 }) }
             if p.refused(site: id) { rules.append(rule(["action": "reject", "no_drop": true])); continue }
             // A website on a Tailscale exit that is itself a sign-in page skips the exit while the sign-in waits.
@@ -515,16 +517,15 @@ nonisolated enum Compiler {
         // the like included) would otherwise be a way out. Their lookups through mDNSResponder can't be told apart from
         // anyone else's and follow the rules below; the addresses they get lead nowhere for them.
         rules += p.blocked.map { ["process_path_regex": $0, "action": "predefined", "rcode": "REFUSED"] }
-        // A blocked website has no address for anyone who asks through here: the system resolver's lookups are every
-        // app's, so this holds for all of them at once.
-        for (id, match) in p.sites where id == BLOCK { rules.append(.o(match.merging(["action": "predefined", "rcode": "NXDOMAIN"]) { $1 })) }
-        // A website with a route of its own, before every exception below (a name under a local or tailnet domain
-        // would otherwise get a real address there and never meet its rule). Addresses are stand-ins, as for any name.
-        // HTTPS and SVCB records can carry addresses (hints) a browser would connect to as they are: not stand-in
-        // addresses, so the engine couldn't tell the website and its app's route would carry it. They are answered
-        // empty, at the price of those records' hints, protocol parameters and Encrypted Client Hello keys. Other types
-        // (TXT, SRV…) are asked at the website's exit, never the app's or the default's.
-        for (id, match) in p.sites where id != BLOCK {
+        // A website with a route of its own, the most specific first as in routing, before every exception below.
+        // Addresses are stand-ins, as for any name, blocked websites' too: a lookup can't tell unbraid's own (made
+        // through the system resolver, like every app's) from another app's, so the block is made where it can,
+        // refusing the connection; unbraid's own went direct before it. HTTPS and SVCB records can carry addresses
+        // (hints) a browser would connect to as they are: not stand-in addresses, so the engine couldn't tell the
+        // website and its app's route would carry it. They are answered empty, at the price of those records' hints,
+        // protocol parameters and Encrypted Client Hello keys. Other types (TXT, SRV…) are asked at the website's exit,
+        // never the app's or the default's, and refused for a refused website.
+        for (id, match) in p.sites {
             rules.append(.o(match.merging(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1]) { $1 }))
             rules.append(.o(match.merging(["query_type": ["HTTPS", "SVCB"], "action": "predefined", "rcode": "NOERROR"]) { $1 }))
             rules.append(.o(match.merging(p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]) { $1 }))

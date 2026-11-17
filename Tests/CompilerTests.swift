@@ -335,25 +335,41 @@ final class CompilerTests: XCTestCase {
         XCTAssertFalse(try dnsRules(compile(none)).contains { names($0) != nil })
     }
 
-    /// A blocked website is refused before any other website's rule and has no address for anyone; a blocked app is
-    /// refused before any website's rule.
+    /// A blocked website is refused for every app but unbraid itself (which goes direct before any website's rule, so
+    /// a block never cuts it off from its update check or a provider's sign-in); a blocked app is refused before any
+    /// website's rule. The most specific website wins, Block or not: a name under a blocked website with a route of its
+    /// own takes it, in routing and in lookups alike, and a blocked name under a routed one is blocked.
     func testABlockedWebsiteGoesNowhere() throws {
         var s = withSites
         s.sites["tracker.example"] = BLOCK
         s.sites["ok.tracker.example"] = "us"
+        s.sites["ads.example.com"] = BLOCK
         s.apps["com.b"] = BLOCK
         let c = try compile(s)
         let all = rules(c)
-        let site = all.indices.filter { names(all[$0]) != nil }
-        XCTAssertEqual(names(all[site[0]]), ["tracker.example"])
-        XCTAssertEqual(action(all[site[0]]), "reject")
+        func first(_ name: String) throws -> Int { try XCTUnwrap(all.firstIndex { names($0)?.contains(name) == true }) }
+        let selfDirect = try XCTUnwrap(all.firstIndex { strings($0["process_path_regex"]) == [Compiler.pattern(forPath: selfApp)] && outbound($0) == "direct" })
+        XCTAssertLessThan(selfDirect, try first("tracker.example"))
+        XCTAssertLessThan(try first("ok.tracker.example"), try first("tracker.example"))
+        XCTAssertLessThan(try first("ads.example.com"), try first("example.com"))
+        XCTAssertEqual(action(all[try first("tracker.example")]), "reject")
+        XCTAssertEqual(action(all[try first("ads.example.com")]), "reject")
+        XCTAssertEqual(all.first { names($0)?.contains("ok.tracker.example") == true && outbound($0) != nil }.flatMap(outbound), "r-us")
         let blockedApp = try XCTUnwrap(all.firstIndex { on($0, "com.b") && action($0) == "reject" })
-        XCTAssertLessThan(blockedApp, site[0])
+        XCTAssertLessThan(blockedApp, try first("api.example.com"))
+        // Lookups in the same order: stand-in addresses for all (the connection is what is refused), empty records with
+        // hints, other types refused for a blocked website and asked at the exit of a routed one.
         let dns = dnsRules(c)
-        let refusal = try XCTUnwrap(dns.firstIndex { names($0) == ["tracker.example"] })
-        XCTAssertEqual(dns[refusal]["rcode"] as? String, "NXDOMAIN")
-        XCTAssertLessThan(refusal, try XCTUnwrap(dns.firstIndex { $0["server"] as? String == "fake" }))
-        XCTAssertEqual(dns.filter { names($0) == ["tracker.example"] }.count, 1)
+        func dnsFirst(_ name: String) throws -> Int { try XCTUnwrap(dns.firstIndex { names($0)?.contains(name) == true }) }
+        XCTAssertLessThan(try dnsFirst("ok.tracker.example"), try dnsFirst("tracker.example"))
+        XCTAssertLessThan(try dnsFirst("ads.example.com"), try dnsFirst("example.com"))
+        let blocked = dns.filter { names($0) == ["tracker.example"] }
+        XCTAssertEqual(blocked.count, 3)
+        XCTAssertEqual(blocked[0]["server"] as? String, "fake")
+        XCTAssertEqual(blocked[1]["rcode"] as? String, "NOERROR")
+        XCTAssertEqual(blocked[2]["rcode"] as? String, "REFUSED")
+        XCTAssertEqual(dns.first { names($0)?.contains("ok.tracker.example") == true && $0["query_type"] == nil }?["server"] as? String, "dns-r-us")
+        XCTAssertFalse(dns.contains { $0["rcode"] as? String == "NXDOMAIN" && names($0) != nil })
         // A blocked website alone does not need the kill switch, and counts as no blocked app.
         var only = withSites
         only.sites = ["tracker.example": BLOCK]
@@ -423,7 +439,7 @@ final class CompilerTests: XCTestCase {
         let c = try compile(paused, links: [:])
         XCTAssertEqual(final(c), "direct")
         XCTAssertEqual(action(try XCTUnwrap(rules(c).first { names($0) == ["tracker.example"] })), "reject")
-        XCTAssertEqual(dnsRules(c).first { names($0) == ["tracker.example"] }?["rcode"] as? String, "NXDOMAIN")
+        XCTAssertEqual(dnsRules(c).first { names($0) == ["tracker.example"] }?["server"] as? String, "fake")
         let only = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["tracker.example": BLOCK], favorites: [])
         XCTAssertEqual(action(try XCTUnwrap(rules(try compile(only, links: [:])).first { names($0) == ["tracker.example"] })), "reject")
     }
