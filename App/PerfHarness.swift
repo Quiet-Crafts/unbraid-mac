@@ -295,7 +295,8 @@ private final class Meter: NSObject {
         FrontApp.shared.perfShow(model.apps.app("com.apple.TV"))
         if !empty { for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) } }
         go("traffic"); await meter.frames(20)
-        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
+        // `route-few`: a route with two apps and a website, whose lists sit together.
+        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("route-few", "route:it"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
                      ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             NSApp.appearance = NSAppearance(named: look); await meter.frames(30)
@@ -403,6 +404,19 @@ private final class Meter: NSObject {
         if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
         await shoot(window, "\(dir)/add-website\(suffix).png")
         Presentation.shared.addSite = nil; await meter.frames(45)
+        // A name on the home network, refused with why; and the sheet at the limit, which says so before anything is typed.
+        Presentation.shared.addSite = SiteTarget(address: "printer.lan"); await meter.frames(90)
+        if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
+        await shoot(window, "\(dir)/add-website-refused\(suffix).png")
+        Presentation.shared.addSite = nil; await meter.frames(45)
+        Store.shared.update { s in for i in 0..<(Sites.max - Self.shotSites.count) { s.sites["site\(i).example"] = DIRECT } }; await meter.frames(45)
+        Presentation.shared.addSite = SiteTarget(); await meter.frames(90)
+        if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
+        await shoot(window, "\(dir)/add-website-full\(suffix).png")
+        Presentation.shared.addSite = nil; await meter.frames(45)
+        // A rule saved for a name on the home network before such names were refused: its row says it isn't applied.
+        Store.shared.update { $0.sites = Self.shotSites.merging(["printer.lan": DIRECT]) { $1 } }; await meter.frames(60)
+        await shoot(window, "\(dir)/websites-not-applied\(suffix).png")
         Store.shared.update { $0.sites = [:] }; await meter.frames(60)
         await shoot(window, "\(dir)/empty-websites\(suffix).png")
         Store.shared.update { $0.sites = Self.shotSites }; await meter.frames(45)

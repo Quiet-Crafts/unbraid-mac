@@ -17,6 +17,8 @@ struct AppsView: View {
     /// The route's websites, listed under its apps, and their own selection and order.
     @State private var siteSelection = Set<String>()
     @State private var siteSort = AppsSort(terms: [.init(key: .name, ascending: true)])
+    /// The websites' own `rank`: sorting one list doesn't reorder the other.
+    @State private var siteRank = WeekBytes.shared.bytes
     /// Bytes per app this week, from the statistics. Outlives the page, so coming back shows the numbers at once.
     private let week = WeekBytes.shared
     /// The week's bytes when the list was last sorted: rows keep their places while the numbers refresh underneath,
@@ -48,9 +50,15 @@ struct AppsView: View {
                 LiveStrip(route: id, color: s.color(id), week: week)
             }
             banners(s)
-            // With websites under them, the apps take only the room their rows need, so the two lists sit together.
+            // With websites under them, the apps take only the room their rows need (the empty state's room when there
+            // are none), so the two lists sit together. In a short window both give up rows, down to two each, so
+            // neither is left a bare header while the other is whole.
             let siteCount = route.map { SiteEdits.on($0, in: s).count } ?? 0
-            table(rows).frame(maxHeight: siteCount == 0 ? .infinity : max(SitesTable.height(rows.count), 300)).layoutPriority(1)
+            if siteCount == 0 { table(rows).frame(maxHeight: .infinity).layoutPriority(1) }
+            else {
+                table(rows).frame(minHeight: SitesTable.height(min(max(rows.count, 1), 2)), maxHeight: rows.isEmpty ? 300 : SitesTable.height(rows.count))
+                    .layoutPriority(1)
+            }
             if let id = route { sites(id, s) }
             if siteCount > 0 { Spacer(minLength: 0) }
         }
@@ -117,12 +125,14 @@ struct AppsView: View {
                 if routes != week.routes { week.routes = routes }
                 // Statistics deleted while the page's order still leaned on them start it afresh.
                 if rank.isEmpty || totals.isEmpty { rank = totals }
+                if siteRank.isEmpty || totals.isEmpty { siteRank = totals }
                 // Every 15 s while unbraid is in front; once a minute behind other apps or minimised.
                 try? await Task.sleep(for: .seconds(NSApp.isActive ? 15 : 60))
             }
             if !Task.isCancelled && !model.setup.prefs.stats { week.bytes = [:] }
         }
         .onChange(of: filter.sort) { rank = week.bytes }
+        .onChange(of: siteSort) { siteRank = week.bytes }
     }
 
     // MARK: Header
@@ -184,14 +194,15 @@ struct AppsView: View {
 
     /// The route's websites under its apps, only when it has any: the same rows as the Websites page.
     @ViewBuilder private func sites(_ id: String, _ s: Setup) -> some View {
-        let rows = SitesTable.rows(s, route: id, sort: siteSort)
+        let rows = SitesTable.rows(s, route: id, sort: siteSort, rank: siteRank)
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Websites").overline().padding(.horizontal, Layout.gutter).accessibilityAddTraits(.isHeader)
                 SitesTable(rows: rows, selection: $siteSelection, sort: $siteSort)
-                    .frame(height: SitesTable.height(min(rows.count, 4)))
+                    .frame(minHeight: SitesTable.height(min(rows.count, 2)), maxHeight: SitesTable.height(min(rows.count, 4)))
             }
-            .padding(.top, 10)
+            .padding(.top, 10).padding(.bottom, Layout.gutter)
+            .layoutPriority(1)
             .onChange(of: rows.map(\.id)) { siteSelection.formIntersection(rows.map(\.id)) }
         }
     }

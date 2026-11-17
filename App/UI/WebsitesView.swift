@@ -8,11 +8,14 @@ struct WebsitesView: View {
     @State private var query = ""
     @State private var selection = Set<String>()
     @State private var sort = AppsSort(terms: [.init(key: .name, ascending: true)])
+    /// The week's bytes when the list was last sorted, as on the apps pages: rows keep their places while the numbers
+    /// refresh. Sorting again (a column header) takes the latest.
+    @State private var rank = WeekBytes.shared.bytes
 
     var body: some View {
         let s = model.setup
         let q = query.trimmingCharacters(in: .whitespaces)
-        let rows = SitesTable.rows(s, sort: sort).filter { q.isEmpty || $0.name.localizedStandardContains(q) }
+        let rows = SitesTable.rows(s, sort: sort, rank: rank).filter { q.isEmpty || $0.name.localizedStandardContains(q) }
         VStack(spacing: 0) {
             PageHeader(title: "Websites", subtitle: "\(Snapshot.websites(s.sites.count)) · A website's route comes before its app's")
             if s.sites.isEmpty {
@@ -57,10 +60,13 @@ struct WebsitesView: View {
                 let totals = await Stats.shared.appTotals(.week)
                 guard !Task.isCancelled else { return }
                 if totals != week.bytes { week.bytes = totals }
+                // Statistics deleted while the order still leaned on them start it afresh.
+                if rank.isEmpty || totals.isEmpty { rank = totals }
                 try? await Task.sleep(for: .seconds(NSApp.isActive ? 15 : 60))
             }
             if !Task.isCancelled && !model.setup.prefs.stats { week.bytes = [:] }
         }
+        .onChange(of: sort) { rank = WeekBytes.shared.bytes }
     }
 }
 
@@ -84,9 +90,9 @@ struct SitesTable: View {
     @Binding var sort: AppsSort
 
     /// The rows: every website, or those on `route`, in `sort`'s order, each with its bytes this week when statistics
-    /// count them.
-    static func rows(_ s: Setup, route: String? = nil, sort: AppsSort) -> [Row] {
-        let week = Self.week(WeekBytes.shared.bytes)
+    /// count them, as they were in `rank` (the totals when the list was last sorted).
+    static func rows(_ s: Setup, route: String? = nil, sort: AppsSort, rank: [String: Int64]) -> [Row] {
+        let week = Self.week(rank)
         return s.sites.filter { route == nil || $0.value == route }
             .map { Row(id: $0.key, name: Sites.shown($0.key), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)

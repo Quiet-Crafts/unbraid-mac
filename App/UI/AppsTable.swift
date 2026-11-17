@@ -41,8 +41,10 @@ struct AppsTable: NSViewRepresentable {
             c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
             table.addTableColumn(c)
         }
-        column(.name, sites ? "Website" : "App", min: 200, ideal: 350, max: 440, fills: true)
-        column(.route, "Route", min: 120, ideal: 234, max: 10_000, fills: true)
+        // The route is what a narrow window must still show whole ("United States · Default"): it keeps room for that,
+        // and the name, cut at its end, gives up width first.
+        column(.name, sites ? "Website" : "App", min: 140, ideal: 300, max: 440, fills: true)
+        column(.route, "Route", min: 180, ideal: 234, max: 10_000, fills: true)
         column(.week, "This Week", min: 136, ideal: 160, max: 190)
         let c = context.coordinator
         c.sites = sites
