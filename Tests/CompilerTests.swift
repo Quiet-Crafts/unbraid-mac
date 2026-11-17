@@ -205,6 +205,17 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(try own("tls://box.tail1234.ts.net", hs, suffix: "hs.example.org")["dns-r-nl"]?["detour"] as? String, "r-nl")
         XCTAssertEqual(try own("tls://box.hs.example.org", hs, suffix: "hs.example.org")["dns-r-nl"]?["detour"] as? String, "home-ts")
         XCTAssertEqual(try own("100.101.1.2", hs)["dns-r-nl"]?["detour"] as? String, "home-ts")
+        // A tailnet domain made of digits never makes a public address look like a tailnet name: only a server reached
+        // by name is matched by name.
+        XCTAssertEqual(try own("1.1.1.1", hs, suffix: "1.1")["dns-r-nl"]?["detour"] as? String, "r-nl")
+        XCTAssertNil(try own("1.1.1.1", hs, suffix: "1.1")["dns-filter"]?["detour"])
+        // The home WireGuard tunnel alone, with the tailnet off.
+        var wgOnly = wg
+        wgOnly.home.tailscale = false
+        XCTAssertEqual(try own("192.168.1.5", wgOnly)["dns-r-nl"]?["detour"] as? String, "home-wg")
+        XCTAssertEqual(try own("100.101.1.2", wgOnly)["dns-r-nl"]?["detour"] as? String, "home-wg", "inside the tunnel's own networks")
+        wgOnly.home.wg?.allowedIps = ["192.168.1.0/24"]
+        XCTAssertEqual(try own("100.101.1.2", wgOnly)["dns-r-nl"]?["detour"] as? String, "r-nl")
     }
 
     func testTheOwnDnsLineSaysHowAServerAtHomeIsReached() {
