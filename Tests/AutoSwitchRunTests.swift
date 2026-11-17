@@ -148,7 +148,9 @@ final class AutoSwitchRunTests: XCTestCase {
                         let start = 100 + gap
                         let got = drive(&run, [(100, sleeps ? [.sleep(true), offline] : [offline]), (start, sleeps ? [.sleep(false), pending()] : [pending()]),
                                                (start + answer, [on(heard)])], until: start + 400)
-                        XCTAssertEqual(got, answer < 20 ? [] : [unrecognised, "a,b"], "offline \(gap) s, router \(heard) after \(answer) s")
+                        // A moment offline is the same network: the hand pick holds, whatever the router does. After
+                        // longer, a late router costs one switch away and one back to home's rule.
+                        XCTAssertEqual(got, answer < 20 || gap <= 10 ? [] : [unrecognised, "a,b"], "offline \(gap) s, router \(heard) after \(answer) s")
                         XCTAssertEqual(run.acted, picked, "home decided on, as the pick was")
                     }
                 }
@@ -372,7 +374,10 @@ final class AutoSwitchRunTests: XCTestCase {
             }
             // At worst away and back, in pairs, each time a reading took longer than the one wait.
             let got = drive(&run, steps, until: now + 200)
-            XCTAssertEqual(got, Array(repeating: [unrecognised, "a,b"], count: got.count / 2).flatMap { $0 }, "seq \(seq)")
+            // Only home or, while a router was later than the one wait after time offline, any other network: never
+            // the office, never the same twice in a row (the hand pick ends with time offline; home's rule then applies).
+            XCTAssertTrue(got.allSatisfy { $0 == unrecognised || $0 == "a,b" }, "seq \(seq): \(got)")
+            XCTAssertFalse(zip(got, got.dropFirst()).contains { $0 == $1 }, "seq \(seq): \(got)")
             XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules), "seq \(seq)")
         }
     }
@@ -420,9 +425,57 @@ final class AutoSwitchRunTests: XCTestCase {
         var office = settled()
         XCTAssertEqual(drive(&office, [(900, [offline]), (1000, [pending(Self.office)]), (1005, [.pickedByHand]), (1030, [on("b,c", Self.office)])],
                              until: 1100), [], "whatever the reading turns out to be")
+        // A pick after the network counted as unrecognised holds the same way: it belongs to the network the Mac is on.
         var after = settled()
         XCTAssertEqual(drive(&after, [(900, [.sleep(true), offline]), (1000, [.sleep(false), pending()]), (1022, [.pickedByHand]),
-                                      (1030, [on("a,b")])], until: 1100), [unrecognised, "a,b"])
+                                      (1030, [on("a,b")])], until: 1100), [unrecognised])
+    }
+
+    /// Z-5: an ambiguous fingerprint first (a router two remembered networks share), then the full one: a pick made
+    /// while the network was read holds through both; a later reading for the same arrival never replaces it.
+    func testAHandPickHoldsThroughAnAmbiguousThenFullReading() {
+        var run = Run(rules: rules, now: t0)
+        XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending()]), (5, [.pickedByHand]), (30, [on("b")]),
+                                    (40, [on("a,b")]), (60, [on("c")]), (80, [pending()]), (110, [on("a,b")])], until: 200), [])
+        XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules))
+        // Until the Mac leaves the network: then the next one decides.
+        XCTAssertEqual(drive(&run, [(210, [offline]), (240, [on("b,c", Self.office)])], until: 300), ["b,c"])
+        // A new rule for the network it is on applies over the pick.
+        var ruled = Run(rules: rules, now: t0)
+        var r = rules
+        r.known[0].profile = "Work"
+        XCTAssertEqual(drive(&ruled, [(0, [.profiles(names), .connected(true), on("a,b")]), (10, [.pickedByHand]), (20, [.rules(r)])], until: 100),
+                       ["a,b", "a,b"])
+    }
+
+    /// Z-5 as a property: a hand pick made at any moment on a network (known, being read, unrecognised) holds through
+    /// every later reading of it, ambiguous or not, moments offline, reconnects and busy, until the Mac leaves.
+    func testRandomAHandPickHoldsUntilTheMacLeaves() {
+        var g = Rng(s: 0x2a5)
+        let readings: [Run.Event] = [pending(), on("a"), on("b"), on("a,b"), on("c"), on("b,c"), on("x"), .network(.reading(place: "en0|"))]
+        for seq in 0..<1500 {
+            var run = Run(rules: rules, now: t0)
+            var now = 0.0, steps: [(Double, [Run.Event])] = [(0, [.profiles(names), .connected(true), g.pick(readings)])]
+            let pickAt = Double(1 + g.int(60))
+            var picked = false
+            for _ in 0..<(1 + g.int(25)) {
+                now += g.pick([0.5, 3, 9, 21, 40])
+                // Picked while on the network (a pick made offline is for no network).
+                if !picked, now >= pickAt { steps.append((now, [g.pick(readings), .pickedByHand])); picked = true; now += 0.1 }
+                switch g.int(5) {
+                case 0: steps.append((now, [offline])); now += g.pick([0.5, 5, 9.5]); steps.append((now, [g.pick(readings)]))
+                case 1: steps.append((now, [.connected(false)])); now += 2; steps.append((now, [.connected(true)]))
+                case 2: steps.append((now, [.busy(true)])); now += 1; steps.append((now, [.busy(false)]))
+                default: steps.append((now, [g.pick(readings)]))
+                }
+            }
+            if !picked { now += 1; steps.append((now, [g.pick(readings), .pickedByHand])) }
+            let at = steps.firstIndex { $0.1.contains(.pickedByHand) }!
+            var before = run
+            _ = drive(&before, Array(steps[..<at]), until: steps[at].0 - 0.01)
+            run = before
+            XCTAssertEqual(drive(&run, Array(steps[at...]), until: now + 200), [], "seq \(seq)")
+        }
     }
 
     func testASwitchThatAProviderLimitWouldQuestionIsNeverStartedByItself() {

@@ -11,11 +11,12 @@ import Foundation
 /// - A network that gives no acceptable reading within `AutoSwitch.unrecognisedAfter` (20 s) counts as one unbraid can't
 ///   recognise (the profile for any other network): one wait, for every case.
 /// - A remembered network read after that (a router that answered late) is a decision like any other: its rule's
-///   profile. A hand pick made before ended when the network was counted as changed.
+///   profile, unless a profile was picked by hand on this network since it was reached.
 /// - A decision is made once per network and the profile its rule names, only while connected and not busy, once the
 ///   network has lasted `AutoSwitch.settle`; one the app couldn't make (`unapplied`) is owed again.
-/// - A profile picked by hand counts as decided for the network it was picked on, or, while that network is still being
-///   read, for the network the reading gives; going offline has no network to pick for.
+/// - A profile picked by hand belongs to the network the Mac is on at that moment (known, still being read, or
+///   unrecognised) and holds until the Mac leaves it or comes back after more than a moment offline; no later reading
+///   of that network replaces it, only a new rule for it. Picked offline, it is for no network.
 ///
 /// Kept in memory only: after a restart the first connect decides again. Times are on the continuous clock.
 nonisolated struct AutoSwitchRun: Equatable, Sendable {
@@ -102,10 +103,8 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     private(set) var acted: AutoSwitch.Acted?
     /// Counts decisions and hand picks: a report of a switch not made is about the decision it names only.
     private(set) var generation = 0
-    /// A profile was picked by hand while this network was still being read.
-    private(set) var byHand = false
-    /// That pick was taken when the reading counted as unrecognised: it holds for the network's late answer too.
-    private(set) var held = false
+    /// A profile was picked by hand on this network: nothing is decided here until the Mac leaves it.
+    private(set) var picked = false
 
     init(rules: NetworkRules, now: Instant = .now) { self.rules = rules; since = now; waiting = now }
 
@@ -126,7 +125,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     /// half taken in (connected, but not yet seen as busy).
     mutating func handle(_ events: [Event], now: Instant = .now) -> Action {
         for event in events {
-            take(now)
             switch event {
             case .network(let r): network(r, now)
             case .sleep(let s):
@@ -142,13 +140,16 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
                     renamed.renamed(old, to: new)
                     if renamed == r { acted?.profile = new }
                 }
-                // Otherwise only a new profile for this network is a change here.
-                if let here = here(at: now), r.profile(on: here) != rules.profile(on: here) { since = now }
+                // Otherwise only a new profile for this network is a change here, and it applies over a hand pick
+                // (while the network is still being read, any change might be one).
+                if let here = here(at: now) {
+                    if r.profile(on: here) != rules.profile(on: here) { since = now; picked = false }
+                } else { picked = false }
                 rules = r
-                byHand = false; held = false
             case .pickedByHand:
-                generation += 1; held = false
-                if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = reading != .offline }
+                generation += 1
+                picked = reading != .offline
+                if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) }
             case .unapplied(let g):
                 // Owed again, after the settle time, unless something newer was decided or picked meanwhile.
                 if g == generation, acted != nil { acted = nil; since = now }
@@ -156,7 +157,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
             case .profiles(let p): profiles = p
             case .timer: break
             }
-            take(now)
         }
         return next(now)
     }
@@ -185,12 +185,12 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         offlineAt = nil; slept = false
         let (interface, router) = Place.split(p)
         if !same {
-            acted = nil; byHand = false; held = false; read = false; resolved = nil
+            acted = nil; picked = false; read = false; resolved = nil
             place = Place(interface: interface, router: router)
         } else if let router { place?.router = router }
         // Back after more than a moment: what was decided stays to compare with, but which remembered network this is
         // takes a fresh reading.
-        if !moment { resolved = nil; read = false }
+        if !moment { resolved = nil; read = false; picked = false }
         switch r {
         case .mark(let m, _):
             read = true
@@ -207,15 +207,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     }
 
 
-    /// A pick made while the network was being read counts as decided for the network being read: taken at the reading's
-    /// first result, and held if that was "unrecognised" for whatever the routers answer later on this network.
-    private mutating func take(_ now: Instant) {
-        guard byHand, let here = here(at: now) else { return }
-        byHand = false
-        held = here == AutoSwitch.unrecognised
-        acted = AutoSwitch.Acted(mark: here, rules: rules)
-    }
-
     private mutating func next(_ now: Instant) -> Action {
         guard connected, !rules.isEmpty else { return .nothing }
         let due: Instant
@@ -227,19 +218,15 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         if now < due { return .wait(due) }
         // Decided once it settles (`busy(false)` comes back here).
         guard !busy, let here = here(at: now) else { return .nothing }
-        // A pick made while this network was read holds whatever its routers turned out to be.
-        if held, here != AutoSwitch.unrecognised, acted?.mark == AutoSwitch.unrecognised {
-            held = false
-            acted = AutoSwitch.Acted(mark: here, rules: rules)
-            return .nothing
-        }
+        // A hand pick holds on this network, whatever its reading turns out to be: what is known of it is noted, nothing
+        // is decided.
+        if picked { acted = AutoSwitch.Acted(mark: here, rules: rules); return .nothing }
         // What was decided here was not a remembered network: this network read again without an answer is still it.
         if here == AutoSwitch.unrecognised, let a = acted, !rules.known.contains(where: { $0.id == a.mark }),
            a.profile == rules.profile(on: here) { return .nothing }
         let decided = AutoSwitch.Acted(mark: here, rules: rules), was = acted
         acted = decided
         guard was != decided else { return .nothing }
-        held = false
         generation += 1
         return .decide(mark: here, acted: was)
     }
