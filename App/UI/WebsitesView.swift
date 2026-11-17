@@ -46,6 +46,17 @@ struct WebsitesView: View {
         // ⌥⌘1…9 and Find act on this page's websites; Follow Default has no meaning for one.
         .background(SitesActions(selection: $selection))
         .onChange(of: rows.map(\.id)) { selection.formIntersection(rows.map(\.id)) }
+        // The week's numbers, as the apps pages keep them: every 15 s in front, once a minute behind other apps.
+        .task(id: model.setup.prefs.stats) {
+            let week = WeekBytes.shared
+            while !Task.isCancelled, model.setup.prefs.stats {
+                let totals = await Stats.shared.appTotals(.week)
+                guard !Task.isCancelled else { return }
+                if totals != week.bytes { week.bytes = totals }
+                try? await Task.sleep(for: .seconds(NSApp.isActive ? 15 : 60))
+            }
+            if !Task.isCancelled && !model.setup.prefs.stats { week.bytes = [:] }
+        }
     }
 }
 
@@ -67,18 +78,26 @@ struct SitesTable: View {
     @Binding var selection: Set<String>
     @Binding var sort: AppsSort
 
-    /// The rows: every website, or those on `route`, in `sort`'s order. A website has no week of its own yet.
+    /// The rows: every website, or those on `route`, in `sort`'s order, each with its bytes this week when statistics
+    /// count them.
     static func rows(_ s: Setup, route: String? = nil, sort: AppsSort) -> [Row] {
-        s.sites.filter { route == nil || $0.value == route }
-            .map { Row(id: $0.key, name: $0.key, routeName: s.label($0.value), week: 0) }
+        let week = Self.week(WeekBytes.shared.bytes)
+        return s.sites.filter { route == nil || $0.value == route }
+            .map { Row(id: $0.key, name: $0.key, routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)
+    }
+
+    /// The week's bytes per website address, out of the statistics' totals (which count a website under its own key).
+    static func week(_ totals: [String: Int64]) -> [String: Int64] {
+        totals.reduce(into: [:]) { out, e in if let site = StatsMath.site(e.key) { out[site] = e.value } }
     }
 
     /// The height that shows `count` rows under the header, so a short list doesn't hold an empty band.
     static func height(_ count: Int) -> CGFloat { 28 + AppsTable.rowHeight * CGFloat(count) + 8 }
 
     var body: some View {
-        AppsTable(rows: rows, week: [:], peak: 0, page: "sites", selection: $selection, sort: $sort, sites: true)
+        let week = Self.week(WeekBytes.shared.bytes)
+        AppsTable(rows: rows, week: week, peak: week.values.max() ?? 0, page: "sites", selection: $selection, sort: $sort, sites: true)
             .frame(maxHeight: Self.height(rows.count)).pageWidth()
     }
 }

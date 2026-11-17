@@ -254,9 +254,6 @@ private final class Meter: NSObject {
         model.acceptDisclosureForPerf()
     }
 
-    /// Two made-up websites with a route of their own, so Traffic shows website lines.
-    private static let shotSites = ["tv.example.com": "us", "news.example.org": "it"]
-
     /// A month of traffic: video and music heaviest, each app through its own route, the websites through theirs.
     private func seedShotTraffic() {
         let heavy = ["com.apple.TV", "com.apple.Music", "com.apple.Safari", "com.apple.Photos", "com.apple.podcasts", "com.apple.Maps", "com.apple.news", "com.apple.AppStore", "com.apple.mail"]
