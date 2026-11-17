@@ -608,38 +608,60 @@ nonisolated enum Backup {
         case easy, fair, hard
         var text: String {
             switch self {
-            case .easy: "Easy to guess. Use 12 or more characters, or four or more different words."
+            case .easy: "Easy to guess. Four or more different words work well."
             case .fair: "Fair. Longer is safer: four or more words work well."
             case .hard: "Hard to guess"
             }
         }
     }
 
-    /// The Android app's rule, counting only what adds to a guess: four or more different words of three letters or
-    /// more, or enough bits for the characters that count (`guessable`) and the kinds of character it uses. Length
-    /// alone is no sign of a passphrase picked at random: "aaaaaaaaaaaaaaaa" or "horse horse horse horse" stay easy.
+    /// Counting only what adds to a guess, judged on the passphrase as the file's key is made from it (NFC): four or more
+    /// different words of three letters or more that share no stem, or enough bits for the characters that count
+    /// (`guessable`, with spaces and separators left out) and the kinds of character it uses. Length alone is no sign of a passphrase picked at random: however often a letter,
+    /// a word or a common password is repeated, the repeats add nothing.
     static func strength(_ passphrase: String) -> Strength {
-        let kinds = [(26, passphrase.contains(where: \.isLowercase)), (26, passphrase.contains(where: \.isUppercase)), (10, passphrase.contains(where: \.isNumber)),
-                     (33, passphrase.contains { !$0.isLetter && !$0.isNumber })]
+        let p = passphrase.precomposedStringWithCanonicalMapping
+        let kinds = [(26, p.contains(where: \.isLowercase)), (26, p.contains(where: \.isUppercase)), (10, p.contains(where: \.isNumber)),
+                     (33, p.contains { !$0.isLetter && !$0.isNumber })]
         let pool = max(1, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) })
-        let bits = Double(guessable(passphrase)) * log2(Double(pool))
-        let words = Set(passphrase.lowercased().split(whereSeparator: \.isWhitespace).filter { $0.count >= 3 }.map(String.init))
-        return (words.count >= 4 && words.allSatisfy { guessable($0) >= 3 }) || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
+        // Judged without separators, so a word with a counter ("pass1 pass2 pass3") counts its stem once.
+        let joined = String(p.filter { !$0.isWhitespace && !"-_.,".contains($0) })
+        let counted = guessable(joined)
+        let bits = Double(counted) * log2(Double(pool))
+        let words = Set(p.lowercased().split(whereSeparator: \.isWhitespace).filter { $0.count >= 3 }.map(String.init))
+        return (words.count >= 4 && words.allSatisfy { guessable($0) >= 3 } && counted >= 12) || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
     }
 
     /// Passwords everyone tries first: each counts as one character wherever it appears.
     private static let common = ["password", "passw0rd", "qwerty", "azerty", "letmein", "welcome", "iloveyou", "admin", "unbraid", "monkey", "dragon", "123456"]
 
-    /// How many characters of `s` add to a guess: not one that repeats the one before or continues a run (abc, 321), a
-    /// stretch of three or more that already appeared counts once, and so does a common password.
+    /// How many characters of `s` (as the user sees them) add to a guess: not one that repeats the one before or
+    /// continues a run (abc, 321), nor a stretch of two or more that already appeared; a common password counts once.
     private static func guessable(_ s: String) -> Int {
         var t = s.lowercased()
         for w in common { t = t.replacingOccurrences(of: w, with: "\u{1}") }
-        let c = t.unicodeScalars.prefix(256).map { Int($0.value) }
-        func seen(_ i: Int, _ l: Int) -> Bool { (0...(i - l)).contains { j in c[j..<j + l].elementsEqual(c[i..<i + l]) } }
+        // One number per character: its scalar when it is one (so runs can be told), else an id of its own.
+        var ids: [Character: Int] = [:]
+        var c: [Int] = []
+        for ch in t.prefix(256) {
+            if ch.unicodeScalars.count == 1, let v = ch.unicodeScalars.first?.value { c.append(Int(v)); continue }
+            if ids[ch] == nil { ids[ch] = 0x200000 + ids.count }
+            c.append(ids[ch] ?? 0)
+        }
+        /// The longest stretch starting at `i` that already appeared before it.
+        func seen(_ i: Int) -> Int {
+            var best = 0
+            for j in 0..<i where c[j] == c[i] {
+                var k = 0
+                while i + k < c.count, j + k < i, c[j + k] == c[i + k] { k += 1 }
+                best = max(best, k)
+            }
+            return best
+        }
         var n = 0, i = 0
         while i < c.count {
-            if i >= 3, let l = stride(from: min(c.count - i, i), through: 3, by: -1).first(where: { seen(i, $0) }) { n += 1; i += l; continue }
+            let l = seen(i)
+            if l >= 2 { i += l; continue }
             let step = i > 0 ? c[i] - c[i - 1] : 99, before = i > 1 ? c[i - 1] - c[i - 2] : 99
             if step != 0 && !(abs(step) == 1 && step == before) { n += 1 }
             i += 1

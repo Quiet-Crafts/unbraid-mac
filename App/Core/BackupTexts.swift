@@ -50,7 +50,7 @@ nonisolated enum BackupTexts {
             return SaveCheck(ready: false, problem: "Choose a passphrase that is harder to guess to include keys")
         }
         guard !passphrase.isEmpty, !again.isEmpty else { return SaveCheck(ready: false) }
-        if passphrase.count < minLength { return SaveCheck(ready: false, problem: "Use \(minLength) or more characters") }
+        if passphrase.count < minLength { return SaveCheck(ready: false, problem: "A passphrase needs at least \(minLength) characters") }
         if again != passphrase {
             return SaveCheck(ready: false, problem: again.count >= passphrase.count ? "The passphrases don't match" : nil)
         }

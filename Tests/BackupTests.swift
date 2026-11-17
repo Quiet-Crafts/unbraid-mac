@@ -807,14 +807,14 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.replaces(Backup.Summary()), "Nothing set up on this Mac yet. Provider sign-ins, your Tailscale sign-in and statistics stay as they are.")
     }
 
-    func testPassphraseStrengthIsAndroidsRule() {
+    func testPassphraseStrengthCountsOnlyWhatAddsToAGuess() {
         XCTAssertEqual(Backup.strength(""), .easy)
         XCTAssertEqual(Backup.strength("abc123"), .easy)
         XCTAssertEqual(Backup.strength("abcdefghij"), .easy)
         XCTAssertEqual(Backup.strength("qjxv7mwz3k"), .fair)
         XCTAssertEqual(Backup.strength("Tr0ub4dor&3"), .hard)
         XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
-        XCTAssertEqual(Backup.strength("ab cd ef gh"), .fair)
+        XCTAssertEqual(Backup.strength("ab cd ef gh"), .easy)
         XCTAssertEqual(Backup.strength("ab cd"), .easy)
         XCTAssertEqual(Backup.Strength.hard.text, "Hard to guess")
         XCTAssertTrue(Backup.Strength.easy.text.hasPrefix("Easy to guess"))
@@ -826,6 +826,38 @@ final class BackupTests: XCTestCase {
             XCTAssertFalse(BackupTexts.saveCheck(trivial, trivial, keys: true).ready, trivial)
         }
         XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
+        // However often it is repeated.
+        for n in [8, 20, 40] {
+            for word in ["horse", "password"] {
+                let p = Array(repeating: word, count: n).joined(separator: " ")
+                XCTAssertEqual(Backup.strength(p), .easy, p); XCTAssertFalse(BackupTexts.saveCheck(p, p, keys: true).ready, p)
+            }
+            // A word that is fair on its own stays fair, never more.
+            XCTAssertEqual(Backup.strength(Array(repeating: "Tr0ub4dor", count: n).joined(separator: " ")), Backup.strength("Tr0ub4dor "))
+        }
+        // Judged as the key is made from it (NFC): the same characters typed composed or decomposed get the same answer.
+        for (composed, decomposed) in [("éàöüíçñå", "e\u{301}a\u{300}o\u{308}u\u{308}i\u{301}c\u{327}n\u{303}a\u{30A}"), ("Ünïcødé pässwörd 12", "U\u{308}ni\u{308}cødé pa\u{308}ssw\u{F6}rd 12")] {
+            XCTAssertEqual(Backup.strength(composed), Backup.strength(decomposed), decomposed)
+            XCTAssertEqual(BackupTexts.saveCheck(composed, composed, keys: true), BackupTexts.saveCheck(decomposed, decomposed, keys: true))
+        }
+        XCTAssertEqual(Backup.strength("e\u{301}a\u{300}o\u{308}u\u{308}i\u{301}c\u{327}n\u{303}a\u{30A}"), .easy)
+        // Words with a counter share their stem: counted once, without the spaces between them. Trivial ones from the
+        // adversarial run, and random ones that are hard.
+        for p in ["pass1 pass2 pass3 pass4", "word1 word2 word3 word4", "abd1 abd2 abd3 abd4", "test1 test2 test3 test4", "aaaaaaaaaaaaaaaaaaaaaaaa",
+                  "abcabcabcabcabcabc", "Password1234!", "qwertyqwertyqwerty", "unbraid unbraid unbraid unbraid", "1234567890123456",
+                  "abcdefghijklmnopqrstuvwxyz", "zyxwvutsrqponmlkjihgfedcba", "Aa1!Aa1!Aa1!Aa1!", "horse horse horse horse", "letmein letmein letmein"] {
+            XCTAssertNotEqual(Backup.strength(p), .hard, p)
+        }
+        let start = Date()
+        _ = Backup.strength(String(repeating: "abcdefghij", count: 10_000))
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+        var g = SystemRandomNumberGenerator()
+        let alphabet = Array("abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!#$%&*+-=?@")
+        XCTAssertLessThan((0..<500).filter { _ in Backup.strength(String((0..<16).map { _ in alphabet.randomElement(using: &g)! })) != .hard }.count, 25)
+        XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
+        // One requirement at a time: the meter suggests, the floor says what is needed, with one number.
+        XCTAssertFalse(Backup.Strength.easy.text.contains(where: \.isNumber))
+        XCTAssertFalse(Backup.Strength.fair.text.contains(where: \.isNumber))
     }
 
     // MARK: The sheets' rules
@@ -841,7 +873,7 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: false), .init(ready: true))
         // Easy to guess is only a hint, until keys go in the file; but never shorter than 8 characters, said once the
         // second field is being typed.
-        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: false), .init(ready: false, problem: "Use 8 or more characters"))
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: false), .init(ready: false, problem: "A passphrase needs at least 8 characters"))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "", keys: false), .init(ready: false))
         XCTAssertEqual(BackupTexts.saveCheck("abcd1234", "abcd1234", keys: false), .init(ready: true))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: true), .init(ready: false, problem: "Choose a passphrase that is harder to guess to include keys"))
