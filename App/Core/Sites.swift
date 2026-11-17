@@ -41,8 +41,12 @@ nonisolated enum Sites {
     private enum Read { case name(String), refused(String) }
 
     private static func read(_ raw: String) -> Read {
-        var host = raw.trimmingCharacters(in: .whitespacesAndNewlines)[...]
-        if let scheme = host.range(of: "://") { host = host[scheme.upperBound...] }
+        // Read as a browser reads a web address: tabs and line breaks anywhere are dropped and a backslash is a slash,
+        // so "example.com\\@evil.com" opens example.com (the rest is its path), and is saved as that.
+        let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines).filter { !"\t\n\r".contains($0) }.replacingOccurrences(of: "\\", with: "/")
+        var host = typed[...]
+        if let scheme = host.prefixMatch(of: /[A-Za-z][A-Za-z0-9+.\-]*:\/+/) { host = host[scheme.range.upperBound...] }
+        // The host ends where the path, query or fragment starts; only an "@" before that ends a user name.
         for end in ["/", "?", "#"] { if let r = host.range(of: end) { host = host[..<r.lowerBound] } }
         if let at = host.range(of: "@", options: .backwards) { host = host[at.upperBound...] }
         // An IPv6 address, bracketed in a link or bare: two colons or more, or a bracket.

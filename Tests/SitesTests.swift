@@ -29,6 +29,15 @@ final class SitesTests: XCTestCase {
                     "93.184.216.0x22", "0x7f.1", "example.0x1f", "example.0x", "1.2.3.04", "a.123"] {
             XCTAssertNil(Sites.clean(bad), bad)
         }
+        // Read as a browser reads a web address: a backslash is a slash and tabs and line breaks are dropped, so what is
+        // saved is the website a browser opens, never a name after an "@" in its path, query or fragment.
+        for (raw, want) in [("https://example.com\\@evil.com", "example.com"), ("example.com\\@evil.com", "example.com"),
+                            ("https://example.com\\x@evil.com/", "example.com"), ("https:\\\\example.com\\path", "example.com"),
+                            ("https://example.com?@evil.com", "example.com"), ("https://example.com#@evil.com", "example.com"),
+                            ("https://example.com/@evil.com", "example.com"), ("https://user:p@ss@example.com/", "example.com"),
+                            ("exam\tple.com", "example.com"), ("https://exa\nmple.com/\r", "example.com"), ("example.com:443", "example.com")] {
+            XCTAssertEqual(Sites.clean(raw), want, raw.debugDescription)
+        }
         // What is kept reads back as itself: a saved address is checked that way.
         for raw in ["WWW.netflix.com", "www.www.example.com", "www.com", "www.www.com", "https://www.a.b.example/x", "münchen.de"] {
             let kept = Sites.clean(raw)
