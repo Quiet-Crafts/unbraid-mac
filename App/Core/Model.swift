@@ -99,6 +99,11 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     var own: String?
     /// Whether unbraid checks that this own server still reaches the internet; nil follows the config (`checksInternet`).
     var checkInternet: Bool? = nil
+    /// Restored from a backup saved without keys: it holds no secret and never runs until its own server gets its config
+    /// again (`Setup.refilled`); its traffic is refused meanwhile (`LinkPicker.Blocked.keyLeftOut`).
+    var keyless = false
+
+    enum CodingKeys: String, CodingKey { case id, loc, wg, ovpn, ss, tsExit, tsName, hue, filter, own, checkInternet, keyless }
 
     var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? tsName ?? tsExit ?? loc.country ?? "Fastest" }
     var code: String { wg != nil ? "WG" : ovpn != nil ? "OV" : ss != nil ? "SS" : tsExit != nil ? "TS" : loc.code }
@@ -247,10 +252,22 @@ nonisolated struct OwnServer: Codable, Hashable, Identifiable, Sendable {
     var wg: WgPeer?
     var ovpn: OvpnProfile?
     var ss: SsProfile?
+    /// Restored from a backup saved without keys: it holds no secret, and every route through it is blocked until its
+    /// config is added again (`Setup.refilled`).
+    var keyless = false
+
+    enum CodingKeys: String, CodingKey { case id, wg, ovpn, ss, keyless }
 
     var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? "" }
     var kind: String { wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : "Shadowsocks" }
     var code: String { wg != nil ? "WG" : ovpn != nil ? "OVPN" : "SS" }
+
+    /// The same server as `o` by what can be told without keys: kind, name and, for WireGuard and Shadowsocks, where
+    /// it is and (WireGuard) its public key.
+    func sameAs(_ o: OwnServer) -> Bool {
+        kind == o.kind && name == o.name && (wg == nil || (wg?.endpoint == o.wg?.endpoint && wg?.publicKey == o.wg?.publicKey))
+            && (ss == nil || (ss?.server == o.ss?.server && ss?.port == o.ss?.port && ss?.method == o.ss?.method))
+    }
 }
 
 nonisolated struct Profile: Codable, Hashable, Sendable, Identifiable {
@@ -644,7 +661,36 @@ nonisolated extension Route {
         // the provider route that `loc` defaults to. The setup then leaves this route out (see `Unreadable`).
         loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); tsExit = try c.source(.tsExit)
         tsName = try c.saved(.tsName, nil); hue = try c.saved(.hue, 0); filter = try c.saved(.filter, nil); own = try c.saved(.own, nil)
-        checkInternet = try c.saved(.checkInternet, nil)
+        checkInternet = try c.saved(.checkInternet, nil); keyless = try c.saved(.keyless, false)
+    }
+
+    /// The keys the synthesized encoding wrote, in the same cases, and `keyless` only when set: a setup without it is
+    /// written byte for byte as before, so its revisions don't change.
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id); try c.encode(loc, forKey: .loc)
+        try c.encodeIfPresent(wg, forKey: .wg); try c.encodeIfPresent(ovpn, forKey: .ovpn); try c.encodeIfPresent(ss, forKey: .ss)
+        try c.encodeIfPresent(tsExit, forKey: .tsExit); try c.encodeIfPresent(tsName, forKey: .tsName); try c.encode(hue, forKey: .hue)
+        try c.encodeIfPresent(filter, forKey: .filter); try c.encodeIfPresent(own, forKey: .own)
+        try c.encodeIfPresent(checkInternet, forKey: .checkInternet)
+        if keyless { try c.encode(true, forKey: .keyless) }
+    }
+}
+
+nonisolated extension OwnServer {
+    nonisolated init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        wg = try c.decodeIfPresent(WgPeer.self, forKey: .wg); ovpn = try c.decodeIfPresent(OvpnProfile.self, forKey: .ovpn)
+        ss = try c.decodeIfPresent(SsProfile.self, forKey: .ss); keyless = try c.saved(.keyless, false)
+    }
+
+    /// As the synthesized encoding wrote it, with `keyless` only when set (see `Route.encode`).
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encodeIfPresent(wg, forKey: .wg); try c.encodeIfPresent(ovpn, forKey: .ovpn); try c.encodeIfPresent(ss, forKey: .ss)
+        if keyless { try c.encode(true, forKey: .keyless) }
     }
 }
 

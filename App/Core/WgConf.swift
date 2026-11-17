@@ -80,6 +80,18 @@ nonisolated enum WgConf {
             mtu: Int(kv["[interface].mtu"] ?? "").map { min(max($0, 1280), 1500) } ?? 1420, keepalive: keepalive)
     }
 
+    /// `p` written back as a wg-quick config that `parse` reads as `p` again: a saved peer is checked that way, as an
+    /// import would check it.
+    static func text(_ p: WgPeer) -> String {
+        var lines = ["[Interface]", "PrivateKey = \(p.privateKey)", "Address = \(p.address.joined(separator: ", "))"]
+        if !p.dns.isEmpty { lines.append("DNS = \(p.dns.joined(separator: ", "))") }
+        lines += ["MTU = \(p.mtu)", "", "[Peer]", "PublicKey = \(p.publicKey)"]
+        if let psk = p.presharedKey { lines.append("PresharedKey = \(psk)") }
+        lines += ["Endpoint = \(p.endpoint)", "AllowedIPs = \(p.allowedIps.joined(separator: ", "))"]
+        if let k = p.keepalive { lines.append("PersistentKeepalive = \(k)") }
+        return lines.joined(separator: "\n") + "\n"
+    }
+
     /// "host:port" with a port in range and a host; a host with colons (IPv6) must be bracketed, or "2001:db8::1" would
     /// read as host "2001:db8:" and port 1.
     static func validEndpoint(_ e: String) -> Bool {

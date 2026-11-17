@@ -4,6 +4,8 @@ import Foundation
 nonisolated enum LinkPicker {
     enum Blocked: Equatable, Sendable {
         case signedOut(String), refused(String, String), removed(String), unreachable(String), noLongerOffered(String), clash, waiting
+        /// Restored from a backup saved without keys (`Route.keyless`): refused, never retried, until its config is back.
+        case keyLeftOut
 
         var text: String {
             switch self {
@@ -14,6 +16,7 @@ nonisolated enum LinkPicker {
             case .noLongerOffered(let server): "\(server) is no longer offered. Pick another server"
             case .clash: Compiler.clashMessage
             case .waiting: "waiting for a server"
+            case .keyLeftOut: "needs its config again"
             }
         }
     }
@@ -73,6 +76,23 @@ nonisolated enum LinkPicker {
             || Set(old.apps.keys).union(new.apps.keys).contains { changes(old.routeOf($0), new.routeOf($0)) }
     }
 
+    /// A route restored without its keys, or one given an own server still waiting for its config however it got there:
+    /// it has no tunnel to run, and its traffic is refused rather than sent anywhere else.
+    static func keyLeftOut(_ r: Route, in setup: Setup) -> Bool {
+        r.keyless || (r.own.map { id in setup.servers.contains { $0.id == id && $0.keyless } } ?? false)
+    }
+
+    /// The tunnel of an imported route, as its config gives it; nil for a provider route.
+    static func imported(_ r: Route) -> Link? {
+        if let w = r.wg {
+            return .wg(Server(name: w.name, host: w.endpoint.split(separator: ":", omittingEmptySubsequences: false).dropLast().joined(separator: ":"), ip: "", publicKey: w.publicKey, load: 0), w)
+        }
+        if let o = r.ovpn { return .ovpn(Server(name: o.name, host: o.name, ip: "", publicKey: "", load: 0), o) }
+        if let s = r.ss { return .ss(Server(name: s.name, host: s.server, ip: s.server, publicKey: "", load: 0), s) }
+        if let x = r.tsExit { return .ts(Server(name: r.name, host: x, ip: "", publicKey: "", load: 0)) }
+        return nil
+    }
+
     /// Fallback-cache key: a pinned route is its own entry, so it can never inherit another server's tunnel.
     static func serverKey(_ r: Route, _ l: Link) -> String { "\(r.loc.provider)|\(serverId(l.server))" }
 
@@ -105,19 +125,14 @@ nonisolated enum LinkPicker {
         var out: [String: Link] = [:]
         var blocked: [String: Blocked] = [:]
         for r in setup.activeRoutes {
+            if keyLeftOut(r, in: setup) { blocked[r.id] = .keyLeftOut; continue }
             if let reason = gone.reason(for: r) { blocked[r.id] = reason; continue }
             if let reason = deferred[r.id] { blocked[r.id] = reason; continue }
             if !r.imported, let reason = refused[r.loc.provider] { blocked[r.id] = reason; continue }
             let link: Link
             do {
-                if let w = r.wg {
-                    link = .wg(Server(name: w.name, host: w.endpoint.split(separator: ":", omittingEmptySubsequences: false).dropLast().joined(separator: ":"), ip: "", publicKey: w.publicKey, load: 0), w)
-                } else if let o = r.ovpn {
-                    link = .ovpn(Server(name: o.name, host: o.name, ip: "", publicKey: "", load: 0), o)
-                } else if let s = r.ss {
-                    link = .ss(Server(name: s.name, host: s.server, ip: s.server, publicKey: "", load: 0), s)
-                } else if let x = r.tsExit {
-                    link = .ts(Server(name: r.name, host: x, ip: "", publicKey: "", load: 0))
+                if let l = imported(r) {
+                    link = l
                 } else if let k = keep[r.id], let a = applied?.route(r.id), !a.imported, a.loc == r.loc,
                           appliedAccounts[r.loc.provider] == accounts[r.loc.provider],
                           (r.loc.provider != "mullvad" || r.loc.pinned != nil || applied?.opt("mullvad", "owned") == setup.opt("mullvad", "owned")),

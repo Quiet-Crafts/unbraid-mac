@@ -143,7 +143,9 @@ nonisolated enum Lifecycle {
 
     static func acceptsTakeover(_ blocked: [String: LinkPicker.Blocked], activeRoutes: Int) -> Bool {
         (activeRoutes == 0 || blocked.count < activeRoutes) &&
-            blocked.values.allSatisfy { if case .signedOut = $0 { return true }; return false }
+            // A route restored without its keys is as settled as one signed out: refused until the user acts, so it
+            // never holds a takeover back.
+            blocked.values.allSatisfy { switch $0 { case .signedOut, .keyLeftOut: true; default: false } }
     }
 
     static func holds(_ provider: String, setup: Setup, linked: Set<String>?) -> Bool {

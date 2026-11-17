@@ -580,6 +580,19 @@ nonisolated enum Manual {
         return SsProfile(name: label, server: host, port: port, method: method, password: password, plugin: pluginName, pluginOpts: opts)
     }
 
+    /// `p` as a SIP002 link that `parseSs(_:name:)` reads as `p` again (given its name): a saved server is checked that
+    /// way, as an import would check it. Everything outside the unreserved characters is %-escaped, credentials in
+    /// Base64url, so no value can reach another part of the link.
+    static func ssLink(_ p: SsProfile) -> String {
+        let plain = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+        func pct(_ s: String) -> String { s.addingPercentEncoding(withAllowedCharacters: plain) ?? "" }
+        let user = Data("\(p.method):\(p.password)".utf8).base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
+        let host = p.server.contains(":") ? "[\(p.server)]" : p.server
+        let plugin = p.plugin.map { "/?plugin=" + pct($0 + (p.pluginOpts.map { ";" + $0 } ?? "")) } ?? ""
+        return "ss://\(user)@\(host):\(p.port)\(plugin)#\(pct(p.name))"
+    }
+
     /// A sing-box `shadowsocks` outbound for `p`.
     static func ssOutbound(_ tag: String, _ p: SsProfile) -> J {
         var o: [String: J] = ["type": "shadowsocks", "tag": .s(tag), "server": .s(p.server), "server_port": .i(p.port), "method": .s(p.method), "password": .s(p.password)]

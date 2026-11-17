@@ -14,7 +14,7 @@ nonisolated struct RouteRetry<Key: Equatable> {
                          revision: Key, attempted: Set<String>, now: Date) {
         let eligible = blocked.filter { id, reason in
             guard let route = setup.route(id), removedPins.reason(for: route) == nil else { return false }
-            switch reason { case .signedOut, .refused, .removed: return false; default: return true }
+            switch reason { case .signedOut, .refused, .removed, .keyLeftOut: return false; default: return true }
         }.mapValues { _ in revision }
         update(eligible, attempted: attempted, now: now)
     }

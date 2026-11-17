@@ -21,6 +21,7 @@
 		0F3B2542D723C5D2E8BC4953 /* JSONValue.swift in Sources */ = {isa = PBXBuildFile; fileRef = F673B0D7F9E2E6F12B82EB04 /* JSONValue.swift */; };
 		109738A8F355C8CB6A08ED2E /* RescansTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 787CCEEF91EE371CA53B7D97 /* RescansTests.swift */; };
 		10B8606E9CE1AD400BC970F7 /* TsLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6E69C354579E2A39529D6A /* TsLogin.swift */; };
+		1166D2BC642D0BC7E9B11207 /* Backup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8688A2E8CFA861A1B5618FC4 /* Backup.swift */; };
 		11DCF9F745E4C799CD859E3F /* StatsInboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E8602961C76A7B318535AA4E /* StatsInboxTests.swift */; };
 		1265B0E4E42B6B226F5F3E9F /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF3BE9CCBF3FC6123FEA8759 /* RootView.swift */; };
 		137C8277243ACD50CA95440E /* UnbraidWidgets.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = DA0C9778FA8D7D6F572D16AA /* UnbraidWidgets.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -105,6 +106,7 @@
 		4DD10AE5BC150B86FCBF138C /* PerfFake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0FEDEE337217524D91E019 /* PerfFake.swift */; };
 		4DF8070839F2147F60DA3170 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = D52255D7E21F9B3CE0F381FA /* Fixtures */; };
 		4E325AC6B801B718761E2804 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = C6912E62E3933537ACE101C1 /* Assets.xcassets */; };
+		4EF11F98F423BD6C953278D8 /* Backup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8688A2E8CFA861A1B5618FC4 /* Backup.swift */; };
 		5072647D3FD8AA8166A8544D /* PiaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BC45E3DFD0B6401D5DB1C22 /* PiaTests.swift */; };
 		51E3337225F8F191EB747105 /* BackupFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE2045B5F3FB8F071DA15C7 /* BackupFile.swift */; };
 		5303BF47C8A04055D366EC58 /* Rescans.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8A8C13C5A5F8C5BF3B8421 /* Rescans.swift */; };
@@ -124,6 +126,7 @@
 		61094EDE3E1A672F05A5B423 /* AppGroupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E794E0E5BC97C0A6A0A43192 /* AppGroupTests.swift */; };
 		61817F1788982A1D6EF754B3 /* AppScanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBC32D4C5D5011BB7692483 /* AppScanTests.swift */; };
 		61E754F18C297277597400A8 /* Bounded.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AD869A2509BACD21EBB5464 /* Bounded.swift */; };
+		61EC83ED7C609E6EBE4AECD2 /* BackupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A51AD7BD0990B95A8AD5C487 /* BackupTests.swift */; };
 		6332A063F2E8584855536647 /* Fail.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74F27A06182C9F54A47D793D /* Fail.swift */; };
 		6442C5E432B5B79DB8A8AF57 /* RouteRetry.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6C4B7D37890D26B33115A06 /* RouteRetry.swift */; };
 		656FA17B3B561FFEBFF144B7 /* QR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDDF7466E86AA480872C0D2 /* QR.swift */; };
@@ -450,6 +453,7 @@
 		80531678DA162154B27082E4 /* NudgesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgesTests.swift; sourceTree = "<group>"; };
 		829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupSignOutTests.swift; sourceTree = "<group>"; };
 		8591ED5655491897B5E01B38 /* ProviderStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderStatus.swift; sourceTree = "<group>"; };
+		8688A2E8CFA861A1B5618FC4 /* Backup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Backup.swift; sourceTree = "<group>"; };
 		86FCBC41DE6FF7A18B90D287 /* Slash.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Slash.swift; sourceTree = "<group>"; };
 		88CB31C841DA6E9DB1EB7680 /* UiStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UiStateTests.swift; sourceTree = "<group>"; };
 		8A799180C8053B12FBA00804 /* Tunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tunnel.entitlements; sourceTree = "<group>"; };
@@ -475,6 +479,7 @@
 		9A5A4F5A55C5A1BF4D84156A /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		9ACFD2671AE832A344B78692 /* AutoSwitch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitch.swift; sourceTree = "<group>"; };
 		9D0A6757D4D70A5FFA05AC53 /* ExitCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitCheck.swift; sourceTree = "<group>"; };
+		A51AD7BD0990B95A8AD5C487 /* BackupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupTests.swift; sourceTree = "<group>"; };
 		A5BF3A1EE122CA583DD4C91C /* ExpressVpn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExpressVpn.swift; sourceTree = "<group>"; };
 		A642E4BAACB117AF93FA1980 /* Connection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Connection.swift; sourceTree = "<group>"; };
 		A6A671D8D05E0EB84E02CDC5 /* ScryptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScryptTests.swift; sourceTree = "<group>"; };
@@ -621,6 +626,7 @@
 				1E37AACD21750DAF8D350AC2 /* AppsSortTests.swift */,
 				76B4086089CF98CC6726C4CE /* AutoSwitchTests.swift */,
 				B22DA31F6CBC5B95C2FB25F2 /* BackupFileTests.swift */,
+				A51AD7BD0990B95A8AD5C487 /* BackupTests.swift */,
 				CB126BA95FDBFAF351EF3B8D /* CatalogTests.swift */,
 				AAD68A0A3A7C2A37D56B3C04 /* CatalogTrustTests.swift */,
 				ED294231E10190BE3CF49FDD /* ChangeObserverTests.swift */,
@@ -770,6 +776,7 @@
 				1762F1899FA1CC7D0191ADFB /* AppScan.swift */,
 				61B859E3A743C15303DA309B /* AppsSort.swift */,
 				9ACFD2671AE832A344B78692 /* AutoSwitch.swift */,
+				8688A2E8CFA861A1B5618FC4 /* Backup.swift */,
 				BAE2045B5F3FB8F071DA15C7 /* BackupFile.swift */,
 				1AD869A2509BACD21EBB5464 /* Bounded.swift */,
 				BD2ACFB5613385EB016CE9D6 /* Catalog.swift */,
@@ -1104,6 +1111,7 @@
 				D1E1824D01228AF603C43B2F /* AppsTable.swift in Sources */,
 				8C1DF176E8C7D2B0F7D95161 /* AppsView.swift in Sources */,
 				7EFD225D2B7C81FD34697A68 /* AutoSwitch.swift in Sources */,
+				1166D2BC642D0BC7E9B11207 /* Backup.swift in Sources */,
 				51E3337225F8F191EB747105 /* BackupFile.swift in Sources */,
 				61E754F18C297277597400A8 /* Bounded.swift in Sources */,
 				4C240FBFCC218D475FFF48F3 /* Catalog.swift in Sources */,
@@ -1230,8 +1238,10 @@
 				BC35EC821187F401A4A5EB2E /* AppsSortTests.swift in Sources */,
 				04698F1601590B93E4669CCF /* AutoSwitch.swift in Sources */,
 				7971F01EB5927E0B9BD65C11 /* AutoSwitchTests.swift in Sources */,
+				4EF11F98F423BD6C953278D8 /* Backup.swift in Sources */,
 				2DEA63F3916A8A371CB30AED /* BackupFile.swift in Sources */,
 				F0C4FD27445DBC976122E1C3 /* BackupFileTests.swift in Sources */,
+				61EC83ED7C609E6EBE4AECD2 /* BackupTests.swift in Sources */,
 				57AF528D0BA8A5BD2B8D54F1 /* Bounded.swift in Sources */,
 				3FF20507BF0B0547705EAD22 /* Catalog.swift in Sources */,
 				26EB5012B6D4CF54162F9935 /* CatalogPin.swift in Sources */,
