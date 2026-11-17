@@ -345,7 +345,7 @@ private final class StatsRelay: NSObject, LibboxCommandClientHandlerProtocol, @u
                 if kind == .new { trace = "\(c.network) \(c.destination) \(c.domain) rule=\(c.rule) out=\(c.outbound)" }
                 #endif
                 // The name the engine knows stays here: only the address of the website rule it falls under goes out.
-                let site = sites.isEmpty ? nil : SiteMatch.match(c.domain, sites)
+                let site = sites.isEmpty ? nil : SiteMatch.match(SiteMatch.name(domain: c.domain, destination: c.destination), sites)
                 return EngineWire.Connection(up: c.uplinkTotal, down: c.downlinkTotal, path: c.processInfo?.processPath ?? "",
                                              chain: Self.strings(c.chain()), inbound: c.inbound, createdAt: c.createdAt,
                                              closedAt: c.closedAt, site: site, trace: trace)

@@ -14,6 +14,16 @@ nonisolated enum SiteMatch {
         return sites.filter { h == $0 || h.hasSuffix("." + $0) }.max { $0.count < $1.count }
     }
 
+    /// The name a connection goes to, as the engine's own rules read it: the name the engine found for it (sniffed, or
+    /// mapped back from an address) when there is one, else its destination when that is a name. A connection to a
+    /// stand-in address is the second kind: the engine puts the name it answered in the destination and leaves the
+    /// first empty. `destination` is "host:port", or "[address]:port" for IPv6; an address gives nothing to match.
+    static func name(domain: String, destination: String) -> String {
+        if !domain.isEmpty { return domain }
+        guard !destination.hasPrefix("["), let colon = destination.lastIndex(of: ":") else { return destination.hasPrefix("[") ? "" : destination }
+        return String(destination[..<colon])
+    }
+
     /// `list` when it can be the websites of a setup: at most `max`, each a name of ASCII lower-case letters, digits,
     /// hyphens and dots, at most 253 bytes, of two or more labels of 1 to 63 that neither start nor end with a hyphen.
     /// Nil otherwise: the extension takes the list as data from another process, and refuses rather than repairs it.

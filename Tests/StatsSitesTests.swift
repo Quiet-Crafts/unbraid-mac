@@ -26,6 +26,26 @@ final class StatsSitesTests: XCTestCase {
         XCTAssertEqual(Sites.max, SiteMatch.max)
     }
 
+    /// A connection to a stand-in address carries its name in the destination, with no name found beside it: that is
+    /// how every connection under a website rule arrives.
+    func testTheNameOfAConnectionIsItsDestinationWhenTheEngineFoundNoOther() {
+        XCTAssertEqual(SiteMatch.name(domain: "", destination: "www.netflix.com:443"), "www.netflix.com")
+        XCTAssertEqual(SiteMatch.name(domain: "sniffed.example.org", destination: "192.0.2.7:443"), "sniffed.example.org")
+        XCTAssertEqual(SiteMatch.name(domain: "sniffed.example.org", destination: "other.example:443"), "sniffed.example.org")
+        XCTAssertEqual(SiteMatch.name(domain: "", destination: "192.0.2.7:443"), "192.0.2.7")
+        XCTAssertEqual(SiteMatch.name(domain: "", destination: "[2001:db8::1]:443"), "")
+        XCTAssertEqual(SiteMatch.name(domain: "", destination: "netflix.com"), "netflix.com")
+        XCTAssertEqual(SiteMatch.name(domain: "", destination: ""), "")
+        let sites = ["netflix.com", "example.org"]
+        func site(_ domain: String, _ destination: String) -> String? { SiteMatch.match(SiteMatch.name(domain: domain, destination: destination), sites) }
+        XCTAssertEqual(site("", "www.netflix.com:443"), "netflix.com")
+        XCTAssertEqual(site("", "example.org:80"), "example.org")
+        XCTAssertEqual(site("api.example.org", "192.0.2.7:443"), "example.org")
+        for destination in ["192.0.2.7:443", "[2001:db8::1]:443", "notnetflix.com:443", "netflix.com.evil.example:443", ""] {
+            XCTAssertNil(site("", destination), destination)
+        }
+    }
+
     func testTheMatchIsTheRulesAddressNeverTheNameLookedUp() {
         let sites = ["netflix.com", "example.org"]
         XCTAssertEqual(SiteMatch.match("www.netflix.com", sites), "netflix.com")
