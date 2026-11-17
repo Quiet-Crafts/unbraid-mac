@@ -33,12 +33,11 @@ final class AutoSwitchRunTests: XCTestCase {
     }
 
     /// Feeds `steps` (seconds, events), firing the timer whenever a wait falls due before the next step, as the watcher
-    /// does; returns the networks decided on, and "back to N" for a way back.
+    /// does; returns the networks decided on.
     private func drive(_ run: inout Run, _ steps: [(Double, [Run.Event])], until end: Double) -> [String] {
         var out: [String] = [], due: ContinuousClock.Instant?
         func record(_ a: Run.Action) {
             if case .decide(let m, _) = a { out.append(m) }
-            if case .restore(let m) = a { out.append("back to " + m) }
             if case .wait(let w) = a { due = w } else { due = nil }
         }
         for (t, events) in steps + [(end, [Run.Event.timer])] {
@@ -134,10 +133,10 @@ final class AutoSwitchRunTests: XCTestCase {
     // MARK: Late routers, sleep and wakes (T2-1, X-4, T3-1)
 
     /// T2-1, X-4, T3-1: at home, the Mac offline for a moment or asleep for hours, the routers answering at any of the
-    /// watcher's read times. Within the one wait (20 s) nothing switches; later, the Mac counts as somewhere
-    /// unrecognised, then goes back to exactly what was in use at home, the hand pick included: one switch away and
-    /// one back at worst.
-    func testAWakeAtHomeSwitchesAtMostAwayAndBackAndKeepsAHandPick() {
+    /// watcher's read times. Within the one wait (20 s) nothing switches and a hand pick stays; later, the Mac counts as
+    /// somewhere unrecognised, then home decides again: one switch away and one back to home's rule (the accepted
+    /// limit: the hand pick ended when the network counted as changed).
+    func testAWakeAtHomeSwitchesAtMostAwayAndBack() {
         for gap: Double in [1, 30, 119, 600, 28_800] {
             for answer: Double in [0.5, 3, 10, 19, 21, 25, 30, 45, 60, 75, 90, 105, 115, 300] {
                 // After more than a moment, the reading must name home on its own: b alone fits the office too.
@@ -149,8 +148,8 @@ final class AutoSwitchRunTests: XCTestCase {
                         let start = 100 + gap
                         let got = drive(&run, [(100, sleeps ? [.sleep(true), offline] : [offline]), (start, sleeps ? [.sleep(false), pending()] : [pending()]),
                                                (start + answer, [on(heard)])], until: start + 400)
-                        XCTAssertEqual(got, answer < 20 ? [] : [unrecognised, "back to a,b"], "offline \(gap) s, router \(heard) after \(answer) s")
-                        XCTAssertEqual(run.acted, picked)
+                        XCTAssertEqual(got, answer < 20 ? [] : [unrecognised, "a,b"], "offline \(gap) s, router \(heard) after \(answer) s")
+                        XCTAssertEqual(run.acted, picked, "home decided on, as the pick was")
                     }
                 }
             }
@@ -163,7 +162,7 @@ final class AutoSwitchRunTests: XCTestCase {
         actions.append(night.handle(on("a,b"), now: at(100 + 8 * 3600 + 30)))
         actions.append(night.handle(.timer, now: at(100 + 8 * 3600 + 35)))
         XCTAssertEqual(actions.filter { if case .wait = $0 { false } else { $0 != .nothing } },
-                       [.decide(mark: unrecognised, acted: Acted(mark: "a,b", rules: rules)), .restore(mark: "a,b")])
+                       [.decide(mark: unrecognised, acted: Acted(mark: "a,b", rules: rules)), .decide(mark: "a,b", acted: Acted(mark: unrecognised, rules: rules))])
         // A tunnel reconnect with a reread in between, and a roam with no offline at all.
         var re = settled()
         XCTAssertEqual(drive(&re, [(100, [.connected(false)]), (100.5, [pending()]), (103, [.connected(true)]), (104, [on("b")])], until: 300), [])
@@ -171,27 +170,18 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&roam, [(100, [pending()]), (110, [on("a")])], until: 300), [])
     }
 
-    /// The way back counts only with nothing identified in between, and not over a hand pick made while away; a
-    /// rule changed meanwhile applies as a decision.
-    func testTheWayBackOnlyFromAShortExcursion() {
-        // Home, then a café the Mac recognises: a real stay elsewhere, so home decides afresh.
-        var cafe = settled()
-        XCTAssertEqual(drive(&cafe, [(10, [offline]), (20, [on("x", Self.cafe)]), (60, [offline]), (100, [on("a,b")])], until: 200), ["x", "a,b"])
-        // Home, then somewhere unrecognised (another place), then home: back.
+    /// Home after any time counted elsewhere is a decision like any other: its rule, whatever was picked before; a
+    /// foreign network at home's place waits the same 20 s as anywhere.
+    func testHomeAfterTimeElsewhereDecidesItsRule() {
         var away = settled()
-        XCTAssertEqual(drive(&away, [(10, [offline]), (20, [pending(Self.cafe)]), (60, [offline]), (100, [on("a,b")])], until: 200),
-                       [unrecognised, "back to a,b"])
-        // A hand pick while away: the user's choice, home decides afresh.
-        var picked = settled()
-        XCTAssertEqual(drive(&picked, [(10, [offline]), (20, [pending(Self.cafe)]), (45, [.pickedByHand]), (60, [offline]), (100, [on("a,b")])], until: 200),
-                       [unrecognised, "a,b"])
-        // Home's rule changed while away: the new rule, as a decision.
+        _ = away.handle(.pickedByHand, now: at(8))
+        XCTAssertEqual(drive(&away, [(10, [offline]), (20, [pending(Self.cafe)]), (60, [offline]), (100, [on("a,b")])], until: 200), [unrecognised, "a,b"])
         var changed = settled()
         var r = rules
         r.known[0].profile = "Work"
         XCTAssertEqual(drive(&changed, [(10, [offline]), (20, [pending(Self.cafe)]), (50, [.rules(r)]), (60, [offline]), (100, [on("a,b")])], until: 200),
                        [unrecognised, "a,b"])
-        // Another network at home's place that never answers: the same 20 s as anywhere.
+        XCTAssertEqual(changed.acted?.profile, "Work")
         var other = settled()
         XCTAssertEqual(drive(&other, [(10, [offline]), (400, [pending()])], until: 419), [])
         XCTAssertEqual(drive(&other, [(421, [.timer])], until: 430), [unrecognised])
@@ -324,10 +314,6 @@ final class AutoSwitchRunTests: XCTestCase {
                 XCTAssertEqual(a, b, "seq \(seq): the order networks were remembered in changed a decision")
                 // A report of a switch not made, a hand pick or an arrival makes a decision owed again.
                 if events.contains(where: { $0 == .pickedByHand || { if case .unapplied = $0 { true } else { false } }($0) }) || run.acted == nil { last = nil }
-                if case .restore(let m) = a {
-                    XCTAssertTrue(run.connected && !run.busy && run.here(at: t) == m, "seq \(seq): went back while it may not")
-                    last = run.acted
-                }
                 if case .decide(let m, _) = a {
                     XCTAssertTrue(run.connected && !run.busy && run.here(at: t) == m, "seq \(seq): decided while it may not")
                     let d = Acted(mark: m, rules: run.rules)
@@ -386,7 +372,7 @@ final class AutoSwitchRunTests: XCTestCase {
             }
             // At worst away and back, in pairs, each time a reading took longer than the one wait.
             let got = drive(&run, steps, until: now + 200)
-            XCTAssertEqual(got, Array(repeating: [unrecognised, "back to a,b"], count: got.count / 2).flatMap { $0 }, "seq \(seq)")
+            XCTAssertEqual(got, Array(repeating: [unrecognised, "a,b"], count: got.count / 2).flatMap { $0 }, "seq \(seq)")
             XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules), "seq \(seq)")
         }
     }

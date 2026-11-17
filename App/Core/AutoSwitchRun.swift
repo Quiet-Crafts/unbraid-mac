@@ -10,8 +10,8 @@ import Foundation
 ///   coming and going within what a remembered network holds keep it that network.
 /// - A network that gives no acceptable reading within `AutoSwitch.unrecognisedAfter` (20 s) counts as one unbraid can't
 ///   recognise (the profile for any other network): one wait, for every case.
-/// - The way back: if a remembered network was left that way (or by an arrival) and a reading then names it again with
-///   nothing identified in between, what was in use there comes back (`restore`), a hand pick included.
+/// - A remembered network read after that (a router that answered late) is a decision like any other: its rule's
+///   profile. A hand pick made before ended when the network was counted as changed.
 /// - A decision is made once per network and the profile its rule names, only while connected and not busy, once the
 ///   network has lasted `AutoSwitch.settle`; one the app couldn't make (`unapplied`) is owed again.
 /// - A profile picked by hand counts as decided for the network it was picked on, or, while that network is still being
@@ -59,8 +59,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         case wait(Instant)
         /// Decide now on network `mark`; `acted` is what was decided on before, for `AutoSwitch.decide`.
         case decide(mark: String, acted: AutoSwitch.Acted?)
-        /// Back on remembered network `mark` after a short time away: put back the profile that was in use there.
-        case restore(mark: String)
     }
 
     private(set) var reading = Reading.offline
@@ -100,9 +98,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     /// would fit (a shared router, the other away) stays this one. Needs a reading again after more than a moment
     /// offline.
     private(set) var resolved: String?
-    /// The decision on the remembered network the Mac was on before it counted as somewhere unrecognised (or arrived
-    /// somewhere new): restored if that network is read again with nothing identified in between.
-    private(set) var previous: AutoSwitch.Acted?
     /// What was last decided on for this network (nil after an arrival: nothing yet).
     private(set) var acted: AutoSwitch.Acted?
     /// Counts decisions and hand picks: a report of a switch not made is about the decision it names only.
@@ -150,8 +145,7 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
                 rules = r
                 byHand = false
             case .pickedByHand:
-                // The user's choice now: nothing from before is put back.
-                generation += 1; previous = nil
+                generation += 1
                 if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = reading != .offline }
             case .unapplied(let g):
                 // Owed again, after the settle time, unless something newer was decided or picked meanwhile.
@@ -183,7 +177,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         offlineAt = nil; slept = false
         let (interface, router) = Place.split(p)
         if !same {
-            keep(acted)
             acted = nil; byHand = false; read = false; resolved = nil
             place = Place(interface: interface, router: router)
         } else if let router { place?.router = router }
@@ -204,10 +197,6 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         }
     }
 
-    /// A decision on a remembered network being left: kept for the way back.
-    private mutating func keep(_ a: AutoSwitch.Acted?) {
-        if let a, rules.known.contains(where: { $0.id == a.mark }) { previous = a }
-    }
 
     /// A pick made while the network was being read counts as decided for the network the reading gives.
     private mutating func take(_ now: Instant) {
@@ -227,18 +216,10 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         if now < due { return .wait(due) }
         // Decided once it settles (`busy(false)` comes back here).
         guard !busy, let here = here(at: now) else { return .nothing }
-        // Back on the remembered network left a moment ago, with nothing identified in between: what was in use there.
-        if let p = previous, p.mark == here, acted == nil || acted?.mark == AutoSwitch.unrecognised {
-            previous = nil
-            acted = p.profile == rules.profile(on: here) ? p : AutoSwitch.Acted(mark: here, rules: rules)
-            generation += 1
-            return p.profile == rules.profile(on: here) ? .restore(mark: here) : .decide(mark: here, acted: nil)
-        }
         // What was decided here was not a remembered network: this network read again without an answer is still it.
         if here == AutoSwitch.unrecognised, let a = acted, !rules.known.contains(where: { $0.id == a.mark }),
            a.profile == rules.profile(on: here) { return .nothing }
         let decided = AutoSwitch.Acted(mark: here, rules: rules), was = acted
-        if here == AutoSwitch.unrecognised { keep(was) } else if was != decided { previous = nil }
         acted = decided
         guard was != decided else { return .nothing }
         generation += 1

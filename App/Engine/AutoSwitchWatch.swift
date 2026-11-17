@@ -26,8 +26,6 @@ final class AutoSwitchWatch {
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var observer: ChangeObserver?
     @ObservationIgnored private var sleepers: [NSObjectProtocol] = []
-    /// The remembered network the Mac was last on, and the profile in use there.
-    @ObservationIgnored private var inUse: (mark: String, profile: String?)?
     /// Provider limits, read ahead for the accounts they were read for: deciding never waits.
     @ObservationIgnored private var limits: [String: Limit] = [:]
     @ObservationIgnored private var limitsFor: [String: String]?
@@ -115,8 +113,8 @@ final class AutoSwitchWatch {
 
     /// When the fingerprint is read again while the router hasn't answered: each second through the settle time, every
     /// few seconds until the network counts as unrecognised (20 s), then every 15 s until 105 s and once at 115 s, so a
-    /// remembered network whose router answers late is found and gets back what was in use there; then nothing until the
-    /// next change or wake.
+    /// remembered network whose router answers late is still found and gets its own profile; then nothing until the next
+    /// change or wake.
     private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 15, 15, 15, 15, 15, 10].map { .seconds($0) }
 
     private func read() {
@@ -146,13 +144,6 @@ final class AutoSwitchWatch {
     private func apply(_ action: AutoSwitchRun.Action) {
         let h = run.here(at: .now)
         if here != h { here = h }
-        // The profile in use (or on its way) while the Mac is on a remembered network: what the way back restores (read
-        // before it is replaced, so not on the way back itself).
-        let back = if case .restore = action { true } else { false }
-        if !back, let h, let m = model, !switching, m.store.networks.known.contains(where: { $0.id == h }) {
-            let p = m.setup.pendingSwitch?.target ?? m.setup.profile
-            if inUse?.mark != h || inUse?.profile != p { inUse = (h, p) }
-        }
         timer?.cancel(); timer = nil
         switch action {
         case .nothing: break
@@ -166,11 +157,6 @@ final class AutoSwitchWatch {
                 self.apply(self.run.handle(.timer))
             }
         case .decide(let mark, let acted): decide(mark, acted)
-        case .restore(let mark):
-            // The profile that was in use on this network before the Mac counted as somewhere else, a hand pick included.
-            guard let m = model, let back = inUse, back.mark == mark, let name = back.profile, m.setup.profile != name,
-                  m.setup.profiles.contains(where: { $0.name == name }) else { return }
-            make(name, for: mark, rule: false)
         }
     }
 
@@ -179,14 +165,14 @@ final class AutoSwitchWatch {
         let step = AutoSwitch.decide(m.setup, rules: run.rules, mark: mark, acted: acted) { [limits] in AutoSwitchRun.over($0) { limits[$0] } }
         switch step {
         case .none: break
-        case .to(let name): make(name, for: mark, rule: true)
+        case .to(let name): make(name, for: mark)
         case .blocked(let why): tell(why, inWindow: true)
         }
     }
 
     /// Switches to `name` for network `mark`, if it is still right when the change is made: still connected, still the
-    /// user's own setup, still on that network, and (`rule`) still what its rule names.
-    private func make(_ name: String, for mark: String, rule: Bool) {
+    /// user's own setup, still on that network, and still what its rule names.
+    private func make(_ name: String, for mark: String) {
         guard let m = model else { return }
         own = name
         switching = true
@@ -194,7 +180,7 @@ final class AutoSwitchWatch {
         m.switchProfile(name, wanted: { [weak self, weak m] in
             guard let self, let m else { return false }
             return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.here(at: .now) == mark
-                && (!rule || m.store.networks.profile(on: mark) == name)
+                && m.store.networks.profile(on: mark) == name
         }, finished: { [weak self] made in
             // Not made (the connection or the network changed while it waited): owed again once they settle. Not when a
             // profile picked by hand took its place (`own` cleared); the run also ignores a report about anything but
