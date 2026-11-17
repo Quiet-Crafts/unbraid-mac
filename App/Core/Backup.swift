@@ -725,16 +725,21 @@ nonisolated enum Backup {
 
     /// How hard a passphrase is to guess, by a few rules that can be said in a sentence each. It is judged as the file's
     /// key is made from it (NFC), in lower case, cut into words at spaces and ASCII punctuation:
-    /// - each word counts once: a word whose stem (the word without the number at its end) came before adds nothing,
-    ///   nor does the punctuation after it, so "pass1 pass2 pass3" is one word; spaces add nothing;
+    /// - each word counts once: a word whose stem (the word without the number at its start or end) came before adds
+    ///   nothing, nor does the punctuation after it, so "pass1 pass2 pass3" is one word; spaces add nothing;
     /// - a common password counts as one character;
     /// - in what is left, a character adds nothing when it repeats the one before, starts a stretch of two or more
-    ///   that already appeared, or continues a walk: a step to a neighbouring plain letter or digit (abc, 321) or key
-    ///   on a keyboard (qaz, asd), after such a step, or the same with every other character (q1w2e3).
+    ///   that already appeared (and the number right after such a stretch of three or more: "pass1pass2"), or
+    ///   continues a walk: a step to a neighbouring letter or digit (abc, 321, in any script's digits) or key on a
+    ///   keyboard (qaz, asd; a shifted digit is its key: !QAZ), after such a step, or the same with every other
+    ///   character (q1w2e3).
+    /// The whole passphrase is judged: runs of one character count once before anything else, so a long repeat at its
+    /// start doesn't hide what follows (up to 4,096 characters, far more than any rating needs).
+    /// Server keys go in a file only under a passphrase rated hard (`BackupTexts.saveCheck`).
     /// Hard: four or more different words of three characters or more that count for 12 characters together, or 72
-    /// bits from the counted characters: a plain one (ASCII, or a letter with a case in any script) by the kinds of
+    /// bits from the counted characters: a plain one (ASCII, a letter with a case or a digit in any script) by the kinds of
     /// plain character used (lower case, upper case, digits, punctuation), any other (letters without case such as Han,
-    /// emoji) 7, or 11 when those make up most of it. Only ASCII letters and digits make walks.
+    /// emoji) 7, or 11 when those make up most of it. Letters make walks in ASCII only; digits in any script.
     /// It catches obvious patterns only, and says so.
     static func strength(_ passphrase: String) -> Strength {
         let p = passphrase.precomposedStringWithCanonicalMapping
@@ -743,7 +748,7 @@ nonisolated enum Backup {
         // Plain characters by the kinds of plain character used; any other (another script, an emoji) by a fixed
         // amount, larger only when those make up most of it: one of them doesn't make every plain one count more.
         // Plain: ASCII, and letters with a case in any script (é, д): a small alphabet each, like a-z.
-        func plain(_ c: Character) -> Bool { c.isASCII || c.isLowercase || c.isUppercase }
+        func plain(_ c: Character) -> Bool { c.isASCII || c.isLowercase || c.isUppercase || c.isNumber }
         let ascii = p.filter(plain)
         let kinds = [(26, ascii.contains(where: \.isLowercase)), (26, ascii.contains(where: \.isUppercase)), (10, ascii.contains(where: \.isNumber)),
                      (33, ascii.contains { !$0.isLetter && !$0.isNumber && !$0.isWhitespace })]
@@ -772,7 +777,7 @@ nonisolated enum Backup {
         }
         var stems: Set<String> = [], words: [String] = [], kept = ""
         for piece in pieces {
-            let stem = String(piece.word.reversed().drop(while: \.isNumber).reversed())
+            let stem = String(piece.word.drop(while: \.isNumber).reversed().drop(while: \.isNumber).reversed())
             guard piece.word.isEmpty || stems.insert(stem.isEmpty ? piece.word : stem).inserted else { continue }
             if !piece.word.isEmpty { words.append(piece.word) }
             kept += piece.word + piece.after.filter { !$0.isWhitespace }
@@ -793,9 +798,15 @@ nonisolated enum Backup {
 
     /// The characters of `s` (as the user sees them) that add to a guess (see `strength`).
     private static func guessable(_ s: String) -> [Character] {
-        let c = Array(s.prefix(256))
-        /// A step between two plain letters or digits: next to each other in the alphabet or on a keyboard.
+        // A run of one character is one: then a long repeat costs nothing to look at, and what follows it is judged.
+        var c: [Character] = []
+        for ch in s where ch != c.last { c.append(ch); if c.count == 4096 { break } }
+        /// A shifted digit on a keyboard is that digit's key.
+        func key(_ ch: Character) -> Character { "!@#$%^&*()".firstIndex(of: ch).map { Array("1234567890")[$0.utf16Offset(in: "!@#$%^&*()")] } ?? ch }
+        /// A step between two letters or digits next to each other: in the alphabet, in a script's digits, or on a keyboard.
         func step(_ a: Character, _ b: Character) -> Bool {
+            if let x = a.wholeNumberValue, let y = b.wholeNumberValue, a.isNumber, b.isNumber { return abs(x - y) == 1 }
+            let a = key(a), b = key(b)
             guard a.isASCII, b.isASCII, a.isLetter || a.isNumber, b.isLetter || b.isNumber, let x = a.asciiValue, let y = b.asciiValue else { return false }
             return abs(Int(x) - Int(y)) == 1 || keyboard.contains("\(a)\(b)")
         }
@@ -812,7 +823,12 @@ nonisolated enum Backup {
         var n: [Character] = [], i = 0
         while i < c.count {
             let l = seen(i)
-            if l >= 2 { i += l; continue }
+            if l >= 2 {
+                i += l
+                // A counter after a repeated word: "pass1pass2pass3".
+                if l >= 3 { while i < c.count, c[i].isNumber { i += 1 } }
+                continue
+            }
             let walk = (i >= 2 && step(c[i - 2], c[i - 1]) && step(c[i - 1], c[i])) || (i >= 4 && step(c[i - 4], c[i - 2]) && step(c[i - 2], c[i]))
             if (i == 0 || c[i] != c[i - 1]) && !walk { n.append(c[i]) }
             i += 1

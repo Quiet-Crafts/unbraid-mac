@@ -43,10 +43,11 @@ nonisolated enum BackupTexts {
     static let minLength = 8
 
     /// Both fields filled and the same. A mismatch is said once the second is as long as the first, so typing it isn't
-    /// interrupted. With keys in the file, a passphrase that is easy to guess is refused. Shorter than `minLength` is
+    /// interrupted. With keys in the file, a passphrase not rated hard is refused. Shorter than `minLength` is
     /// said once the second field is being typed.
     static func saveCheck(_ passphrase: String, _ again: String, keys: Bool) -> SaveCheck {
-        if keys, !passphrase.isEmpty, Backup.strength(passphrase) == .easy {
+        // Server keys only under a passphrase rated hard: fair is too easy for what anyone with the file could then use.
+        if keys, !passphrase.isEmpty, Backup.strength(passphrase) != .hard {
             return SaveCheck(ready: false, problem: "Choose a passphrase that is harder to guess to include keys")
         }
         guard !passphrase.isEmpty, !again.isEmpty else { return SaveCheck(ready: false) }

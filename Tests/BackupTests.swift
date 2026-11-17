@@ -929,7 +929,10 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(BackupTexts.saveCheck("abcd1234", "abcd1234", keys: false), .init(ready: true))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: true), .init(ready: false, problem: "Choose a passphrase that is harder to guess to include keys"))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "", keys: true).ready, false)
-        XCTAssertEqual(BackupTexts.saveCheck("qjxv7mwz3k", "qjxv7mwz3k", keys: true), .init(ready: true))
+        // Keys need a passphrase rated hard: fair isn't enough.
+        XCTAssertEqual(Backup.strength("qjxv7mwz3k"), .fair)
+        XCTAssertEqual(BackupTexts.saveCheck("qjxv7mwz3k", "qjxv7mwz3k", keys: true), .init(ready: false, problem: "Choose a passphrase that is harder to guess to include keys"))
+        XCTAssertEqual(BackupTexts.saveCheck("Qm7#vT2pXk9w!Rb4", "Qm7#vT2pXk9w!Rb4", keys: true), .init(ready: true))
         XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: true), .init(ready: true))
         XCTAssertEqual([Backup.Strength.easy, .fair, .hard].map(BackupTexts.segments), [1, 2, 3])
     }
