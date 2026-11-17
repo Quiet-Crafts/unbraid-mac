@@ -467,6 +467,36 @@ nonisolated enum Compiler {
         + ["168.192.in-addr.arpa", "254.169.in-addr.arpa", "c.f.ip6.arpa", "d.f.ip6.arpa", "8.e.f.ip6.arpa", "9.e.f.ip6.arpa",
            "a.e.f.ip6.arpa", "b.e.f.ip6.arpa"]
 
+    /// Names the local network answers: sent to the local resolver while devices on this network are reached.
+    static let localNames = ["local", "lan", "home.arpa", "fritz.box"]
+
+    /// The tailnet's names while it is reached (Reach your tailnet): its own domain (`suffix`, as `tsSuffix` writes it),
+    /// and all of ts.net on Tailscale's own server.
+    static func tailnetDomains(_ home: Home, suffix: String?) -> [String] {
+        Array(Set((officialTs(home) ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
+    }
+
+    /// Who answers `name` in `s` when no website rule takes it, where that is a resolver a website rule would wrongly
+    /// take it from: one of the exceptions `dns` writes after the website rules (the tailnet's names and reverse zones
+    /// while it is reached, its domain refused while it isn't, local names while devices on this network are reached,
+    /// this network's reverse zones), or multicast for `.local`, which macOS answers without unbraid. Nil when no
+    /// exception does: a website rule for the name works. Read from the same lists and conditions as `dns`, so a rule
+    /// is left out exactly where it would take a name from its own resolver (`Sites.applied`). `tailnet`: the domain
+    /// the input carries.
+    enum Answered: Equatable { case tailscale, tailnet, tailnetClosed, local, reverse, multicast }
+
+    static func answered(_ name: String, _ s: Setup, tailnet: String?) -> Answered? {
+        func under(_ suffixes: [String]) -> Bool { suffixes.contains { name == $0 || name.hasSuffix("." + $0) } }
+        let suffix = tsSuffix(tailnet)
+        if under(["local"]) { return .multicast }
+        if s.home.tailscale {
+            if under(tailnetDomains(s.home, suffix: suffix)) { return suffix.map { under([$0]) } == true || !officialTs(s.home) ? .tailnet : .tailscale }
+            if under(tailnetReverse) { return .tailnet }
+        } else if let suffix, under([suffix]) { return .tailnetClosed }
+        if s.prefs.lan && under(localNames) { return .local }
+        return under(localReverse) ? .reverse : nil
+    }
+
     /// The tailnet's reverse zones: 100.64.0.0/10 and Tailscale's IPv6 range fd7a:115c:a1e0::/48 (as Tailscale's MagicDNS
     /// routes them).
     static let tailnetReverse = ["0.e.1.a.c.5.1.1.a.7.d.f.ip6.arpa"] + (64...127).map { "\($0).100.in-addr.arpa" }
@@ -479,8 +509,7 @@ nonisolated enum Compiler {
         var pushed = Set<String>()
         let filter = s.prefs.effectiveFilter
         let suffix = tsSuffix(p.i.tsSuffix)
-        let official = officialTs(s.home)
-        let domains = Array(Set((official ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
+        let domains = tailnetDomains(s.home, suffix: suffix)
         // A filter that lives in a home network is asked through that tunnel, as any connection to its address goes:
         // through a route's own tunnel, or straight out, a home address can't be reached.
         let filterVia = filter.server.flatMap { homeVia(s, $0, tsDomains: domains) }
@@ -538,7 +567,7 @@ nonisolated enum Compiler {
         // The tailnet's domain while Tailscale isn't running: refused rather than looked up on the local network. A pause
         // and a deny-all keep the search domain (`searchDomain`), so short tailnet names expand to it and end here too.
         if !p.homeTs, let suffix { rules.append(["domain_suffix": [.s(suffix)], "action": "predefined", "rcode": "NXDOMAIN"]) }
-        if s.prefs.lan { rules.append(["domain_suffix": ["local", "lan", "home.arpa", "fritz.box"], "server": "local"]) }
+        if s.prefs.lan { rules.append(["domain_suffix": J.strings(localNames), "server": "local"]) }
         // With LAN access off too: it decides which apps reach those devices, not whose resolver names them.
         rules.append(["query_type": ["PTR"], "domain_suffix": J.strings(localReverse), "server": "local"])
         rules.append(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1])

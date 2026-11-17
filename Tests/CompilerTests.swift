@@ -2974,3 +2974,47 @@ extension CompilerTests {
         XCTAssertEqual(lines, saved.split(separator: "\n").map(String.init))
     }
 }
+
+extension CompilerTests {
+    /// Names on the local network, in a tailnet, under ts.net or in reverse zones, on a route, Direct or Blocked, in every
+    /// state that decides who answers them: a rule is written exactly when `Sites.applied` keeps it, then in lookups and
+    /// in routing alike (never one without the other), before any exception that would answer its name; else neither. A
+    /// block is written in every state. Every config is also checked by the extension and the pinned engine.
+    func testAWebsiteRuleIsWholeOrLeftOutInEveryState() throws {
+        let sample = ["printer.lan", "router.home.arpa", "box.fritz.box", "svc.internal", "nas.local", "app.tail9999.ts.net",
+                     "nas.tail123.ts.net", "nas.corp.example", "168.192.in-addr.arpa", "64.100.in-addr.arpa", "netflix.com"]
+        var states = 0
+        for tailscale in [false, true] { for headscale in [false, true] { for lan in [false, true] { for suffix in [nil, "tail123.ts.net", "corp.example"] {
+            for route in ["us", DIRECT, BLOCK] {
+                var s = example
+                s.home.tailscale = tailscale
+                if headscale { s.home.tsControlUrl = "https://hs.example" }
+                s.prefs.lan = lan
+                s.sites = Dictionary(uniqueKeysWithValues: sample.map { ($0, route) })
+                let c = try compile(s, tsSuffix: suffix)
+                let applied = Sites.applied(s, tailnet: suffix)
+                let route = rules(c), dns = dnsRules(c)
+                for name in sample {
+                    func covers(_ r: O) -> Bool { (names(r) ?? []).contains(name) }
+                    let inRoute = route.contains(where: covers), inDns = dns.contains(where: covers)
+                    XCTAssertEqual(inRoute, inDns, "\(name) half written")
+                    XCTAssertEqual(inDns, applied[name] != nil, "\(name) tailscale \(tailscale) headscale \(headscale) lan \(lan) \(suffix ?? "-") \(route)")
+                    if s.sites[name] == BLOCK {
+                        XCTAssertTrue(inDns, "\(name) block")
+                        XCTAssertEqual(route.first(where: covers).flatMap(action), "reject", name)
+                    }
+                    // Written: before every lookup rule that could answer the name by its ending. Left out: one such rule
+                    // is there to answer it (bar `.local`, which never reaches unbraid).
+                    let exception = dns.firstIndex { r in names(r) == nil && strings(r["domain_suffix"]).contains { name == $0 || name.hasSuffix("." + $0) } }
+                    if let first = dns.firstIndex(where: covers) {
+                        if let exception { XCTAssertLessThan(first, exception, name) }
+                    } else if !name.hasSuffix(".local") {
+                        XCTAssertNotNil(exception, "\(name) left out with nothing to answer it")
+                    }
+                }
+                states += 1
+            }
+        } } } }
+        XCTAssertEqual(states, 72)
+    }
+}

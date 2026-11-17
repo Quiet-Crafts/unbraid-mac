@@ -15,7 +15,7 @@ struct WebsitesView: View {
     var body: some View {
         let s = model.setup
         let q = query.trimmingCharacters(in: .whitespaces)
-        let rows = SitesTable.rows(s, sort: sort, rank: rank).filter { q.isEmpty || $0.name.localizedStandardContains(q) }
+        let rows = SitesTable.rows(s, sort: sort, rank: rank).filter { r in q.isEmpty || Sites.readings(r.id).contains { $0.localizedStandardContains(q) } }
         VStack(spacing: 0) {
             PageHeader(title: "Websites", subtitle: "\(Snapshot.websites(s.sites.count)) · A website's route comes before its app's")
             if s.sites.isEmpty {
@@ -31,7 +31,9 @@ struct WebsitesView: View {
                 ContentUnavailableView.search(text: query).frame(maxHeight: .infinity)
             } else {
                 SitesTable(rows: rows, selection: $selection, sort: $sort).layoutPriority(1)
-                Text("A rule covers the address and every address under it. It applies in every app that looks names up through macOS, Direct apps included, while unbraid is connected; a blocked website stays blocked during a pause. A browser that uses its own secure DNS keeps its app's route.")
+                // Said only while a rule here isn't applied, so the page never promises a route a name doesn't take.
+                let unapplied = s.sites.count != Sites.applied(s).count
+                Text("A rule covers the address and every address under it. It applies in every app that looks names up through macOS, Direct apps included, while unbraid is connected; a blocked website stays blocked during a pause. A browser that uses its own secure DNS keeps its app's route." + (unapplied ? " A rule for a name your network or tailnet answers itself is not applied while it does." : ""))
                     .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                     .padding(Layout.inset).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Ink.surface, in: RoundedRectangle(cornerRadius: Corner.card, style: .continuous))
@@ -135,7 +137,7 @@ struct AddWebsiteSheet: View {
 
     var body: some View {
         let s = model.setup
-        let check = SiteEdits.check(address, in: s.sites, tailnet: Sites.tailnet(of: s))
+        let check = SiteEdits.check(address, in: s.sites)
         SheetFrame(title: "Add Website", subtitle: "The address and every address under it take the route you choose.") {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -146,6 +148,11 @@ struct AddWebsiteSheet: View {
                         .onKeyPress(.upArrow) { step(-1, s) }
                         .onKeyPress(.downArrow) { step(1, s) }
                     feedback(check).font(.system(size: 12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    // Taken, but in this setup its own resolver answers it: said before it is saved, as its row will say.
+                    if case .valid(let name) = check, let why = Sites.notApplied(name, choice, in: s, tailnet: Sites.tailnet(of: s)) {
+                        Text("Not applied now: \(why)").font(.system(size: 12)).foregroundStyle(Ink.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Route").overline()
@@ -220,7 +227,7 @@ struct AddWebsiteSheet: View {
     private func valid(_ check: SiteEdits.Check) -> Bool { if case .valid = check { return true }; return false }
 
     private func add() {
-        guard valid(SiteEdits.check(address, in: model.setup.sites, tailnet: Sites.tailnet(of: model.setup))) else { return }
+        guard valid(SiteEdits.check(address, in: model.setup.sites)) else { return }
         if model.addSite(address, to: choice, undo: undo) == nil { dismiss() }
     }
 }

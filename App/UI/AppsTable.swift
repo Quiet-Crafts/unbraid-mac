@@ -547,7 +547,7 @@ private final class AppCell: DrawnCell {
             // A route or Direct for a name on the own network or tailnet (saved before such names were refused) is
             // not applied: the name keeps its own resolver and its app's route. Said on the row, with why.
             let s = model.setup
-            let why = s.sites[row.id] == BLOCK ? nil : Sites.ownNetwork(row.id, tailnet: Sites.tailnet(of: s))
+            let why = Sites.notApplied(row.id, in: s).map { "Not applied: " + $0 }
             setAccessibilityLabel([row.name, row.routeName, why.map { _ in "Not applied" }].compactMap { $0 }.joined(separator: ", "))
             let new = Shows(name: row.name, aside: why.map { _ in "Not applied" }, conflict: why)
             guard new != shows || !self.site else { return }
@@ -663,7 +663,7 @@ private final class RouteCell: DrawnCell {
         if let note = new.note { selected.append(attributed(note, font, selectionInk.withAlphaComponent(0.75))) }
         selectedText = selected
         wordsWidth = textWidth(words) + 1
-        toolTip = unapplied ? Sites.ownNetwork(app, tailnet: Sites.tailnet(of: s)) : site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
+        toolTip = unapplied ? Sites.notApplied(app, in: s).map { "Not applied: " + $0 } : site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
         setAccessibilityElement(true)
         setAccessibilityRole(.popUpButton)
         setAccessibilityLabel("Route for \(site ? app : AppModel.shared.appName(app))")

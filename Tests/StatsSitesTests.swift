@@ -112,9 +112,12 @@ final class StatsSitesTests: XCTestCase {
         // A rule that isn't applied (a name on the own network or in the tailnet, saved on a route or Direct) is not
         // counted: its name's traffic stays its app's. The counts and the widget go by the same.
         s.sites = ["nas.internal": DIRECT, "printer.lan": "us", "nas.corp.example": "us", "tracker.lan": BLOCK, "netflix.com": "us"]
-        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "netflix.com"])
+        // Here devices on this network are reached, so the network answers printer.lan; nothing answers nas.internal first.
+        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "nas.internal", "netflix.com"])
         XCTAssertEqual(SiteEdits.applied(BLOCK, in: s), ["tracker.lan"])
-        XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), [])
+        XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), ["nas.internal"])
+        s.prefs.lan = false
+        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "nas.internal", "netflix.com", "printer.lan"])
     }
 
     /// One decision for every part of the app: with Headscale's own domain accepted, a rule under it is not applied for

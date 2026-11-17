@@ -16,43 +16,59 @@ nonisolated enum Sites {
     static func isClean(_ name: String) -> Bool { clean(name) == name }
 
     /// Why `raw` can't be added as a website, in the Add Website sheet's words; nil when it can. Beyond what `clean`
-    /// refuses: names on the own network or in the tailnet (`ownNetwork`), and names that only end others' names.
-    /// For what is typed only: a saved setup keeps what it holds (the compiler leaves out what can't work).
-    static func refusal(_ raw: String, tailnet: String? = nil) -> String? {
+    /// refuses: names no rule can ever work for (`never`), and endings many websites share. For what is typed only: a
+    /// saved setup keeps what it holds (the compiler leaves out what can't work). A name a rule can work for, but that
+    /// its own resolver answers in this setup, is taken: `notApplied` says so.
+    static func refusal(_ raw: String) -> String? {
         switch read(raw) {
         case .refused(let why): return why
         case .name(let name):
-            if let why = ownNetwork(name, tailnet: tailnet) { return why }
-            return sharedSuffix(name) ? "\(name) ends many websites' names: add one website under it" : nil
+            if let why = never(name) { return why }
+            return shared(name) ? "\(name) ends many websites' names: add one website under it" : nil
         }
     }
 
-    /// Why a website rule can't work for `name`: it is on the own network or in the tailnet, whose own resolver
-    /// answers it, which a website's route would skip (and `.local` names are answered by multicast, which never passes
-    /// unbraid). Nil for any other name. `tailnet` is the tailnet's own domain, when there is one.
-    /// One sentence per kind of name, true whatever route was chosen, Blocked included.
-    static func ownNetwork(_ name: String, tailnet: String? = nil) -> String? {
+    /// Why no website rule can ever work for `name`, whatever the setup: no app ever connects to it by a name unbraid
+    /// answers. `.local` names are answered by the devices themselves (multicast), never through unbraid.
+    private static func never(_ name: String) -> String? {
         let no = "unbraid can't give it a rule"
-        if let tailnet, under(name, tailnet) { return "\(name) is a name in your tailnet: \(no)" }
-        if under(name, "ts.net") { return "\(name) is a Tailscale name, answered by Tailscale: \(no)" }
+        if under(name, "local") { return "\(name) is answered by the devices on your network themselves, never through unbraid: \(no)" }
         if under(name, "localhost") { return "\(name) is this Mac itself: \(no)" }
         if under(name, "arpa"), !under(name, "home.arpa") { return "\(name) is a lookup of an address, not a website: \(no)" }
-        return local.contains { under(name, $0) } ? "\(name) is a name on your own network: \(no)" : nil
+        return nil
     }
 
-    /// The one decision of which of `setup`'s websites apply: clean names, and for a route or Direct none on the own
-    /// network or in the tailnet whose domain is `tailnet` (a setup saved before those were refused may hold one; a
-    /// block of one stays a block). The compiler writes rules for these only, and statistics, every count, the
-    /// widgets, the rows and restore's comparison go by the same, so a rule shown as not applied neither counts nor
-    /// takes its app's traffic. `tailnet` is normalised here, so the raw and the compiler's forms agree.
+    /// Why `setup`'s rule for `name` on `route` doesn't apply in this setup, or nil when it does: the resolver that
+    /// answers the name here is one a website rule would wrongly take it from (`Compiler.answered`), so the compiler
+    /// leaves the rule out. A block always applies. `tailnet`: the tailnet's domain, as the compiler is given it.
+    static func notApplied(_ name: String, _ route: String, in setup: Setup, tailnet: String?) -> String? {
+        guard route != BLOCK, let answered = Compiler.answered(name, setup, tailnet: tailnet) else { return nil }
+        return switch answered {
+        case .tailscale: "Tailscale answers ts.net names while Reach your tailnet is on"
+        case .tailnet: "your tailnet answers this name while Reach your tailnet is on"
+        case .tailnetClosed: "unbraid leaves your tailnet's names unanswered while Reach your tailnet is off"
+        case .local: "your network answers this name while Reach devices on this network is on"
+        case .reverse: "your network answers lookups of its own addresses"
+        case .multicast: "the devices on your network answer .local names themselves, never through unbraid"
+        }
+    }
+
+    /// The one decision of which of `setup`'s websites apply: clean names, a block always, a route or Direct unless
+    /// `notApplied` (its own resolver answers it in this setup; with Reach your tailnet off, a Tailscale Funnel site
+    /// under ts.net works like any other). The compiler writes rules for these only, and statistics, every count, the
+    /// widgets, the rows and restore's comparison go by the same. `tailnet` is normalised by the compiler's own reading.
     static func applied(_ setup: Setup, tailnet: String?) -> [String: String] {
-        let tailnet = Compiler.tsSuffix(tailnet)
-        return setup.sites.filter { isClean($0.key) && ($0.value == BLOCK || ownNetwork($0.key, tailnet: tailnet) == nil) }
+        setup.sites.filter { isClean($0.key) && notApplied($0.key, $0.value, in: setup, tailnet: tailnet) == nil }
     }
 
     /// `applied` with `setup`'s own tailnet domain (`tailnet(of:)`): what every part of the app but the compiler,
     /// which is handed the same domain with its input, uses.
     static func applied(_ setup: Setup) -> [String: String] { applied(setup, tailnet: tailnet(of: setup)) }
+
+    /// Why `setup`'s saved rule for `name` doesn't apply, as the app judges it (`tailnet(of:)`); nil when it does.
+    static func notApplied(_ name: String, in setup: Setup) -> String? {
+        setup.sites[name].flatMap { notApplied(name, $0, in: setup, tailnet: tailnet(of: setup)) }
+    }
 
     /// Whether `setup`'s rule for `name` applies (see `applied`).
     static func isApplied(_ name: String, in setup: Setup) -> Bool { applied(setup)[name] != nil }
@@ -81,7 +97,11 @@ nonisolated enum Sites {
 
     private enum Read { case name(String), refused(String) }
 
+    /// The longest text read as an address: longer is refused whole, never cut into another address.
+    static let paste = 2000
+
     private static func read(_ raw: String) -> Read {
+        if raw.count > paste { return .refused("That is too long for an address: paste the link alone") }
         // Read as a browser reads a web address: tabs and line breaks anywhere are dropped and a backslash is a slash,
         // so "example.com\\@evil.com" opens example.com (the rest is its path), and is saved as that.
         let typed = raw.trimmingCharacters(in: .whitespacesAndNewlines).filter { !"\t\n\r".contains($0) }.replacingOccurrences(of: "\\", with: "/")
@@ -104,24 +124,21 @@ nonisolated enum Sites {
             return .refused(labels.count > 1 && !last.isEmpty ? address : notAName)
         }
         guard name.utf8.count <= 253, labels.allSatisfy(label) else { return .refused(notAName) }
-        guard labels.count >= 2 else { return .refused(ownNetwork(name) ?? "Add the whole name, such as \(name).com") }
+        guard labels.count >= 2 else { return .refused(never(name) ?? "Add the whole name, such as \(name).com") }
         return .name(name)
     }
 
     private static let notAName = "That isn't a website address"
     private static let address = "An IP address can't have a rule: add the website's name"
-    /// Where names on the local network end: answered by the Mac or the router, never by a VPN's resolver.
-    private static let local = ["local", "lan", "arpa", "fritz.box", "localhost", "internal"]
-
     /// A name that is itself a public suffix: under it are many unrelated websites (every company's "co.uk"), which a
     /// rule would all cover. The common country forms and hosting platforms where everyone gets a name of their own.
-    private static func sharedSuffix(_ name: String) -> Bool {
+    static func shared(_ name: String) -> Bool {
         platforms.contains(name) || name.wholeMatch(of: /(co|com|net|org|gov|edu|ac|or|ne|go|ltd|plc|me)\.[a-z]{2}/) != nil
     }
 
     private static let platforms: Set = ["github.io", "gitlab.io", "blogspot.com", "herokuapp.com", "appspot.com", "netlify.app",
                                          "vercel.app", "pages.dev", "workers.dev", "web.app", "firebaseapp.com",
-                                         "azurewebsites.net", "cloudfront.net", "s3.amazonaws.com"]
+                                         "azurewebsites.net", "cloudfront.net", "s3.amazonaws.com", "ts.net"]
 
     /// `sites`, most specific first (a name under another comes before it), as runs that share a route: the route's id
     /// and its addresses. The engine takes the first rule that matches, so a longer name must come before a shorter one
@@ -139,14 +156,66 @@ nonisolated enum Sites {
     }
 
     /// `name` as people read it: an international name in its own letters ("xn--mnchen-3ya.de" → "münchen.de").
-    /// Only a decoding that writes back to `name` itself is shown: anything else (a label that decodes to nothing, to
-    /// letters a name can't hold, or to look-alike dots) stays in its ASCII form.
+    /// Only a decoding that writes back to `name` itself, and, as browsers show names, only when no label mixes scripts
+    /// or is made of letters that look like Latin ones ("xn--pple-43d.example" stays, not "аpple.example"): anything
+    /// else stays in its ASCII form.
     static func shown(_ name: String) -> String {
-        guard name.contains("xn--") else { return name }
+        guard let decoded = decoded(name), decoded.split(separator: ".").allSatisfy({ plain($0) }) else { return name }
+        return decoded
+    }
+
+    /// What a search of the list matches `name` by: the name, its own letters, and those letters read as the Latin
+    /// ones they look like.
+    static func readings(_ name: String) -> [String] {
+        guard let decoded = decoded(name) else { return [name] }
+        return [name, decoded, String(decoded.map { lookalike[$0] ?? $0 })]
+    }
+
+    /// `name`'s labels in their own letters, when that writes back to `name` itself (nil for any other).
+    private static func decoded(_ name: String) -> String? {
+        guard name.contains("xn--") else { return nil }
         let decoded = name.split(separator: ".", omittingEmptySubsequences: false).map { l in
             l.hasPrefix("xn--") ? Punycode.decode(l.dropFirst(4)).flatMap { $0.isEmpty ? nil : $0 } ?? String(l) : String(l)
         }.joined(separator: ".")
-        return decoded != name && ascii(decoded) == name ? decoded : name
+        return decoded != name && ascii(decoded) == name ? decoded : nil
+    }
+
+    /// Letters of other scripts that look like Latin ones, with the Latin letter each looks like.
+    private static let lookalike: [Character: Character] = Dictionary(uniqueKeysWithValues: zip("асԁеһіјӏорԛѕԝхуαικνορτυχօսհոց", "acdehijlopqswxyaikvoptuxouhng"))
+
+    /// A label browsers show in its own letters: of one script (Latin may go with Chinese, Japanese or Korean, as they
+    /// allow), and, in a script other than Latin, not made only of letters that look like Latin ones.
+    private static func plain(_ label: Substring) -> Bool {
+        let scripts = Set(label.unicodeScalars.compactMap(script))
+        let mixes: [Set<String>] = [["latin", "han", "hiragana", "katakana"], ["latin", "han", "bopomofo"], ["latin", "han", "hangul"]]
+        if scripts.count > 1 && !mixes.contains(where: { scripts.isSubset(of: $0) }) { return false }
+        return scripts.isEmpty || scripts == ["latin"] || !label.allSatisfy { lookalike[$0] != nil || $0.isNumber || $0 == "-" }
+    }
+
+    private static let blocks: [(ClosedRange<UInt32>, String)] = [
+        (0x41...0x24F, "latin"), (0x1E00...0x1EFF, "latin"), (0x2C60...0x2C7F, "latin"), (0xA720...0xA7FF, "latin"), (0xAB30...0xAB6F, "latin"),
+        (0x370...0x3FF, "greek"), (0x1F00...0x1FFF, "greek"),
+        (0x400...0x52F, "cyrillic"), (0x1C80...0x1C8F, "cyrillic"), (0x2DE0...0x2DFF, "cyrillic"), (0xA640...0xA69F, "cyrillic"),
+        (0x530...0x58F, "armenian"), (0x590...0x5FF, "hebrew"), (0xFB1D...0xFB4F, "hebrew"),
+        (0x600...0x6FF, "arabic"), (0x750...0x77F, "arabic"), (0x870...0x8FF, "arabic"), (0xFB50...0xFDFF, "arabic"), (0xFE70...0xFEFF, "arabic"),
+        (0x1100...0x11FF, "hangul"), (0x3130...0x318F, "hangul"), (0xA960...0xA97F, "hangul"), (0xAC00...0xD7FF, "hangul"),
+        (0x3040...0x309F, "hiragana"), (0x30A0...0x30FF, "katakana"), (0x31F0...0x31FF, "katakana"), (0xFF66...0xFF9F, "katakana"),
+        (0x3100...0x312F, "bopomofo"), (0x31A0...0x31BF, "bopomofo"),
+        (0x2E80...0x2FDF, "han"), (0x3005...0x3007, "han"), (0x3021...0x3029, "han"), (0x3400...0x4DBF, "han"), (0x4E00...0x9FFF, "han"),
+        (0xF900...0xFAFF, "han"), (0x20000...0x3FFFF, "han"),
+    ]
+
+    /// The script of a letter, by its block; nil for digits, the hyphen and marks, which go with any script. Foundation
+    /// has no script property: blocks it doesn't name stand for a script of their own, so two of them read as a mix
+    /// (shown in ASCII, the safe side).
+    private static func script(_ c: Unicode.Scalar) -> String? {
+        let v = c.value
+        switch c.properties.generalCategory {
+        case .nonspacingMark, .spacingMark, .enclosingMark, .decimalNumber: return nil
+        default: break
+        }
+        if v == 0x2D || v == 0x30FC { return nil }
+        return blocks.first { $0.0.contains(v) }?.1 ?? "block-\(v >> 7)"
     }
 
     /// A label of a name: letters, digits and hyphens, neither first nor last a hyphen, at most 63.

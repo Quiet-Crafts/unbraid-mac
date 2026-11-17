@@ -29,34 +29,64 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(SiteEdits.also("netflix.com"), "www.netflix.com")
     }
 
-    /// Names on the local network or in a tailnet can't take a route: their own resolver answers them, which a
-    /// website's route would skip (and `.local` names never pass unbraid). The tailnet's own domain counts once known.
-    func testNamesOnTheOwnNetworkOrTailnetAreRefused() {
-        // One sentence per kind of name, true for any route chosen, Blocked included.
+    /// Only names no rule can ever work for are refused: `.local` (answered by the devices themselves), this Mac and
+    /// address lookups. Names on the local network or in a tailnet are taken: whether their rule applies depends on
+    /// the setup (`testWhetherARuleAppliesFollowsTheResolverThatAnswersItsName`).
+    func testOnlyNamesNoRuleCanWorkForAreRefused() {
         let no = "unbraid can't give it a rule"
-        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box", "svc.internal"] {
-            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name on your own network: \(no)"), name)
-        }
+        XCTAssertEqual(SiteEdits.check("nas.local", in: [:]), .refused("nas.local is answered by the devices on your network themselves, never through unbraid: \(no)"))
         XCTAssertEqual(SiteEdits.check("10.in-addr.arpa", in: [:]), .refused("10.in-addr.arpa is a lookup of an address, not a website: \(no)"))
         XCTAssertEqual(SiteEdits.check("app.localhost", in: [:]), .refused("app.localhost is this Mac itself: \(no)"))
-        // Someone else's ts.net name (a Funnel site) is Tailscale's, not the user's tailnet; the user's own says so.
-        for name in ["app.tail9999.ts.net", "ts.net"] {
-            XCTAssertEqual(SiteEdits.check(name, in: [:], tailnet: "tail1234.ts.net"), .refused("\(name) is a Tailscale name, answered by Tailscale: \(no)"), name)
+        for name in ["printer.lan", "router.home.arpa", "box.fritz.box", "svc.internal", "app.tail9999.ts.net", "nas.corp.example", "lan.example.com"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .valid(name), name)
         }
-        XCTAssertEqual(SiteEdits.check("nas.tail1234.ts.net", in: [:], tailnet: "tail1234.ts.net"), .refused("nas.tail1234.ts.net is a name in your tailnet: \(no)"))
-        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:]), .valid("nas.corp.example"))
-        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "corp.example"), .refused("nas.corp.example is a name in your tailnet: \(no)"))
-        XCTAssertEqual(SiteEdits.check("lan.example.com", in: [:]), .valid("lan.example.com"))
-        XCTAssertEqual(SiteEdits.check("planet.com", in: [:]), .valid("planet.com"))
         // For what is typed only: a saved setup or a backup keeps what it holds (the compiler leaves out what can't work).
-        let saved = ["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "tracker.lan": BLOCK, "co.uk": BLOCK, "example.com": DIRECT]
+        let saved = ["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "tracker.lan": BLOCK, "co.uk": BLOCK, "nas.local": DIRECT, "example.com": DIRECT]
         XCTAssertTrue(saved.keys.allSatisfy(Sites.isClean))
         XCTAssertEqual(Setup.readable(saved), saved)
+        // A whole paste is read, up to a length no address needs; longer is refused whole, never cut into another name.
+        let long = "https://" + String(repeating: "u", count: 280) + "@example.com.au"
+        XCTAssertEqual(SiteEdits.check(long, in: [:]), .valid("example.com.au"))
+        XCTAssertEqual(SiteEdits.check("https://example.com/?q=" + String(repeating: "a", count: 2000), in: [:]), .refused("That is too long for an address: paste the link alone"))
+    }
+
+    /// A rule applies unless, in this setup, the resolver that answers its name is one a website rule would take it from:
+    /// Tailscale's or the tailnet's while Reach your tailnet is on, the tailnet's domain refused while it is off, the
+    /// local network's while Reach devices on this network is on, its reverse zones, and `.local`. A block always applies.
+    func testWhetherARuleAppliesFollowsTheResolverThatAnswersItsName() {
+        func reason(_ name: String, _ route: String = "nl", tailscale: Bool = false, headscale: Bool = false, lan: Bool = false, tailnet: String? = nil) -> String? {
+            var s = Setup(routes: [Route(id: "nl")], defaultRoute: "nl")
+            s.home.tailscale = tailscale
+            if headscale { s.home.tsControlUrl = "https://hs.example" }
+            s.prefs.lan = lan
+            return Sites.notApplied(name, route, in: s, tailnet: tailnet)
+        }
+        let tailscale = "Tailscale answers ts.net names while Reach your tailnet is on", tailnet = "your tailnet answers this name while Reach your tailnet is on"
+        // Someone's public Funnel site: applies unless Tailscale's own server answers all of ts.net.
+        XCTAssertNil(reason("app.tail9999.ts.net"))
+        XCTAssertEqual(reason("app.tail9999.ts.net", tailscale: true), tailscale)
+        XCTAssertNil(reason("app.tail9999.ts.net", tailscale: true, headscale: true))
+        XCTAssertEqual(reason("nas.tail1234.ts.net", tailscale: true, tailnet: "tail1234.ts.net"), tailnet)
+        // A Headscale tailnet's own domain: once known; refused while Reach your tailnet is off.
+        XCTAssertNil(reason("nas.corp.example", tailscale: true, headscale: true))
+        XCTAssertEqual(reason("nas.corp.example", tailscale: true, headscale: true, tailnet: "Corp.Example."), tailnet)
+        XCTAssertEqual(reason("nas.corp.example", headscale: true, tailnet: "corp.example"), "unbraid leaves your tailnet's names unanswered while Reach your tailnet is off")
+        XCTAssertEqual(reason("64.100.in-addr.arpa", tailscale: true), tailnet)
+        // Local names: only while the local network answers them.
+        for name in ["printer.lan", "router.home.arpa", "box.fritz.box"] {
+            XCTAssertNil(reason(name), name)
+            XCTAssertEqual(reason(name, lan: true), "your network answers this name while Reach devices on this network is on", name)
+        }
+        XCTAssertNil(reason("svc.internal", lan: true))
+        XCTAssertEqual(reason("168.192.in-addr.arpa"), "your network answers lookups of its own addresses")
+        XCTAssertEqual(reason("nas.local"), "the devices on your network answer .local names themselves, never through unbraid")
+        // A block always applies.
+        for name in ["printer.lan", "nas.local", "app.tail9999.ts.net", "168.192.in-addr.arpa"] { XCTAssertNil(reason(name, BLOCK, tailscale: true, lan: true), name) }
     }
 
     /// A name that only ends other websites' names (a country's "co.uk", a hosting platform) would cover all of them.
     func testAPublicSuffixIsNotAWebsite() {
-        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "github.io", "herokuapp.com"] {
+        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "github.io", "herokuapp.com", "ts.net"] {
             let kept = name.hasPrefix("www.") ? String(name.dropFirst(4)) : name
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(kept) ends many websites' names: add one website under it"), name)
         }
@@ -75,6 +105,34 @@ final class SiteEditsTests: XCTestCase {
         for raw in ["bücher.de", "münchen.de", "例子.测试", "παράδειγμα.δοκιμή"] {
             XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw)
         }
+    }
+
+    /// What is typed is saved as the name a browser opens. Foundation writes an international name by the same rules as
+    /// browsers (UTS 46, as the WHATWG URL standard): checked against Node's URL parser for every character after ASCII
+    /// in "a<c>x.com" and for 20,000 seeded mixes of scripts, marks, joiners and right-to-left letters, with no
+    /// difference. These pairs are from that run, so a change in macOS shows here.
+    func testAnInternationalNameIsSavedAsABrowserOpensIt() {
+        for (raw, opened) in [("a\u{115F}x.com", "ax.com"), ("faß.de", "xn--fa-hia.de"), ("ab\u{00AD}c.com", "abc.com"), ("\u{217D}.example", "c.example"),
+                              ("аpple.example", "xn--pple-43d.example"), ("ＥＸＡＭＰＬＥ.com", "example.com")] {
+            XCTAssertEqual(Sites.clean(raw), opened, raw.debugDescription)
+        }
+        // A joiner browsers keep can't be written as Foundation writes hosts: refused rather than saved as another name.
+        XCTAssertNil(Sites.clean("a\u{200D}b.com"))
+    }
+
+    /// A name whose letters mix scripts, or are all of another script but look like Latin ones, is shown as it is saved
+    /// (the xn-- form), as browsers show it; a search finds it by either form and by the Latin it looks like.
+    func testALookAlikeNameIsShownInItsAsciiForm() {
+        XCTAssertEqual(Sites.shown("xn--pple-43d.example"), "xn--pple-43d.example")
+        XCTAssertEqual(Sites.readings("xn--pple-43d.example"), ["xn--pple-43d.example", "аpple.example", "apple.example"])
+        let allCyrillic = Sites.clean("сосо.example")!
+        XCTAssertEqual(Sites.shown(allCyrillic), allCyrillic)
+        for raw in ["bücher.de", "пример.рф", "例子.测试", "日本語テスト.jp", "한국어.kr", "παράδειγμα.δοκιμή", "عربي.example", "Latin中文.example"] {
+            let name = Sites.clean(raw)!
+            XCTAssertEqual(Sites.shown(name), raw.lowercased(), raw)
+            XCTAssertTrue(Sites.readings(name).contains(name), raw)
+        }
+        XCTAssertEqual(Sites.readings("example.com"), ["example.com"])
     }
 
     /// Whatever label a name holds, showing it never traps: a crafted one (an increment near Int.max), an empty one,
