@@ -21,8 +21,8 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
         var country: String? = nil
         /// Websites with this route of their own; absent in older snapshots.
         var sites: Int? = nil
-        /// Whether its tunnel works, only while connected: false when blocked or not answering; nil when not known
-        /// (not connected, or an older snapshot).
+        /// Whether its tunnel works, only while connected: true once a check was answered, false when blocked or not
+        /// answering; nil when not known (not connected, not checked or not yet, or an older snapshot).
         var ok: Bool? = nil
     }
 

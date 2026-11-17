@@ -6,10 +6,11 @@ extension Snapshot {
     /// What the widgets show. While connected, the routes are the ones the tunnel runs, not the edited setup: a change
     /// the engine refused (the previous configuration kept running) must not look applied. Off, paused or connecting,
     /// the edited setup is what Connect or Resume will run, and no route's health is known.
-    /// `silent` and `blocked`: routes not answering and routes with no usable tunnel; `tsState`: Tailscale's own state.
+    /// `silent` and `blocked`: routes not answering and routes with no usable tunnel; `answering`: routes whose last
+    /// check was answered; `tsState`: Tailscale's own state.
     static func make(phase: Phase, since: Date?, pausedUntil: Date?, failed: Bool, edited: Setup, running: Setup?,
                      exits: Int, week: [Day], profileGeneration: String? = nil, protection: Bool? = nil,
-                     silent: [String] = [], blocked: Set<String> = [], tsState: String? = nil) -> Snapshot {
+                     silent: [String] = [], answering: Set<String> = [], blocked: Set<String> = [], tsState: String? = nil) -> Snapshot {
         let s = phase == .on ? running ?? edited : edited
         let counts = Dictionary(grouping: s.apps.values, by: { $0 }).mapValues(\.count)
         let sites = Dictionary(grouping: s.sites.values, by: { $0 }).mapValues(\.count)
@@ -21,10 +22,12 @@ extension Snapshot {
         case .signInNeeded, .awaitingApproval, .stopped: false
         case .starting, .unknown, nil: nil
         }
+        // Working only on evidence: a check answered, or Tailscale saying it runs. A route not checked (an own server
+        // with its check off) or not checked yet (right after connecting, a wake or a network change) is not known.
         func ok(_ id: String, exit: Bool) -> Bool? {
             guard phase == .on else { return nil }
             if down.contains(id) { return false }
-            return exit ? ts : true
+            return exit ? ts : answering.contains(id) ? true : nil
         }
         return Snapshot(
             phase: phase, since: since, pausedUntil: pausedUntil, exits: exits,

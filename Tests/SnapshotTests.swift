@@ -338,6 +338,33 @@ final class SnapshotTests: XCTestCase {
 
     // MARK: Route health on the widgets
 
+    /// The widget of the version before route health reads a snapshot written now (its fields as they were then): the
+    /// new ones are passed over, and the health three ways (working, not, unknown) survives a round trip.
+    func testASnapshotWithHealthReadsInTheVersionBefore() throws {
+        struct Before: Codable {
+            struct Route: Codable { var id: String, name: String, code: String, hue: Int, apps: Int, isDefault: Bool, country: String? }
+            var phase: Snapshot.Phase, since: Date?, pausedUntil: Date?, exits: Int, routes: [Route], direct: Int, blocked: Int
+            var week: [Snapshot.Day], updated: Date, failed: Bool?, defaultRoute: String?, profiles: [String]?, profile: String?
+            var profileGeneration: String?, protected: Bool?
+        }
+        let routes = [Snapshot.Route(id: "nl", name: "Netherlands", code: "NL", hue: 0, apps: 1, isDefault: true, ok: true),
+                      Snapshot.Route(id: "us", name: "United States", code: "US", hue: 1, apps: 0, isDefault: false, ok: false),
+                      Snapshot.Route(id: "home", name: "Home server", code: "WG", hue: 2, apps: 2, isDefault: false, sites: 1)]
+        let now = Snapshot(phase: .on, exits: 3, routes: routes, updated: Date(timeIntervalSince1970: 1_800_000_000), profile: "Home",
+                           protected: true, tailscale: "Tailscale on")
+        let data = try JSONEncoder().encode(now)
+        let before = try JSONDecoder().decode(Before.self, from: data)
+        XCTAssertEqual(before.routes.map(\.id), ["nl", "us", "home"])
+        XCTAssertEqual(before.profile, "Home")
+        let back = try JSONDecoder().decode(Snapshot.self, from: data)
+        XCTAssertEqual(back.routes.map(\.ok), [true, false, nil])
+        XCTAssertTrue(back.health! == (1, 2))
+        // And what the version before wrote reads now with no health at all.
+        let old = try JSONDecoder().decode(Snapshot.self, from: JSONEncoder().encode(before))
+        XCTAssertNil(old.health)
+        XCTAssertEqual(old.routes.count, 3)
+    }
+
     /// A snapshot written before route health still decodes: no health, no Tailscale mark, nothing failing.
     func testOldSnapshotHasNoHealth() throws {
         let data = Data(#"{"phase":"on","exits":1,"routes":[{"id":"nl","name":"Netherlands","code":"NL","hue":0,"apps":1,"isDefault":true}],"direct":0,"blocked":0,"week":[],"updated":0}"#.utf8)
@@ -349,14 +376,15 @@ final class SnapshotTests: XCTestCase {
         XCTAssertNil(s.statusLine)
     }
 
-    /// Connected: each route is ok unless blocked or not answering; off, paused or connecting nothing is vouched for.
+    /// Connected: a route works once its check was answered, doesn't when blocked or not answering, and is not known
+    /// otherwise; off, paused or connecting nothing is vouched for.
     func testHealthFilledOnlyWhileConnected() throws {
         var home = Route(id: "home", hue: 3)
         home.wg = WgPeer(name: "Home server", privateKey: "a", address: ["10.0.0.2/32"], publicKey: "b", endpoint: "192.0.2.10:51820", allowedIps: ["0.0.0.0/0"])
         let setup = Setup(routes: [nl, us, home], defaultRoute: "nl", apps: ["a": "us", "b": "home"])
-        func snap(_ phase: Snapshot.Phase, silent: [String] = [], blocked: Set<String> = []) -> Snapshot {
+        func snap(_ phase: Snapshot.Phase, silent: [String] = [], answering: Set<String> = ["nl", "us", "home"], blocked: Set<String> = []) -> Snapshot {
             Snapshot.make(phase: phase, since: nil, pausedUntil: nil, failed: false, edited: setup, running: setup, exits: 3, week: [],
-                          silent: silent, blocked: blocked)
+                          silent: silent, answering: answering, blocked: blocked)
         }
         let on = snap(.on, silent: ["home"], blocked: ["us"])
         XCTAssertEqual(on.routes.map(\.ok), [true, false, false])
@@ -365,6 +393,13 @@ final class SnapshotTests: XCTestCase {
         let fine = snap(.on)
         XCTAssertTrue(fine.health! == (3, 3))
         XCTAssertNil(fine.failing)
+        // Nothing checked yet (right after connecting), or an own server whose check is off: not called working.
+        let unchecked = snap(.on, answering: [])
+        XCTAssertEqual(unchecked.routes.map(\.ok), [nil, nil, nil])
+        XCTAssertNil(unchecked.health, "no count when nothing is known")
+        let some = snap(.on, answering: ["nl"], blocked: ["us"])
+        XCTAssertEqual(some.routes.map(\.ok), [true, false, nil])
+        XCTAssertTrue(some.health! == (1, 2), "only the routes whose health is known count")
         for phase in [Snapshot.Phase.off, .connecting, .paused] {
             let s = snap(phase, silent: ["home"], blocked: ["us"])
             XCTAssertTrue(s.routes.allSatisfy { $0.ok == nil }, "\(phase)")
@@ -384,7 +419,7 @@ final class SnapshotTests: XCTestCase {
         let exit = Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit")
         let s = Setup(routes: [nl, exit], defaultRoute: "nl", apps: ["com.a": "ts"])
         func ok(_ ts: String?) -> [String: Bool?] {
-            let snap = Snapshot.make(phase: .on, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 2, week: [], tsState: ts)
+            let snap = Snapshot.make(phase: .on, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 2, week: [], answering: ["nl"], tsState: ts)
             return Dictionary(uniqueKeysWithValues: snap.routes.map { ($0.id, $0.ok) })
         }
         XCTAssertEqual(ok("Running"), ["nl": true, "ts": true])

@@ -24,6 +24,9 @@ nonisolated struct VpnState: Equatable, Sendable {
     /// Routes whose tunnel stopped answering and that unbraid can't move to another server: the user's own servers,
     /// pinned servers and dedicated addresses. Their apps time out until the server answers again.
     var silent: [String] = []
+    /// Routes whose tunnel answered its last check in this engine run and on this network: the only ones the widgets
+    /// call working. A route that isn't checked, or not yet, is in neither list.
+    var answering: [String] = []
     var error: String?
     var tsLoginUrl: String?
     var tsState: String?
@@ -59,6 +62,7 @@ final class Connection {
                 routeWake?.cancel(); routeWake = nil
                 if !state.dropping.isEmpty { state.dropping = [] }
                 if !state.silent.isEmpty { state.silent = [] }
+                if !state.answering.isEmpty { state.answering = [] }
             }
             if state.phase == .off || state.phase == .paused {
                 routeRetry.clear(); blockedReasons = [:]
@@ -2546,6 +2550,8 @@ final class Connection {
     /// Checks provider tunnels in rounds; only results from the same engine and network count.
     private func watchHealth() async {
         var plan = HealthSchedule()
+        // Tags whose last check in this basis was answered.
+        var passed: Set<String> = []
         var basis = (runIdentity.engineStarts, healthReset)
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -2555,6 +2561,8 @@ final class Connection {
                 plan.restart(now: .now)
                 if !state.dropping.isEmpty { state.dropping = [] }
                 if !state.silent.isEmpty { state.silent = [] }
+                passed.removeAll()
+                if !state.answering.isEmpty { state.answering = [] }
                 failing.removeAll()
             }
             guard state.phase == .on, !SpeedTest.shared.testing, let setup = running else { continue }
@@ -2563,6 +2571,7 @@ final class Connection {
             // would ever say it answers again.
             let watched = Set(exits.values.flatMap(\.keys))
             if !state.silent.allSatisfy(watched.contains) { state.silent = state.silent.filter(watched.contains) }
+            if !state.answering.allSatisfy(watched.contains) { state.answering = state.answering.filter(watched.contains) }
             let eligible = Set(exits.keys.filter { id in
                 guard let exit = exits[id] else { return false }
                 return exit.keys.allSatisfy { route in
@@ -2612,6 +2621,9 @@ final class Connection {
             if dropping != state.dropping { state.dropping = dropping }
             let silent = exits.filter { plan.silent($0.key, now: .now) }.values.flatMap { $0.keys }.filter { setup.route($0)?.movable == false }.sorted()
             if silent != state.silent { state.silent = silent }
+            for (tag, ok) in answers { if ok { passed.insert(tag) } else { passed.remove(tag) } }
+            let answering = exits.filter { passed.contains($0.key) }.values.flatMap { $0.keys }.sorted()
+            if answering != state.answering { state.answering = answering }
             guard !deadTags.isEmpty else { continue }
             let dead = deadTags.compactMap { exits[$0] }
             let routeIds = Set(dead.flatMap { $0.keys })
