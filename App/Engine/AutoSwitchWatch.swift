@@ -8,10 +8,10 @@ import Observation
 /// Never connects or disconnects.
 @MainActor @Observable
 final class AutoSwitchWatch {
-    /// The fingerprint of the network the Mac is on now, for the Profiles page; nil with none, or while its router
-    /// hasn't answered.
+    /// The fingerprint of the network the Mac is on now, for the Profiles page; nil with none, while its router hasn't
+    /// answered, or on a network unbraid can't recognise.
     private(set) var mark: String?
-    /// The Mac is on a network (Wi-Fi or a cable), whether or not it can be told apart from others.
+    /// The Mac is on a network (Wi-Fi or a cable, with a usable path), whether or not it can be told apart from others.
     private(set) var online = false
 
     @ObservationIgnored private weak var model: AppModel?
@@ -44,8 +44,9 @@ final class AutoSwitchWatch {
         }, reconcile: { @MainActor [weak self] in self?.reconcile() })
         observer?.start()
         monitor.pathUpdateHandler = { [weak self] path in
-            // The Wi-Fi or cable macOS prefers, never a tunnel's; the rest of the path only says that something changed.
-            let interface = path.availableInterfaces.first { $0.type == .wifi || $0.type == .wiredEthernet }?.name
+            // The Wi-Fi or cable macOS prefers, never a tunnel's, while the path is usable (a network still joining is
+            // none yet); the rest of the path only says that something changed.
+            let interface = path.status == .satisfied ? path.availableInterfaces.first { $0.type == .wifi || $0.type == .wiredEthernet }?.name : nil
             let key = "\(interface ?? "")|\(path.status)|\(path.gateways.map { "\($0)" }.sorted())"
             Task { @MainActor in self?.pathChanged(interface, key) }
         }
@@ -94,26 +95,30 @@ final class AutoSwitchWatch {
         read()
     }
 
-    /// Reads the network's fingerprint now and, while its router hasn't answered (right after joining), once a second
-    /// through the settle time; then nothing until the next change.
+    /// When the fingerprint is read again while the router hasn't answered: each second through the settle time, then
+    /// every few seconds until the network counts as unrecognised, and twice more for a router that answers later still,
+    /// so a remembered network taken for an unrecognised one gets its own profile back; then nothing until the next change.
+    private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 30].map { .seconds($0) }
+
     private func read() {
         probe?.cancel()
-        guard let interface = path?.interface, let salt = model?.store.networks.salt else { probe = nil; seen(nil); return }
+        guard let interface = path?.interface, let salt = model?.store.networks.salt else { probe = nil; seen(.offline); return }
         probe = Task { [weak self] in
-            for attempt in 0...Int(AutoSwitch.settle.components.seconds) {
-                if attempt > 0 { try? await Task.sleep(for: .seconds(1)) }
+            for wait in Self.readings {
+                if wait > .zero { try? await Task.sleep(for: wait) }
                 guard !Task.isCancelled else { return }
                 let m = await NetworkMark.current(salt: salt, interface: interface)
                 guard !Task.isCancelled, let self else { return }
-                self.seen(m)
+                self.seen(m.map { .mark($0) } ?? .reading)
                 if m != nil { return }
             }
         }
     }
 
-    private func seen(_ m: String?) {
+    private func seen(_ reading: AutoSwitchRun.Reading) {
+        let m: String? = if case .mark(let m) = reading { m } else { nil }
         if mark != m { mark = m }
-        apply(run.handle(.network(m)))
+        apply(run.handle(.network(reading)))
     }
 
     private func apply(_ action: AutoSwitchRun.Action) {
@@ -122,7 +127,7 @@ final class AutoSwitchWatch {
         case .nothing: break
         case .wait(let due):
             timer = Task { [weak self] in
-                try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
+                try? await Task.sleep(until: due, clock: .continuous)
                 guard !Task.isCancelled, let self else { return }
                 // What is busy is read again now: a question that opened while this waited must be seen before
                 // anything is decided, or the switch would take it away.
@@ -144,7 +149,7 @@ final class AutoSwitchWatch {
             // Still what the rules say for this network, still connected, still the user's own setup, when it is made.
             m.switchProfile(name) { [weak self, weak m] in
                 guard let self, let m else { return false }
-                return m.vpn.state.phase == .on && !m.store.setupStandIn && self.mark == mark && m.store.networks.profile(on: mark) == name
+                return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.network(at: .now) == mark && m.store.networks.profile(on: mark) == name
             }
             switching = false
         case .blocked(let why): tell(why, inWindow: true)

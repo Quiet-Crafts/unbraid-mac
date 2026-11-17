@@ -131,7 +131,7 @@ private struct SwitchByItself: View {
     @State private var name = ""
 
     private var rules: NetworkRules { model.store.networks }
-    private static let footer = "While unbraid is connected, it switches a few seconds after your Mac joins another network; apps reconnect for a moment. A profile you pick by hand stays until the network changes again. unbraid recognises a network by its router, without reading your location or the Wi-Fi's name. Another network can pretend to be one you remembered, so don't give a remembered network a profile that protects less than you'd accept anywhere."
+    private static let footer = "While unbraid is connected, it switches a few seconds after your Mac joins another network; apps reconnect for a moment. A network it can't recognise counts as any other network after about 20 seconds. A profile you pick by hand stays until the network changes or unbraid starts again. unbraid recognises a network by its router, without reading your location or the Wi-Fi's name. Another network can pretend to be one you remembered, so don't give a remembered network a profile that protects less than you'd accept anywhere."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -150,7 +150,7 @@ private struct SwitchByItself: View {
                         }
                         Hairline().padding(.leading, Layout.inset + Measure.rowIcon + 12)
                     }
-                    row("globe", "Any other network", unusable(rules.elsewhere) ?? "Cafés, hotels, a phone's hotspot", profile: rules.elsewhere,
+                    row("globe", "Any other network", unusable(rules.elsewhere) ?? "Cafés, hotels, and networks unbraid can't recognise", profile: rules.elsewhere,
                         set: { p in model.store.updateNetworks { $0.elsewhere = p } }) {
                         // Its menu in line with the ones above, which have Forget beside them.
                         if !rules.known.isEmpty { Color.clear.frame(width: 24, height: 24) }

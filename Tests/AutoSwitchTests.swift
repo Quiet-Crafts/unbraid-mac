@@ -174,11 +174,17 @@ final class AutoSwitchTests: XCTestCase {
         // Already decided on this network with these rules (the user picked Home by hand since): it stays.
         let acted = AutoSwitch.Acted(mark: "cafe-mark", rules: r)
         XCTAssertEqual(AutoSwitch.decide(s, rules: r, mark: "cafe-mark", acted: acted, over: never), .none)
-        // Another network, or changed rules, decide again.
+        // Another network decides again, one unbraid can't recognise as any other.
         XCTAssertEqual(AutoSwitch.decide(s, rules: r, mark: "hotel-mark", acted: acted, over: never), .to("Travel"))
+        XCTAssertEqual(AutoSwitch.decide(s, rules: r, mark: AutoSwitch.unrecognised, acted: acted, over: never), .to("Travel"))
+        // A change to the rules decides again only where it changed the profile: not on the café for the office's rule.
         var changed = r
         changed.known[1].profile = "Travel"
-        XCTAssertEqual(AutoSwitch.decide(s, rules: changed, mark: "cafe-mark", acted: acted, over: never), .to("Travel"))
+        XCTAssertEqual(AutoSwitch.decide(s, rules: changed, mark: "cafe-mark", acted: acted, over: never), .none)
+        let office = AutoSwitch.Acted(mark: "office-mark", rules: r)
+        XCTAssertEqual(AutoSwitch.decide(s, rules: changed, mark: "office-mark", acted: office, over: never), .to("Travel"))
+        // The name unrecognised networks go by is never remembered.
+        XCTAssertFalse(changed.remember(AutoSwitch.unrecognised, name: "Café", profile: "Home"))
     }
 
     func testASwitchThatCantBeMadeSaysWhyOrDoesNothing() {

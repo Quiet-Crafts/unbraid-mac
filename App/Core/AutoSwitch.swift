@@ -46,7 +46,7 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
     /// can't be used, or no more fit.
     @discardableResult
     mutating func remember(_ mark: String, name raw: String, profile: String?, now: Date = .now) -> Bool {
-        guard known.count < Self.max, !known.contains(where: { $0.id == mark }), let name = name(raw) else { return false }
+        guard mark != AutoSwitch.unrecognised, known.count < Self.max, !known.contains(where: { $0.id == mark }), let name = name(raw) else { return false }
         known.append(Known(id: mark, name: name, profile: profile, added: now))
         return true
     }
@@ -77,12 +77,20 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
 nonisolated enum AutoSwitch {
     /// How long a network must last before a switch, so a handover or a short drop passes without one.
     static let settle: Duration = .seconds(5)
+    /// How long the Mac must be on a network that gives no fingerprint before it counts as one unbraid can't recognise:
+    /// long enough for a router that answers late (after joining or a wake), so a remembered network isn't taken for
+    /// another one in between.
+    static let unrecognisedAfter: Duration = .seconds(20)
+    /// What a network that gives no fingerprint goes by: never a fingerprint (those are hex), so it is never remembered
+    /// and its profile is the one for any other network. All such networks look the same.
+    static let unrecognised = "unrecognised"
 
-    /// What was last decided on: nothing more happens until the network or the rules change, so a profile picked by
-    /// hand stays.
+    /// What was last decided on: the network and the profile its rule named. Nothing more happens until either changes,
+    /// so a profile picked by hand stays through a change to the rules of another network.
     struct Acted: Equatable, Sendable {
         var mark: String
-        var rules: NetworkRules
+        var profile: String?
+        init(mark: String, rules: NetworkRules) { self.mark = mark; profile = rules.profile(on: mark) }
     }
 
     enum Step: Equatable, Sendable {
