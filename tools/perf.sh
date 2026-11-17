@@ -72,4 +72,4 @@ VARS=(UNBRAID_PERF=1 "CFFIXED_USER_HOME=$PERF_HOME")
 [ -z "${STRESS:-}" ] || VARS+=(UNBRAID_PERF_STRESS=1)
 [ -z "${CHECKS:-}" ] || VARS+=(UNBRAID_PERF_CHECKS=1 "UNBRAID_PERF_CHECK_SHOTS=$CHECKS")
 env "${VARS[@]}" \
-  caffeinate -d -u -t 300 "$APP/Contents/MacOS/unbraid" 2>&1 | tee "$DD.out" | grep -E "^\[(Perf|Sample|Check)\]|refused"
+  caffeinate -d -u -t 1800 "$APP/Contents/MacOS/unbraid" 2>&1 | tee "$DD.out" | grep -E "^\[(Perf|Sample|Check)\]|refused"
