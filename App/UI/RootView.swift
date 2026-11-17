@@ -148,13 +148,19 @@ struct RootView: View {
                 } detail: {
                     // Pages switch without a cross-fade: a table kept on screen through a fade while its rows are torn
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
-                    DetailPage().frame(minWidth: Self.pageMinWidth, maxWidth: .infinity, maxHeight: .infinity)
+                    DetailPage()
+                        // Exactly the room the bands leave: a page whose content asks for more runs off the bottom
+                        // rather than pushing the bands up under the toolbar.
+                        .frame(minWidth: Self.pageMinWidth, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
                         // What needs attention shows above every page, not only the one it was raised on. Never
                         // narrower than the page: the window's smallest size is measured at no width, where a band's
                         // wrapping text is one letter a line and thousands of points tall, and the window grows to it.
                         .safeAreaInset(edge: .top, spacing: 0) {
                             VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice(); SupportCard(calm: supportCalm.isCalm) }
                                 .frame(minWidth: Self.pageMinWidth)
+                                #if DEBUG
+                                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { BandProbe.frame = $0 }
+                                #endif
                         }
                         // The smallest height holds the bands and the page together: a band that appears takes its room
                         // from the page, which scrolls, and never makes the window grow by itself.
@@ -256,6 +262,11 @@ struct RootView: View {
 
     private var goTo: (Page) -> Void { { Presentation.shared.page = $0 } }
 }
+
+#if DEBUG
+/// Where the bands above the page are, in the window (top-left origin), for the test copy's checks.
+@MainActor enum BandProbe { static var frame = CGRect.zero }
+#endif
 
 /// The open page. Its own view, so a page change doesn't reach the window's sheets and alerts.
 private struct DetailPage: View {

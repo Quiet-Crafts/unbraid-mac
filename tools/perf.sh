@@ -15,10 +15,11 @@
 #                                     Website (add-website), Websites with none (empty-websites), the menu bar panel (panel) and
 #                                     every Settings pane (settings-general, -providers, -home, -tailscale, -protection,
 #                                     -statistics, -about, and -about-update with a newer release found), the update
-#                                     notice at both sizes (update-notice, min-update-notice) and the one-time update
-#                                     question at both sizes (update-ask, min-update-ask), the support card (support-card,
-#                                     and min-support-card over a route; every min-* picture must be exactly the smallest
-#                                     window, band or not), the own server "Home server"
+#                                     notice and the one-time update question (update-notice, update-ask), the
+#                                     support card (support-card), every page at the smallest size under each of those
+#                                     bands (min-update-ask-<page>, min-update-notice-<page>, min-support-card-<page>;
+#                                     every min-* picture must be exactly the smallest window, with the band below the
+#                                     toolbar and no list past the window's bottom), the own server "Home server"
 #                                     not answering on its page and in the panel (route-silent, panel-silent), and the
 #                                     widget (widget-small, widget-small-failing, widget-medium-failing,
 #                                     widget-large-failing); dark ones end in -dark

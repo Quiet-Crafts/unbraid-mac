@@ -24,44 +24,57 @@ struct AppsView: View {
     /// The week's bytes when the list was last sorted: rows keep their places while the numbers refresh underneath,
     /// so nothing moves under the pointer. Sorting again (a column header) takes the latest.
     @State private var rank = WeekBytes.shared.bytes
+    /// The page's height and what sits above its lists, measured, so a short window shrinks the lists (and drops the
+    /// live strip) instead of pushing them past the window's edge.
+    @State private var room: CGFloat = 0
+    @State private var top: CGFloat = 0
+    @State private var strip: CGFloat = 0
+    @State private var sitesHeading: CGFloat = 0
 
     var body: some View {
         let s = model.setup
         let rows = shown(s)
+        let siteRows = route.map { SitesTable.rows(s, route: $0, sort: siteSort, rank: siteRank) } ?? []
+        let plan = fit(apps: rows.isEmpty ? Self.emptyRows : rows.count, sites: min(siteRows.count, 4))
         VStack(spacing: 0) {
-            header(s)
-            if let id = route {
-                // Every route's page keeps the address line's room, with or without an address (Direct, Blocked, a
-                // route still being checked or without apps), so its title, graph and list sit where the others' do.
-                ZStack(alignment: .leading) {
-                    ExitLine.room
-                    ExitLine(route: id)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
-            } else if s.route(s.defaultRoute) != nil {
-                // On All Apps it's the default route's exit, so it says whose it is.
-                ExitLine(route: s.defaultRoute, prefix: "\(s.route(s.defaultRoute)?.name ?? "Default route") exits as")
+            VStack(spacing: 0) {
+                header(s)
+                if let id = route {
+                    // Every route's page keeps the address line's room, with or without an address (Direct, Blocked, a
+                    // route still being checked or without apps), so its title, graph and list sit where the others' do.
+                    ZStack(alignment: .leading) {
+                        ExitLine.room
+                        ExitLine(route: id)
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
+                } else if s.route(s.defaultRoute) != nil {
+                    // On All Apps it's the default route's exit, so it says whose it is.
+                    ExitLine(route: s.defaultRoute, prefix: "\(s.route(s.defaultRoute)?.name ?? "Default route") exits as")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
+                }
+                if let id = route, let r = s.route(id) { RouteHealthCards(route: r) }
             }
-            if let id = route, let r = s.route(id) { RouteHealthCards(route: r) }
-            if let id = route, id == DIRECT || s.route(id) != nil {
+            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { top = $0 }
+            if let id = route, id == DIRECT || s.route(id) != nil, plan.strip {
                 LiveStrip(route: id, color: s.color(id), week: week)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { strip = $0 }
             }
             banners(s)
-            // With websites under them, the apps take only the room their rows need (the empty state's room when there
-            // are none), so the two lists sit together. In a short window both give up rows, down to two each, so
-            // neither is left a bare header while the other is whole.
-            let siteCount = route.map { SiteEdits.applied($0, in: s, tailnet: model.store.tsSuffix).count } ?? 0
-            if siteCount == 0 { table(rows).frame(maxHeight: .infinity).layoutPriority(1) }
+            // With websites under them, the apps take only the rows the page has room for (the empty state's room when
+            // there are none), so the two lists sit together and a short window shrinks both rather than cutting one.
+            if siteRows.isEmpty { table(rows).frame(maxHeight: .infinity).layoutPriority(1) }
             else {
-                table(rows).frame(minHeight: SitesTable.height(min(max(rows.count, 1), 2)), maxHeight: rows.isEmpty ? 300 : SitesTable.height(rows.count))
-                    .layoutPriority(1)
+                table(rows).frame(height: SitesTable.height(plan.apps))
+                sites(siteRows, rowsShown: plan.sites)
+                Spacer(minLength: 0)
             }
-            if let id = route { sites(id, s) }
-            if siteCount > 0 { Spacer(minLength: 0) }
         }
+        // Exactly the page's height, whatever the content asks: an overflow can only run off the bottom, never push the
+        // bands above the page under the toolbar.
+        .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+        .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { room = $0 }
         // A route's page carries its colour: a soft light from the top, under the clear toolbar.
         .background(alignment: .top) { if let id = route, !reduceTransparency { RouteGlow(color: s.color(id)) } }
         .toolbar {
@@ -199,17 +212,24 @@ struct AppsView: View {
     }
 
     /// The route's websites under its apps, only when it has any: the same rows as the Websites page.
-    @ViewBuilder private func sites(_ id: String, _ s: Setup) -> some View {
-        let rows = SitesTable.rows(s, route: id, sort: siteSort, rank: siteRank)
-        if !rows.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Websites").overline().padding(.horizontal, Layout.gutter).accessibilityAddTraits(.isHeader)
-                SitesTable(rows: rows, selection: $siteSelection, sort: $siteSort)
-                    .frame(minHeight: SitesTable.height(min(rows.count, 2)), maxHeight: SitesTable.height(min(rows.count, 4)))
-            }
-            .padding(.top, 10).padding(.bottom, Layout.gutter)
-            .layoutPriority(1)
+    private func sites(_ rows: [Row], rowsShown: Int) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Websites").overline().padding(.horizontal, Layout.gutter).accessibilityAddTraits(.isHeader)
+                .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { sitesHeading = $0 }
+            SitesTable(rows: rows, selection: $siteSelection, sort: $siteSort).frame(height: SitesTable.height(rowsShown))
         }
+        .padding(.top, 10).padding(.bottom, Layout.gutter)
+        .onChange(of: rows.map(\.id)) { siteSelection.formIntersection(rows.map(\.id)) }
+    }
+
+    /// The empty state's room, in rows, when a route with websites has no apps.
+    private static let emptyRows = 6
+
+    /// How the page's height is shared (see `PageRoom`); everything shows until the page has been measured.
+    private func fit(apps: Int, sites: Int) -> PageRoom.Plan {
+        guard room > 0, route != nil else { return .init(strip: true, apps: apps, sites: sites) }
+        let lists = sites == 0 ? SitesTable.height(0) : SitesTable.height(0) * 2 + 10 + sitesHeading + 6 + Layout.gutter
+        return PageRoom.plan(room: room, top: top, strip: strip, chrome: lists, row: AppsTable.rowHeight, apps: apps, sites: sites)
     }
 
     // MARK: Table

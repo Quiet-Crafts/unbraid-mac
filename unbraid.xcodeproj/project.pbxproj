@@ -86,6 +86,7 @@
 		3A096A84EC3EE1BF20D9E585 /* ConfigFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 945B35DC1691963CF9DDE956 /* ConfigFile.swift */; };
 		3AF0533F86E444C358E03085 /* LifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16540D9011D973EC4593EA77 /* LifecycleTests.swift */; };
 		3BA4057D8625C95F34E122F8 /* Model.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96A02AE0280FDB914D162F3B /* Model.swift */; };
+		3BCD3CF42B7CAE69AB281D85 /* PageRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5528086C681674B480FDE4BE /* PageRoom.swift */; };
 		3C116F17F8566B720B279BFD /* DebugHooks.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCFE64FAD910F6CE34F4B51A /* DebugHooks.swift */; };
 		3C504F6939E6839979E6CE63 /* Pia.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CFA81E63EEF97BFE1DCFFB8 /* Pia.swift */; };
 		3D99C334F7A78F99CD33E9D8 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269129690FE2B3E94FB1C6FB /* Log.swift */; };
@@ -99,6 +100,7 @@
 		42520AFDD7121875353F8289 /* KeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CEBDFEB91507DEB06D7825 /* KeyProvider.swift */; };
 		42603CBC8BE857EB2A96FAF6 /* QR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDDF7466E86AA480872C0D2 /* QR.swift */; };
 		4377235EA203F0D9809DB930 /* ExitCheckState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A4190A80ADE0F80D200A2C8 /* ExitCheckState.swift */; };
+		43A27C91A73C9D8781007B60 /* PageRoom.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5528086C681674B480FDE4BE /* PageRoom.swift */; };
 		44D3703BE764F7CBBDFCC477 /* Proton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55EAD57B0E07186F433757E3 /* Proton.swift */; };
 		452B370F7C2DCC77E541CA8F /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C885B6A78F36934F52AA1EE3 /* Palette.swift */; };
 		4701AA4D9094ACF8DE5B068B /* UnbraidApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = E9F8801043DEC2A1D1F2748C /* UnbraidApp.swift */; };
@@ -126,6 +128,7 @@
 		5AB7440DE9F48832FC2A4AEA /* Catalog in Resources */ = {isa = PBXBuildFile; fileRef = 3C10D2FF6C86FAC61E84632E /* Catalog */; };
 		5BA3A9B9B25DDC88EDDAB117 /* Ivpn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8882D44810E7996091C410 /* Ivpn.swift */; };
 		5CEEE3F542465B75E76E1B7E /* Appearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD379A233842C7895C3A30DF /* Appearance.swift */; };
+		5E727B1279CFFDF30095EB2F /* PageRoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BDD0D5E26EB7D7C65D1EB2 /* PageRoomTests.swift */; };
 		5E81B75BEB586E2248D6E54C /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98821B9E3C4EA8B23F047FA7 /* AppGroup.swift */; };
 		5ECAF4151CAFD1F393CDF722 /* SpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17E365433524B187D56B4755 /* SpeedTest.swift */; };
 		5F646CF9D53D367E2CD88397 /* SiteEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95657EF32180C38A822C694 /* SiteEdits.swift */; };
@@ -436,8 +439,10 @@
 		4FBF9D44B32EBAF555ADB997 /* StatsMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsMath.swift; sourceTree = "<group>"; };
 		5146D3C02B13CFCD4425EBBB /* Fixture.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Fixture.swift; sourceTree = "<group>"; };
 		516BD53CBEFC31F6DF3D524B /* LinkPickerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkPickerTests.swift; sourceTree = "<group>"; };
+		51BDD0D5E26EB7D7C65D1EB2 /* PageRoomTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRoomTests.swift; sourceTree = "<group>"; };
 		530DB6A7CEA03304A74FDC19 /* AirApiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirApiTests.swift; sourceTree = "<group>"; };
 		5341561122D8DF8AA08C142D /* ExitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitProbe.swift; sourceTree = "<group>"; };
+		5528086C681674B480FDE4BE /* PageRoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRoom.swift; sourceTree = "<group>"; };
 		55EAD57B0E07186F433757E3 /* Proton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Proton.swift; sourceTree = "<group>"; };
 		56132231BD27DDAEDE916B3E /* FileWorkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWorkTests.swift; sourceTree = "<group>"; };
 		5634EAF2ED993743E460EB17 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
@@ -685,6 +690,7 @@
 				46E4AF239415C7D2899745ED /* Ndt7Tests.swift */,
 				D63F9C14312A652787F6AF8F /* NordTests.swift */,
 				80531678DA162154B27082E4 /* NudgesTests.swift */,
+				51BDD0D5E26EB7D7C65D1EB2 /* PageRoomTests.swift */,
 				6BC45E3DFD0B6401D5DB1C22 /* PiaTests.swift */,
 				2CE42234FB0D15D8D344FEE7 /* PinnedServerTests.swift */,
 				99AE2D4A2B8B114C38C9FD3F /* ProfilesTests.swift */,
@@ -839,6 +845,7 @@
 				8B106CFCAC881E2F3C2C58DC /* Ndt7.swift */,
 				E625BAAB28DA0B80DA03BCAF /* NetworkMark.swift */,
 				F82B3636EDB6616452A8ABCD /* Nudges.swift */,
+				5528086C681674B480FDE4BE /* PageRoom.swift */,
 				2D0FEDEE337217524D91E019 /* PerfFake.swift */,
 				74E1A9850A23A9F05D2A74FD /* Provider.swift */,
 				8591ED5655491897B5E01B38 /* ProviderStatus.swift */,
@@ -1204,6 +1211,7 @@
 				DE0D6A50FA80DDDB73274FAB /* NordApi.swift in Sources */,
 				B2BC684E93D345265EB4F389 /* Notifier.swift in Sources */,
 				1A290A81D098EBC995FDA154 /* Nudges.swift in Sources */,
+				3BCD3CF42B7CAE69AB281D85 /* PageRoom.swift in Sources */,
 				D40588E9663D57D1173295A7 /* Palette.swift in Sources */,
 				4DD10AE5BC150B86FCBF138C /* PerfFake.swift in Sources */,
 				DC7EC593DAB699F007C46AB0 /* PerfHarness.swift in Sources */,
@@ -1355,6 +1363,8 @@
 				F25D54193F71690595B4100E /* NordTests.swift in Sources */,
 				7E5C92FB78C4E71F8EA89AC2 /* Nudges.swift in Sources */,
 				9D88DDB607CA488199290200 /* NudgesTests.swift in Sources */,
+				43A27C91A73C9D8781007B60 /* PageRoom.swift in Sources */,
+				5E727B1279CFFDF30095EB2F /* PageRoomTests.swift in Sources */,
 				C5E70A8509169F6EC6924338 /* PerfFake.swift in Sources */,
 				49C8F8B79873F673812051B1 /* Pia.swift in Sources */,
 				5072647D3FD8AA8166A8544D /* PiaTests.swift in Sources */,

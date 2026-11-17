@@ -334,6 +334,7 @@ private final class Meter: NSObject {
             closePanel()
             if !empty { await healthShots(dir, suffix) }
             await updateShots(dir, prefix, suffix, normal)
+            await bandShots(dir, prefix, suffix, normal)
             if !empty { await profileShots(dir, suffix) }
             if !empty { await supportShots(dir, suffix) }
             if !empty { await settingsShots(dir, suffix) }
@@ -481,15 +482,36 @@ private final class Meter: NSObject {
         Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
         if !Updates.shared.showNotice { report("[Perf] no update notice"); shotsMissing += 1 }
         await shoot(window, "\(dir)/\(prefix)update-notice\(suffix).png")
-        await shrink()
-        await shoot(window, "\(dir)/\(prefix)min-update-notice\(suffix).png")
-        window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(UpdateCheck.State()); await meter.frames(90)
         await shoot(window, "\(dir)/\(prefix)update-ask\(suffix).png")
-        await shrink()
-        await shoot(window, "\(dir)/\(prefix)min-update-ask\(suffix).png")
-        window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
+    }
+
+    /// Every page at the smallest size under each band (the update question, the update notice, the support card), as
+    /// min-<band>-<page>: the band takes its room from the page, which shrinks; `shoot` checks the window kept its
+    /// size, the band sits below the toolbar and no list runs past the window's bottom. "home" is the own server not
+    /// answering, with its card.
+    private func bandShots(_ dir: String, _ prefix: String, _ suffix: String, _ normal: NSRect) async {
+        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("home", "route:home"), ("direct", "route:\(DIRECT)"),
+                     ("blocked", "route:\(BLOCK)"), ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
+        let bands: [(String, () -> Void, () -> Void)] = [
+            ("update-ask", { Updates.shared.setForTesting(UpdateCheck.State()) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
+            ("update-notice", { Updates.shared.setForTesting(Self.updatesNewer) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
+            ("support-card", { SupportCardTesting.shared.force = true }, { SupportCardTesting.shared.force = false }),
+        ]
+        await shrink()
+        for (band, on, off) in bands {
+            on(); await meter.frames(60)
+            for (name, target) in pages {
+                go(target); await meter.frames(45)
+                if name == "home" { Connection.shared.perfSilent(["home"]); await meter.frames(30) }
+                if BandProbe.frame.height < 20 { report("[Perf] no \(band) band over \(name)"); shotsMissing += 1 }
+                await shoot(window, "\(dir)/\(prefix)min-\(band)-\(name)\(suffix).png")
+                if name == "home" { Connection.shared.perfSilent([]); await meter.frames(20) }
+            }
+            off(); await meter.frames(45)
+        }
+        window.setFrame(normal, display: true); go("apps"); await meter.frames(45)
     }
 
     /// The support card over All Apps (forced on; the rules are in the unit tests), and the sign-in page with its link to
@@ -499,10 +521,6 @@ private final class Meter: NSObject {
         SupportCardTesting.shared.force = true; await meter.frames(60)
         window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); await meter.frames(30)
         await shoot(window, "\(dir)/support-card\(suffix).png")
-        // At the smallest size over a route with websites, the fullest page: the card takes its room from the page.
-        go("route:us"); await shrink()
-        await shoot(window, "\(dir)/min-support-card\(suffix).png")
-        window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); go("apps"); await meter.frames(45)
         SupportCardTesting.shared.force = false; await meter.frames(45)
         let w = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 720, height: 640), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
@@ -629,6 +647,19 @@ private final class Meter: NSObject {
         // At the smallest size, a band above the page takes its room from the page: the window stays as small as asked.
         if w === window, name.contains("min-"), let smallest, w.frame.size != smallest {
             report("[Perf] window \(Int(w.frame.width))x\(Int(w.frame.height)), not the \(Int(smallest.width))x\(Int(smallest.height)) asked, for \(name)"); shotsMissing += 1
+        }
+        if w === window, let content = w.contentView {
+            // A band above the page lies wholly below the toolbar and inside the window.
+            let band = BandProbe.frame, toolbar = content.bounds.height - w.contentLayoutRect.maxY
+            if band.height > 0, band.minY < toolbar - 0.5 || band.maxY > content.bounds.height + 0.5 {
+                report("[Perf] band at \(Int(band.minY))-\(Int(band.maxY)), toolbar ends at \(Int(toolbar)), window \(Int(content.bounds.height)) high, for \(name)"); shotsMissing += 1
+            }
+            // No list runs past the window's bottom edge.
+            for table in appTables(in: w) {
+                guard let scroll = table.enclosingScrollView, !scroll.isHiddenOrHasHiddenAncestor else { continue }
+                let bottom = scroll.convert(scroll.bounds, to: nil).minY
+                if bottom < -0.5 { report("[Perf] a list runs \(Int(-bottom)) points past the window's bottom for \(name)"); shotsMissing += 1 }
+            }
         }
         // The Settings gear stays on the toolbar on every page, whatever else goes into the overflow.
         if w === window, let bar = w.toolbar, !(bar.visibleItems ?? []).contains(where: { $0.label == "Settings" || $0.toolTip?.hasPrefix("Settings") == true }) {
