@@ -892,6 +892,18 @@ final class PauseStepTests: XCTestCase {
         XCTAssertEqual(Lifecycle.pauseStep(wanted: a, running: a, connected: false, retry: Retry(), now: t0), .apply)
     }
 
+    /// A pause with nothing blocked needs no engine; a blocked website alone keeps one, as a blocked app does.
+    func testABlockedWebsiteAloneKeepsThePausesEngine() {
+        let none = key([:])
+        XCTAssertEqual(Lifecycle.pauseStep(wanted: none, running: nil, connected: true, retry: Retry(), now: t0), .stop)
+        XCTAssertEqual(Lifecycle.pauseStep(wanted: none, running: nil, connected: false, retry: Retry(), now: t0), .idle(clear: false))
+        let site = PauseKey(Compiler.Input(setup: Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["tracker.example": BLOCK]), links: [:], apps: [:],
+                                           selfPattern: "", tsSuffix: nil, probe: nil))
+        XCTAssertEqual(Lifecycle.pauseStep(wanted: site, running: nil, connected: true, retry: Retry(), now: t0), .apply)
+        XCTAssertEqual(Lifecycle.pauseStep(wanted: site, running: site, connected: true, retry: Retry(), now: t0), .converged(clear: false))
+        XCTAssertNotEqual(site, none)
+    }
+
     /// The tailnet joining or leaving the user's setup changes the paused engine's search domain only: applied again.
     func testTheSearchDomainIsPartOfWhatRuns() {
         let s = Setup(routes: [], defaultRoute: DIRECT, apps: ["x": BLOCK])

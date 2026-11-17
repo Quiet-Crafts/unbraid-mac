@@ -107,6 +107,10 @@ nonisolated enum AppMove {
 @MainActor
 final class MoveHistory {
     typealias Submit = (AppMove.Assignments, @escaping (Bool) -> Void) -> Void
+    /// Raised when the setup is replaced whole (a restore): moves made before it name routes and apps of a setup that
+    /// is gone, so none of them registers itself again, however late its answer comes.
+    static var generation = 0
+    private let generation = MoveHistory.generation
     private let before: AppMove.Assignments
     private let after: AppMove.Assignments
     private weak var undo: UndoManager?
@@ -142,7 +146,7 @@ final class MoveHistory {
         replayID = id
         register(back: !back)
         submit(back ? before : after) { [self] applied in
-            guard !applied, replayID == id, let undo else { return }
+            guard generation == Self.generation, !applied, replayID == id, let undo else { return }
             if undo.isUndoing || undo.isRedoing {
                 Task { @MainActor [self] in restore(back: back, id: id) }
             } else { restore(back: back, id: id) }
@@ -150,7 +154,7 @@ final class MoveHistory {
     }
 
     private func restore(back: Bool, id: UUID) {
-        guard replayID == id, let undo else { return }
+        guard generation == Self.generation, replayID == id, let undo else { return }
         restoring = true
         defer { restoring = false }
         // Reverse only this replay's entry. Registering outside undo/redo would discard other moves' redo.

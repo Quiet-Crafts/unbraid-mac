@@ -137,6 +137,25 @@ final class SitesTests: XCTestCase {
         XCTAssertEqual(s.profiles.first?.sites, ["p.example": BLOCK])
     }
 
+    /// Any change to the websites must reach the engine before a provider can delay it, as an app leaving Direct does.
+    func testAWebsiteChangeNeedsTheInterimRules() {
+        var moved = setup
+        moved.sites["new.example"] = "us"
+        XCTAssertTrue(LinkPicker.needsInterim(from: setup, to: moved))
+        var blocked = setup
+        blocked.sites["example.com"] = BLOCK
+        XCTAssertTrue(LinkPicker.needsInterim(from: setup, to: blocked))
+        XCTAssertFalse(LinkPicker.needsInterim(from: setup, to: setup))
+        XCTAssertFalse(LinkPicker.needsInterim(from: nil, to: moved))
+    }
+
+    /// The setup a pause runs holds what is blocked, websites included: with none of either it needs no engine.
+    func testAPauseKeepsBlockedWebsites() {
+        XCTAssertTrue(Setup(routes: [], defaultRoute: DIRECT, apps: [:]).assignsNothing)
+        XCTAssertFalse(Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["tracker.example": BLOCK]).assignsNothing)
+        XCTAssertFalse(Setup(routes: [], defaultRoute: DIRECT, apps: ["com.a": BLOCK]).assignsNothing)
+    }
+
     // MARK: Profiles
 
     func testProfilesCarryTheirWebsites() {

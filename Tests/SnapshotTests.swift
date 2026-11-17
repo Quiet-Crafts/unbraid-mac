@@ -378,6 +378,20 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(decoded, on)
     }
 
+    /// A route through a Tailscale exit node is only as well as Tailscale: not working while it is stopped or waits
+    /// for a sign-in, unknown while it hasn't said; other routes don't depend on it.
+    func testATailscaleExitIsOnlyAsWellAsTailscale() {
+        let exit = Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit")
+        let s = Setup(routes: [nl, exit], defaultRoute: "nl", apps: ["com.a": "ts"])
+        func ok(_ ts: String?) -> [String: Bool?] {
+            let snap = Snapshot.make(phase: .on, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 2, week: [], tsState: ts)
+            return Dictionary(uniqueKeysWithValues: snap.routes.map { ($0.id, $0.ok) })
+        }
+        XCTAssertEqual(ok("Running"), ["nl": true, "ts": true])
+        for down in ["NeedsLogin", "NeedsMachineAuth", "Stopped"] { XCTAssertEqual(ok(down), ["nl": true, "ts": false], down) }
+        for unsure in ["Starting", "NoState", "Whatever", nil] { XCTAssertEqual(ok(unsure), ["nl": true, "ts": nil], unsure ?? "nil") }
+    }
+
     /// TS for Tailscale's own control server, HS for a self-hosted one; on only while connected and Tailscale runs.
     func testTailscaleMark() {
         var s = Setup(routes: [nl], defaultRoute: "nl", apps: [:])

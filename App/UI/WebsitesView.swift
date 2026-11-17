@@ -28,7 +28,7 @@ struct WebsitesView: View {
                 ContentUnavailableView.search(text: query).frame(maxHeight: .infinity)
             } else {
                 SitesTable(rows: rows, selection: $selection, sort: $sort).layoutPriority(1)
-                Text("A rule covers the address and every address under it. It applies in every app that looks names up through macOS, Direct apps included, while unbraid is connected. A browser that uses its own secure DNS keeps its app's route.")
+                Text("A rule covers the address and every address under it. It applies in every app that looks names up through macOS, Direct apps included, while unbraid is connected; a blocked website stays blocked during a pause. A browser that uses its own secure DNS keeps its app's route.")
                     .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                     .padding(Layout.inset).frame(maxWidth: .infinity, alignment: .leading)
                     .background(Ink.surface, in: RoundedRectangle(cornerRadius: Corner.card, style: .continuous))

@@ -380,6 +380,21 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(forged.routes[4].loc.pinned?.host, pin.host)
     }
 
+    /// The one provider setting that names addresses (IVPN's block list: a pair of its resolvers) never comes from a
+    /// file: after a restore it is the provider's standard one again.
+    func testAProvidersResolversAreNeverTakenFromAFile() throws {
+        var s = full()
+        s.opts["ivpn"] = ["list": "203.0.113.5|203.0.113.6", "port": "2049", "hardcore": "on"]
+        XCTAssertFalse(text(s).contains("203.0.113.5"))
+        XCTAssertEqual(try read(s).setup.opts["ivpn"], ["port": "2049", "hardcore": "on"])
+        let data = try edited(s) { mac in
+            var opts = mac["opts"] as? [String: Any] ?? [:]
+            opts["ivpn"] = ["list": "203.0.113.5|203.0.113.6"]
+            mac["opts"] = opts
+        }
+        XCTAssertNil(try Backup.read(data).setup.opts["ivpn"]?["list"])
+    }
+
     /// A route saved without keys must describe the very server it names: this Mac's config for that server is what
     /// it gets back.
     func testAKeylessRouteMustBeItsOwnServers() throws {

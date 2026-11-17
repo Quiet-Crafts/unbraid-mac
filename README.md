@@ -125,8 +125,8 @@ Yes. On the *Websites* page, give an address its own route, *Direct* or *Blocked
 that opens it, apps set to *Direct* included. A rule covers the address and everything under it (example.com and
 www.example.com); a service that uses other addresses needs each one added. unbraid knows a website by the name an app
 looks up through macOS, never by a name read off the connection, so a browser set to its own secure DNS keeps its
-app's route. Website rules apply while unbraid is connected, not during a pause, and a blocked website does not turn
-the kill switch on.
+app's route. Website routes apply while unbraid is connected; a blocked website stays blocked during a pause too. A
+blocked website does not turn the kill switch on.
 
 ### Can I use it without a VPN subscription?
 

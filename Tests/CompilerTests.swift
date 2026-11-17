@@ -403,6 +403,18 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(all.first { names($0) == ["login.tailscale.com"] && outbound($0) != nil }.flatMap(outbound), Compiler.tsTag)
     }
 
+    /// What a pause runs: nothing but what is blocked. A blocked website is refused and has no address there too,
+    /// everything else goes direct, and the extension and the engine take the config.
+    func testAPauseKeepsABlockedWebsiteBlocked() throws {
+        let paused = Setup(routes: [], defaultRoute: DIRECT, apps: ["com.b": BLOCK], sites: ["tracker.example": BLOCK], favorites: [])
+        let c = try compile(paused, links: [:])
+        XCTAssertEqual(final(c), "direct")
+        XCTAssertEqual(action(try XCTUnwrap(rules(c).first { names($0) == ["tracker.example"] })), "reject")
+        XCTAssertEqual(dnsRules(c).first { names($0) == ["tracker.example"] }?["rcode"] as? String, "NXDOMAIN")
+        let only = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["tracker.example": BLOCK], favorites: [])
+        XCTAssertEqual(action(try XCTUnwrap(rules(try compile(only, links: [:])).first { names($0) == ["tracker.example"] })), "reject")
+    }
+
     /// A change that failed twice leaves a deny-all: a website on a VPN route is refused there like an app on one, a
     /// Direct website stays Direct.
     func testDenyAllRefusesWebsitesOnVpnRoutes() throws {

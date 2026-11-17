@@ -72,7 +72,9 @@ nonisolated enum LinkPicker {
         func changes(_ before: String, _ after: String) -> Bool {
             (before == DIRECT && routes.contains(after)) || (before != BLOCK && after == BLOCK)
         }
-        return changes(old.defaultRoute, new.defaultRoute)
+        // Any change to the websites counts: a website's rule sits before its app's, so one given a route, moved or
+        // blocked may be leaving Direct whatever its app does.
+        return changes(old.defaultRoute, new.defaultRoute) || old.sites != new.sites
             || Set(old.apps.keys).union(new.apps.keys).contains { changes(old.routeOf($0), new.routeOf($0)) }
     }
 

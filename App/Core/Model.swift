@@ -431,6 +431,9 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     func route(_ id: String?) -> Route? { routes.first { $0.id == id } }
     func routeOf(_ app: String) -> String { apps[app] ?? defaultRoute }
     var allAppsUseDefault: Bool { apps.values.allSatisfy { $0 == defaultRoute } }
+    /// Nothing is assigned: said of the setup a pause runs, which holds only what is blocked (apps and websites), it
+    /// means the pause needs no engine.
+    var assignsNothing: Bool { apps.isEmpty && sites.isEmpty }
     /// Routes that carry traffic right now: the default plus any with apps or websites.
     var activeRoutes: [Route] {
         let used = Set(apps.values).union(sites.values)

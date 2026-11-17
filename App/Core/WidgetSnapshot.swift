@@ -14,11 +14,23 @@ extension Snapshot {
         let counts = Dictionary(grouping: s.apps.values, by: { $0 }).mapValues(\.count)
         let sites = Dictionary(grouping: s.sites.values, by: { $0 }).mapValues(\.count)
         let down = blocked.union(silent)
+        // A route through a Tailscale exit node is only as well as Tailscale: not working while it is stopped or
+        // waits for a sign-in or an approval, unknown while it hasn't said or is starting.
+        let ts: Bool? = switch TailscaleStatus(tsState) {
+        case .connected: true
+        case .signInNeeded, .awaitingApproval, .stopped: false
+        case .starting, .unknown, nil: nil
+        }
+        func ok(_ id: String, exit: Bool) -> Bool? {
+            guard phase == .on else { return nil }
+            if down.contains(id) { return false }
+            return exit ? ts : true
+        }
         return Snapshot(
             phase: phase, since: since, pausedUntil: pausedUntil, exits: exits,
             routes: s.activeRoutes.map {
                 Route(id: $0.id, name: $0.name, code: $0.code, hue: $0.hue, apps: counts[$0.id] ?? 0, isDefault: $0.id == s.defaultRoute,
-                      country: $0.imported ? nil : $0.loc.countryCode, sites: sites[$0.id], ok: phase == .on ? !down.contains($0.id) : nil)
+                      country: $0.imported ? nil : $0.loc.countryCode, sites: sites[$0.id], ok: ok($0.id, exit: $0.tsExit != nil))
             },
             direct: counts[DIRECT] ?? 0, blocked: counts[BLOCK] ?? 0, directSites: sites[DIRECT], blockedSites: sites[BLOCK], week: week,
             failed: failed ? true : nil, defaultRoute: s.defaultRoute == DIRECT ? DIRECT : nil,

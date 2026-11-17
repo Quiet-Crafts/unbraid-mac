@@ -482,7 +482,7 @@ final class Connection {
                 // A launch-time resume may fail before the blocking pause has been rebuilt.
                 if paused.phase == .paused, pausedInput == nil {
                     let input = makePausedInput()
-                    if !input.setup.apps.isEmpty { pausedInput = input; pausedSearch = search(input); pausedProfile = profile(input) }
+                    if !input.setup.assignsNothing { pausedInput = input; pausedSearch = search(input); pausedProfile = profile(input) }
                 }
                 state = VpnState(phase: .connecting)
                 do {
@@ -816,13 +816,13 @@ final class Connection {
                 var stopFailure: String?
                 do {
                     while true {
-                        if !input.setup.apps.isEmpty { state.phase = .connecting }
-                        let compiled: Result<String, Error> = input.setup.apps.isEmpty ? .success("") : await Self.compile(input)
+                        if !input.setup.assignsNothing { state.phase = .connecting }
+                        let compiled: Result<String, Error> = input.setup.assignsNothing ? .success("") : await Self.compile(input)
                         try Task.checkCancellation()
                         guard g == generation else { return }
                         let latest = makePausedInput()
                         if input.setup != latest.setup || input.apps != latest.apps || input.remembered != latest.remembered { input = latest; continue }
-                        if !input.setup.apps.isEmpty {
+                        if !input.setup.assignsNothing {
                             let json = try compiled.get(), searched = search(input)
                             try await apply(input, json, g, persist: false, search: searched)
                             pausedInput = input; pausedSearch = searched; pausedProfile = tunnel.profile
@@ -848,7 +848,7 @@ final class Connection {
                     guard g == generation else { return }
                     store.pause = nil
                     if revokes() { await teardown(error: Self.signedOut, revoke: true, g) }
-                    else if !input.setup.apps.isEmpty {
+                    else if !input.setup.assignsNothing {
                         // Blocking: the setup is tried again as after any failed change (this pause's own retry wake went
                         // with the generation it bumped).
                         if await recover(old, accounts, blocking: blocking, interim: interim, error: error, g) == .blocking, g == generation, state.phase == .on {
@@ -861,7 +861,7 @@ final class Connection {
                 }
                 // Recorded even when overtaken: a queued resume reads the paused state to put it back if it fails.
                 clearRunning(forget: false)
-                recordRun { if input.setup.apps.isEmpty { $0.stopped() } else { $0.pausedBlocking() } }
+                recordRun { if input.setup.assignsNothing { $0.stopped() } else { $0.pausedBlocking() } }
                 state = VpnState(phase: .paused, pausedUntil: until, pausedAt: since)
                 state.error = stopFailure
                 if g == generation { startWatching(); armResume() }
@@ -1100,7 +1100,10 @@ final class Connection {
         }
         func protected() -> (key: SealKey, input: Compiler.Input)? {
             guard let record else { return nil }
-            let blocked = Set(record.setup.activeRoutes.filter { !$0.imported && record.links[$0.id] == nil && store.accounts[$0.loc.provider] == nil }.map(\.id))
+            // Routes with no tunnel to run: a provider's while signed out, an own server's that waits for its config.
+            let blocked = Set(record.setup.activeRoutes.filter {
+                (!$0.imported && record.links[$0.id] == nil && store.accounts[$0.loc.provider] == nil) || LinkPicker.keyLeftOut($0, in: record.setup)
+            }.map(\.id))
             guard let setup = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
             let ids = Set(setup.activeRoutes.map(\.id))
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
@@ -2556,6 +2559,10 @@ final class Connection {
             }
             guard state.phase == .on, !SpeedTest.shared.testing, let setup = running else { continue }
             let exits = healthExits()
+            // A route whose checks were turned off, or that left the setup, is no longer said to be silent: nothing
+            // would ever say it answers again.
+            let watched = Set(exits.values.flatMap(\.keys))
+            if !state.silent.allSatisfy(watched.contains) { state.silent = state.silent.filter(watched.contains) }
             let eligible = Set(exits.keys.filter { id in
                 guard let exit = exits[id] else { return false }
                 return exit.keys.allSatisfy { route in
@@ -2894,7 +2901,9 @@ final class Connection {
         // The pause drops the home tunnels, so the engine can't tell a remote home's subnets from this network: blocked apps
         // get no LAN allowance meanwhile (the profile is the same at both levels, so this needs no restart).
         if s.home.wg != nil || (s.home.tailscale && !s.home.subnets.isEmpty), prefs.killLevel == .internet { prefs.killSwitchHome = true }
-        let paused = Setup(routes: [], defaultRoute: DIRECT, apps: s.apps.filter { $0.value == BLOCK }, favorites: [], prefs: prefs)
+        // What is blocked stays blocked through a pause: apps, and websites (refused for every app that asks macOS).
+        let paused = Setup(routes: [], defaultRoute: DIRECT, apps: s.apps.filter { $0.value == BLOCK }, sites: s.sites.filter { $0.value == BLOCK },
+                           favorites: [], prefs: prefs)
         var input = makeInput(paused, [:], probe: nil)
         // Every app's patterns, though only blocks are routed: an app here inside a blocked bundle that is only remembered
         // is refused by that bundle's rule, so the pause keeps the guards of a block (see `Compiler.Input.remembered`).

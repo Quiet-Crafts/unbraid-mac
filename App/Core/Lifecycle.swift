@@ -308,7 +308,7 @@ nonisolated enum Lifecycle {
 
     static func pauseStep(wanted: PauseKey, running: PauseKey?, connected: Bool, retry: Retry<PauseKey>,
                           now: ContinuousClock.Instant) -> PauseStep {
-        guard !wanted.setup.apps.isEmpty else { return running != nil || connected ? .stop : .idle(clear: retry.key != nil) }
+        guard !wanted.setup.assignsNothing else { return running != nil || connected ? .stop : .idle(clear: retry.key != nil) }
         if running == wanted, connected { return .converged(clear: retry.key != nil) }
         return retry.allows(wanted, now: now) ? .apply : .wait
     }

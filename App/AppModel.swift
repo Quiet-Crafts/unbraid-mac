@@ -491,7 +491,9 @@ final class AppModel {
     var refusedProfile: String?
     private var profileSwitchID = UUID()
 
-    func switchProfile(_ name: String, connectIfOff: Bool = false, offeredGeneration: String? = nil) {
+    /// `wanted`: for a switch nobody clicked (by network): asked again right before the change is made, after any
+    /// check it waited on, so one whose reason is gone (the rule, the network, the connection) isn't made.
+    func switchProfile(_ name: String, connectIfOff: Bool = false, offeredGeneration: String? = nil, wanted: (@MainActor () -> Bool)? = nil) {
         guard setup.profiles.contains(where: { $0.name == name }) else { return }
         autoSwitch.pickedByHand()
         if setup.profile == name { if connectIfOff && vpn.state.phase != .on { connect() }; return }
@@ -506,7 +508,7 @@ final class AppModel {
             guard let self, self.profileSwitchID == id, self.setup.pendingSwitch?.id == id else { return }
             if self.vpn.state.phase != .on, connectIfOff { self.connect() }
         }, valid: { [weak self] in
-            guard let self, self.profileSwitchID == id else { return false }
+            guard let self, self.profileSwitchID == id, wanted?() ?? true else { return false }
             return offeredGeneration == nil || self.profileGeneration == offeredGeneration
         })
     }
@@ -1109,6 +1111,7 @@ extension AppModel {
         guarded({ s in s = Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now).setup }, targets: targets, after: { [weak self] _, _ in
             // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
             UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)
+            MoveHistory.generation += 1
             for w in NSApp.windows { w.undoManager?.removeAllActions() }
             guard let self else { return }
             refusedProfile = nil

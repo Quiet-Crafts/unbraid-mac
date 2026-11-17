@@ -72,7 +72,10 @@ final class AutoSwitchWatch {
         if m.accounts != limitsFor { readLimits(m.accounts) }
         if store.networks.salt != salt { salt = store.networks.salt; read() }
         follow(m)
-        apply(run.handle([.connected(m.vpn.state.phase == .on), .rules(store.networks), .busy(store.setupStandIn || m.setup.pendingSwitch != nil)]))
+        // Busy also while a change waits for the user's answer about a provider's limit: a switch now would take that
+        // question away with the change it was about.
+        apply(run.handle([.connected(m.vpn.state.phase == .on), .rules(store.networks),
+                          .busy(store.setupStandIn || m.setup.pendingSwitch != nil || m.limitAsk != nil)]))
     }
 
     private func readLimits(_ accounts: [String: String]) {
@@ -135,7 +138,11 @@ final class AutoSwitchWatch {
         case .to(let name):
             own = name
             switching = true
-            m.switchProfile(name)
+            // Still what the rules say for this network, still connected, still the user's own setup, when it is made.
+            m.switchProfile(name) { [weak self, weak m] in
+                guard let self, let m else { return false }
+                return m.vpn.state.phase == .on && !m.store.setupStandIn && self.mark == mark && m.store.networks.profile(on: mark) == name
+            }
             switching = false
         case .blocked(let why): tell(why, inWindow: true)
         }

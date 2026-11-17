@@ -103,6 +103,9 @@ nonisolated enum Backup {
         var s = s
         for i in s.routes.indices { s.routes[i].loc = bare(s.routes[i].loc) }
         s.favorites = s.favorites.map(bare)
+        // The same for the one provider setting that names addresses (IVPN's block list is a pair of its resolvers):
+        // it starts again from the provider's standard one, and is chosen again from the provider's own list.
+        s.opts["ivpn"]?["list"] = nil
         return s
     }
 
