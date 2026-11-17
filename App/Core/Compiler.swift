@@ -246,7 +246,10 @@ nonisolated enum Compiler {
             appsOnExits = liveRoutes.contains { $0 != DIRECT && $0 != Compiler.filteredDirect && $0 != BLOCK }
             home = (s.home.tailscale ? homeSubnets(s) : []) + (s.home.wg.map(homeCidrs) ?? [])
             defaultDns = s.defaultRoute == DIRECT && s.prefs.effectiveFilter.server != nil && s.prefs.effectiveFilter.direct && !deny ? "dns-filter" : s.defaultRoute == DIRECT || active.isEmpty || i.blocked.contains(s.defaultRoute) ? "local" : Self.dns(s.defaultRoute, s, shared, i.links)
-            sites = Sites.runs(s.sites.filter { Sites.isClean($0.key) }).map { run in
+            // A name in the tailnet's own domain is left out, as one under ts.net is when it is read: the tailnet's
+            // resolver answers it, which a website's route would skip.
+            let tailnet = Compiler.tsSuffix(i.tsSuffix)
+            sites = Sites.runs(s.sites.filter { Sites.isClean($0.key) && Sites.refusal($0.key, tailnet: tailnet) == nil }).map { run in
                 (id: run.id, match: ["domain": J.strings(run.names), "domain_suffix": J.strings(run.names.map { "." + $0 })])
             }
             // Tailscale even without an exit route (its nodes). Health checks distinguish failed exits from an offline Mac,

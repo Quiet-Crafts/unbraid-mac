@@ -42,8 +42,9 @@ struct WebsitesView: View {
             }
             // Its own item: grouped with the search field, the two are drawn as one control.
             ToolbarItem(placement: .primaryAction) {
+                let full = s.sites.count >= Sites.max
                 Button { Presentation.shared.addSite = SiteTarget() } label: { Label("Add Website…", systemImage: "plus") }
-                    .help("Add a website")
+                    .help(full ? SiteEdits.full : "Add a website").disabled(full)
             }
         }
         // ⌥⌘1…9 and Find act on this page's websites; Follow Default has no meaning for one.
@@ -86,7 +87,7 @@ struct SitesTable: View {
     static func rows(_ s: Setup, route: String? = nil, sort: AppsSort) -> [Row] {
         let week = Self.week(WeekBytes.shared.bytes)
         return s.sites.filter { route == nil || $0.value == route }
-            .map { Row(id: $0.key, name: $0.key, routeName: s.label($0.value), week: week[$0.key] ?? 0) }
+            .map { Row(id: $0.key, name: Sites.shown($0.key), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)
     }
 
@@ -125,7 +126,7 @@ struct AddWebsiteSheet: View {
 
     var body: some View {
         let s = model.setup
-        let check = SiteEdits.check(address, in: s.sites)
+        let check = SiteEdits.check(address, in: s.sites, tailnet: model.store.tsSuffix)
         SheetFrame(title: "Add Website", subtitle: "The address and every address under it take the route you choose.") {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -133,17 +134,29 @@ struct AddWebsiteSheet: View {
                     TextField("Address", text: $address, prompt: Text("netflix.com, or paste a link"))
                         .textFieldStyle(.roundedBorder).labelsHidden().focused($focused).onSubmit(add)
                         .accessibilityLabel("Address")
-                    feedback(check).font(.system(size: 12)).lineLimit(1)
+                        .onKeyPress(.upArrow) { step(-1, s) }
+                        .onKeyPress(.downArrow) { step(1, s) }
+                    feedback(check).font(.system(size: 12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                 }
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Route").overline()
-                    VStack(spacing: 0) {
-                        ForEach(Array(s.sidebarRoutes.enumerated()), id: \.element) { i, id in
-                            if i > 0 { Hairline().padding(.leading, 12 + Measure.slashColumn + 8) }
-                            routeRow(id, s)
+                    // Up to eight rows show; more scroll. Up and Down choose from the address field too.
+                    let routes = s.sidebarRoutes
+                    ScrollViewReader { scroll in
+                        ScrollView {
+                            VStack(spacing: 0) {
+                                ForEach(Array(routes.enumerated()), id: \.element) { i, id in
+                                    if i > 0 { Hairline().padding(.leading, 12 + Measure.slashColumn + 8) }
+                                    routeRow(id, s).id(id)
+                                }
+                            }
                         }
+                        .scrollBounceBehavior(.basedOnSize)
+                        .frame(height: Measure.tableRow * CGFloat(min(routes.count, 8)))
+                        .onChange(of: choice) { withAnimation(nil) { scroll.scrollTo(choice) } }
                     }
                     .background(Ink.surface, in: RoundedRectangle(cornerRadius: Corner.card, style: .continuous))
+                    .clipShape(RoundedRectangle(cornerRadius: Corner.card, style: .continuous))
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, Layout.gutter).padding(.bottom, Layout.inset)
@@ -154,14 +167,25 @@ struct AddWebsiteSheet: View {
             Button("Add Website", action: add).keyboardShortcut(.defaultAction).contentButton(prominent: true)
                 .disabled(!valid(check))
         }
-        .onAppear { focused = target.address.isEmpty }
+        .onAppear { focused = true }
+    }
+
+    /// Up and Down in the address field choose the route above or below, as in a list.
+    private func step(_ by: Int, _ s: Setup) -> KeyPress.Result {
+        let routes = s.sidebarRoutes
+        guard let i = routes.firstIndex(of: choice) ?? routes.indices.first else { return .ignored }
+        choice = routes[max(0, min(routes.count - 1, i + by))]
+        return .handled
     }
 
     @ViewBuilder private func feedback(_ check: SiteEdits.Check) -> some View {
         switch check {
         case .empty: Text("A rule covers the address and every address under it.").foregroundStyle(Ink.dim)
-        case .valid(let name): Text("Saved as \(Text(name).fontWeight(.semibold)) · also covers \(SiteEdits.also(name))").foregroundStyle(Ink.dim)
-        case .refused(let why): Text(why).foregroundStyle(Ink.failedText)
+        case .valid(let name):
+            let shown = Sites.shown(name), also = Sites.shown(SiteEdits.also(name))
+            Text("Saved as \(Text(shown).fontWeight(.semibold)) · also covers \(also)").foregroundStyle(Ink.dim)
+                .help("Saved as \(shown), also covers \(also)")
+        case .refused(let why): Text(why).foregroundStyle(Ink.failedText).help(why)
         }
     }
 
@@ -185,7 +209,7 @@ struct AddWebsiteSheet: View {
     private func valid(_ check: SiteEdits.Check) -> Bool { if case .valid = check { return true }; return false }
 
     private func add() {
-        guard valid(SiteEdits.check(address, in: model.setup.sites)) else { return }
+        guard valid(SiteEdits.check(address, in: model.setup.sites, tailnet: model.store.tsSuffix)) else { return }
         if model.addSite(address, to: choice, undo: undo) == nil { dismiss() }
     }
 }

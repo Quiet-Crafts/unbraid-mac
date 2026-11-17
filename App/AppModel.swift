@@ -709,7 +709,7 @@ final class AppModel {
     /// words, or nil when it goes ahead.
     @discardableResult
     func addSite(_ raw: String, to routeId: String, undo: UndoManager?, completion: @escaping (Bool) -> Void = { _ in }) -> String? {
-        switch SiteEdits.check(raw, in: setup.sites) {
+        switch SiteEdits.check(raw, in: setup.sites, tailnet: store.tsSuffix) {
         case .empty: return "That isn't a website address"
         case .refused(let why): return why
         case .valid(let name):

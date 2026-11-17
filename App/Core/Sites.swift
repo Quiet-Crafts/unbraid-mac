@@ -8,28 +8,72 @@ nonisolated enum Sites {
 
     /// The address in `raw` as a rule keeps it, from what people type or paste ("https://www.Example.com/page" →
     /// "example.com"): the name alone, lower case, without "www.", international names in their ASCII form. A rule
-    /// covers the name and every name under it. Nil when it names no website: no dot, an IP address, or characters no
-    /// name has.
-    static func clean(_ raw: String) -> String? {
+    /// covers the name and every name under it. Nil when it names no website a rule can have (see `read`).
+    static func clean(_ raw: String) -> String? { if case .name(let name) = read(raw) { name } else { nil } }
+
+    /// Whether `name` is an address exactly as `clean` writes one: what a saved rule must be.
+    static func isClean(_ name: String) -> Bool { clean(name) == name }
+
+    /// Why `raw` can't have a rule, in the Add Website sheet's words; nil when it can. `tailnet` is the tailnet's own
+    /// domain, when there is one: its names are the tailnet's, as those under ts.net are.
+    static func refusal(_ raw: String, tailnet: String? = nil) -> String? {
+        switch read(raw) {
+        case .refused(let why): return why
+        case .name(let name): return tailnet.map { under(name, $0) } == true ? tailnetName(name) : nil
+        }
+    }
+
+    /// Whether `name` is `suffix` or a name under it.
+    static func under(_ name: String, _ suffix: String) -> Bool { name == suffix || name.hasSuffix("." + suffix) }
+
+    private enum Read { case name(String), refused(String) }
+
+    private static func read(_ raw: String) -> Read {
         var host = raw.trimmingCharacters(in: .whitespacesAndNewlines)[...]
         if let scheme = host.range(of: "://") { host = host[scheme.upperBound...] }
         for end in ["/", "?", "#"] { if let r = host.range(of: end) { host = host[..<r.lowerBound] } }
         if let at = host.range(of: "@", options: .backwards) { host = host[at.upperBound...] }
+        // An IPv6 address, bracketed in a link or bare: two colons or more, or a bracket.
+        if host.hasPrefix("[") || host.filter({ $0 == ":" }).count > 1 { return .refused(address) }
         if let port = host.range(of: ":") { host = host[..<port.lowerBound] }
-        guard var name = ascii(String(host).trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return nil }
+        guard var name = ascii(String(host).trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return .refused(notAName) }
         // Every leading "www." goes while a name is left, so what is kept reads back as itself.
         while name.hasPrefix("www."), name.dropFirst(4).contains(".") { name.removeFirst(4) }
         let labels = name.split(separator: ".", omittingEmptySubsequences: false)
         // A last label that reads as a number (digits, or 0x and hex digits) makes it an IP address to a browser, which
         // connects to it without a lookup: nothing a rule could match, and nothing a name ends in.
         let last = labels[labels.count - 1]
-        let number = last.allSatisfy(\.isNumber) || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit))
-        guard name.utf8.count <= 253, labels.count >= 2, labels.allSatisfy(label), !number else { return nil }
-        return name
+        if last.allSatisfy(\.isNumber) || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit)) {
+            return .refused(labels.count > 1 && !last.isEmpty ? address : notAName)
+        }
+        guard name.utf8.count <= 253, labels.allSatisfy(label) else { return .refused(notAName) }
+        if let suffix = ownNetwork.first(where: { under(name, $0) }) {
+            return .refused(suffix == "ts.net" ? tailnetName(name) : "\(name) is a name on your own network: a rule can't route it")
+        }
+        guard labels.count >= 2 else { return .refused("Add the whole name, such as \(name).com") }
+        if sharedSuffix(name) { return .refused("\(name) ends many websites' names: add one website under it") }
+        return .name(name)
     }
 
-    /// Whether `name` is an address exactly as `clean` writes one: what a saved rule must be.
-    static func isClean(_ name: String) -> Bool { clean(name) == name }
+    private static let notAName = "That isn't a website address"
+    private static let address = "An IP address can't have a rule: add the website's name"
+    private static func tailnetName(_ name: String) -> String { "\(name) is a name in your tailnet: a rule can't route it" }
+
+    /// Names no rule can work for, by where they end. Names on the local network are answered by the Mac or the router
+    /// (and `.local` ones by multicast, which never passes unbraid, so a rule for one would do nothing); Tailscale's
+    /// by the tailnet's own resolver, which a website's route would skip. A rule would send the name to a resolver that
+    /// can't answer it, and take the device's name away from the network that has it.
+    static let ownNetwork = ["local", "lan", "arpa", "fritz.box", "localhost", "internal", "ts.net"]
+
+    /// A name that is itself a public suffix: under it are many unrelated websites (every company's "co.uk"), which a
+    /// rule would all cover. The common country forms and hosting platforms where everyone gets a name of their own.
+    private static func sharedSuffix(_ name: String) -> Bool {
+        platforms.contains(name) || name.wholeMatch(of: /(co|com|net|org|gov|edu|ac|or|ne|go|ltd|plc|me)\.[a-z]{2}/) != nil
+    }
+
+    private static let platforms: Set = ["github.io", "gitlab.io", "blogspot.com", "herokuapp.com", "appspot.com", "netlify.app",
+                                         "vercel.app", "pages.dev", "workers.dev", "web.app", "firebaseapp.com",
+                                         "azurewebsites.net", "cloudfront.net", "s3.amazonaws.com"]
 
     /// `sites`, most specific first (a name under another comes before it), as runs that share a route: the route's id
     /// and its addresses. The engine takes the first rule that matches, so a longer name must come before a shorter one
@@ -44,6 +88,12 @@ nonisolated enum Sites {
             if runs.last?.id == id { runs[runs.count - 1].names.append(site) } else { runs.append((id, [site])) }
         }
         return runs
+    }
+
+    /// `name` as people read it: an international name in its own letters ("xn--mnchen-3ya.de" → "münchen.de").
+    static func shown(_ name: String) -> String {
+        guard name.contains("xn--") else { return name }
+        return name.split(separator: ".").map { l in l.hasPrefix("xn--") ? Punycode.decode(l.dropFirst(4)) ?? String(l) : String(l) }.joined(separator: ".")
     }
 
     /// A label of a name: letters, digits and hyphens, neither first nor last a hyphen, at most 63.
@@ -63,5 +113,60 @@ nonisolated enum Sites {
         parts.host = lower
         guard let encoded = parts.encodedHost?.lowercased(), !encoded.isEmpty, encoded.utf8.allSatisfy({ $0 < 128 }), !encoded.contains("%") else { return nil }
         return encoded
+    }
+}
+
+/// Punycode (RFC 3492) decoding, for showing an international name's label in its own letters. Foundation encodes
+/// hosts but gives nothing back to read them.
+nonisolated enum Punycode {
+    static func decode(_ s: Substring) -> String? {
+        let base = 36, tMin = 1, tMax = 26, skew = 38, damp = 700
+        var out: [Unicode.Scalar] = []
+        var input = Array(s.unicodeScalars)
+        if let dash = input.lastIndex(of: "-") {
+            out = Array(input[..<dash])
+            guard out.allSatisfy(\.isASCII) else { return nil }
+            input = Array(input[(dash + 1)...])
+        }
+        func digit(_ c: Unicode.Scalar) -> Int? {
+            switch c.value {
+            case 48...57: Int(c.value) - 22
+            case 65...90: Int(c.value) - 65
+            case 97...122: Int(c.value) - 97
+            default: nil
+            }
+        }
+        func adapt(_ delta: Int, _ count: Int, _ first: Bool) -> Int {
+            var d = first ? delta / damp : delta / 2
+            d += d / count
+            var k = 0
+            while d > ((base - tMin) * tMax) / 2 { d /= base - tMin; k += base }
+            return k + (base - tMin + 1) * d / (d + skew)
+        }
+        var n = 128, i = 0, bias = 72, pos = 0
+        while pos < input.count {
+            let old = i
+            var w = 1, k = base
+            while true {
+                guard pos < input.count, let d = digit(input[pos]) else { return nil }
+                pos += 1
+                let (m, o1) = d.multipliedReportingOverflow(by: w)
+                let (sum, o2) = i.addingReportingOverflow(m)
+                guard !o1, !o2 else { return nil }
+                i = sum
+                let t = k <= bias ? tMin : k >= bias + tMax ? tMax : k - bias
+                if d < t { break }
+                let (nw, o3) = w.multipliedReportingOverflow(by: base - t)
+                guard !o3 else { return nil }
+                w = nw; k += base
+            }
+            bias = adapt(i - old, out.count + 1, old == 0)
+            n += i / (out.count + 1)
+            i %= out.count + 1
+            guard n <= 0x10FFFF, let scalar = Unicode.Scalar(UInt32(n)) else { return nil }
+            out.insert(scalar, at: i)
+            i += 1
+        }
+        return String(String.UnicodeScalarView(out))
     }
 }

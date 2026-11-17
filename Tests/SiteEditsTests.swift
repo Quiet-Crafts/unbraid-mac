@@ -8,14 +8,67 @@ final class SiteEditsTests: XCTestCase {
     func testAnAddressIsCheckedAsTheSheetSaysIt() {
         XCTAssertEqual(SiteEdits.check("  ", in: [:]), .empty)
         XCTAssertEqual(SiteEdits.check("https://www.Netflix.com/browse", in: [:]), .valid("netflix.com"))
-        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("That isn't a website address"))
-        XCTAssertEqual(SiteEdits.check("192.0.2.1", in: [:]), .refused("That isn't a website address"))
+        XCTAssertEqual(SiteEdits.check("exa mple.com", in: [:]), .refused("That isn't a website address"))
         XCTAssertEqual(SiteEdits.check("www.example.com", in: ["example.com": DIRECT]), .refused("example.com already has a route"))
+        // Each refusal says why, in words that fit the address typed.
+        let address = "An IP address can't have a rule: add the website's name"
+        for raw in ["192.0.2.1", "http://10.0.0.1:8080/x", "[2001:db8::1]", "2001:db8::1", "https://[2001:db8::1]/x"] {
+            XCTAssertEqual(SiteEdits.check(raw, in: [:]), .refused(address), raw)
+        }
+        XCTAssertEqual(SiteEdits.check("netflix", in: [:]), .refused("Add the whole name, such as netflix.com"))
+        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is a name on your own network: a rule can't route it"))
+        XCTAssertEqual(SiteEdits.check("co.uk", in: [:]), .refused("co.uk ends many websites' names: add one website under it"))
+        XCTAssertEqual(SiteEdits.check("bücher.de", in: ["xn--bcher-kva.de": DIRECT]), .refused("bücher.de already has a route"))
         let full = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("s\($0).example", DIRECT) })
         XCTAssertEqual(SiteEdits.check("example.com", in: full), .refused("A profile holds up to 50 websites"))
+        // At the limit the sheet says so before anything is typed.
+        XCTAssertEqual(SiteEdits.check("", in: full), .refused(SiteEdits.full))
+        XCTAssertEqual(SiteEdits.check("192.0.2.1", in: full), .refused(SiteEdits.full))
         // A duplicate says so even when the list is full.
         XCTAssertEqual(SiteEdits.check("s1.example", in: full), .refused("s1.example already has a route"))
         XCTAssertEqual(SiteEdits.also("netflix.com"), "www.netflix.com")
+    }
+
+    /// Names on the local network or in a tailnet can't take a route: their own resolver answers them, which a
+    /// website's route would skip (and `.local` names never pass unbraid). The tailnet's own domain counts once known.
+    func testNamesOnTheOwnNetworkOrTailnetAreRefused() {
+        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box", "10.in-addr.arpa", "app.localhost", "svc.internal"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name on your own network: a rule can't route it"), name)
+        }
+        for name in ["nas.tail1234.ts.net", "ts.net"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name in your tailnet: a rule can't route it"), name)
+        }
+        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:]), .valid("nas.corp.example"))
+        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "corp.example"), .refused("nas.corp.example is a name in your tailnet: a rule can't route it"))
+        XCTAssertEqual(SiteEdits.check("lan.example.com", in: [:]), .valid("lan.example.com"))
+        XCTAssertEqual(SiteEdits.check("planet.com", in: [:]), .valid("planet.com"))
+        // Not something a saved setup or a backup keeps either: a setup holding one reads without it.
+        XCTAssertFalse(Sites.isClean("printer.lan"))
+        XCTAssertEqual(Setup.readable(["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "example.com": DIRECT]), ["example.com": DIRECT])
+    }
+
+    /// A name that only ends other websites' names (a country's "co.uk", a hosting platform) would cover all of them.
+    func testAPublicSuffixIsNotAWebsite() {
+        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "github.io", "herokuapp.com"] {
+            XCTAssertNil(Sites.clean(name), name)
+            let kept = name.hasPrefix("www.") ? String(name.dropFirst(4)) : name
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(kept) ends many websites' names: add one website under it"), name)
+        }
+        for name in ["bbc.co.uk", "example.com.au", "user.github.io", "github.com", "co.com", "uk.com"] {
+            XCTAssertEqual(Sites.clean(name), name, name)
+        }
+    }
+
+    /// An international name is saved in its ASCII form and shown in its own letters.
+    func testAnInternationalNameIsShownInItsOwnLetters() {
+        XCTAssertEqual(Sites.shown("xn--bcher-kva.de"), "bücher.de")
+        XCTAssertEqual(Sites.shown("xn--mnchen-3ya.de"), "münchen.de")
+        XCTAssertEqual(Sites.shown("www.xn--fsqu00a.xn--0zwm56d"), "www.例子.测试")
+        XCTAssertEqual(Sites.shown("example.com"), "example.com")
+        XCTAssertEqual(Sites.shown("xn--zz.example"), "xn--zz.example", "a label that doesn't decode stays as it is")
+        for raw in ["bücher.de", "münchen.de", "例子.测试", "παράδειγμα.δοκιμή"] {
+            XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw)
+        }
     }
 
     func testAChangeAppliesAtCommit() {

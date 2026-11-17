@@ -9,13 +9,20 @@ nonisolated enum SiteEdits {
     /// What the address field holds: nothing yet, an address to save (as `Sites.clean` writes it), or why it can't be.
     enum Check: Equatable { case empty, valid(String), refused(String) }
 
-    static func check(_ raw: String, in sites: [String: String]) -> Check {
-        if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return .empty }
+    /// `tailnet`: the tailnet's own domain, when there is one (its names can't have a rule). At the limit nothing can be
+    /// added, so that is said before anything is typed; only an address already there says so instead.
+    static func check(_ raw: String, in sites: [String: String], tailnet: String? = nil) -> Check {
+        let atLimit = sites.count >= Sites.max
+        if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return atLimit ? .refused(full) : .empty }
+        if let name = Sites.clean(raw), sites[name] != nil { return .refused("\(Sites.shown(name)) already has a route") }
+        if atLimit { return .refused(full) }
+        if let why = Sites.refusal(raw, tailnet: tailnet) { return .refused(why) }
         guard let name = Sites.clean(raw) else { return .refused("That isn't a website address") }
-        if sites[name] != nil { return .refused("\(name) already has a route") }
-        if sites.count >= Sites.max { return .refused("A profile holds up to \(Sites.max) websites") }
         return .valid(name)
     }
+
+    /// Why no website can be added at the limit, in the sheet and on the buttons that open it.
+    static let full = "A profile holds up to \(Sites.max) websites"
 
     /// An address under `name`, to show what "every address under it" means: "www.netflix.com".
     static func also(_ name: String) -> String { "www." + name }

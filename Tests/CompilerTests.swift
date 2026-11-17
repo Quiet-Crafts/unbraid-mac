@@ -308,12 +308,21 @@ final class CompilerTests: XCTestCase {
             XCTAssertEqual(names(a), names(o))
         }
         XCTAssertEqual(site.filter { dns[$0]["query_type"] == nil }.map { dns[$0]["server"] as? String }, ["dns-r-us", "local", "dns-r-it"])
-        // A name under a local domain with a route of its own gets a stand-in address like any other website.
-        var lan = withSites
-        lan.sites = ["nas.lan": "it"]
-        let l = dnsRules(try compile(lan))
-        let own = try XCTUnwrap(l.firstIndex { names($0) == ["nas.lan"] && $0["server"] as? String == "fake" })
-        XCTAssertLessThan(own, try XCTUnwrap(l.firstIndex { strings($0["domain_suffix"]).contains("lan") && names($0) == nil }))
+    }
+
+    /// A name on the local network or in the tailnet can't take a route (its own resolver answers it, which a website's
+    /// route would skip): a setup that holds one anyway compiles without its rule, so the name works as it did before.
+    func testANameOnTheOwnNetworkOrTailnetGetsNoWebsiteRule() throws {
+        var s = withSites
+        s.sites = ["nas.lan": "it", "printer.local": BLOCK, "nas.tail123.ts.net": DIRECT, "nas.corp.example": "us", "bank.example": DIRECT]
+        let c = try compile(s, tsSuffix: "corp.example")
+        for name in ["nas.lan", "printer.local", "nas.tail123.ts.net", "nas.corp.example"] {
+            XCTAssertFalse(rules(c).contains { names($0)?.contains(name) == true }, name)
+            XCTAssertFalse(dnsRules(c).contains { names($0)?.contains(name) == true }, name)
+        }
+        XCTAssertTrue(rules(c).contains { names($0) == ["bank.example"] })
+        // Without the tailnet's domain known, a name under it is an ordinary website.
+        XCTAssertTrue(rules(try compile(s)).contains { names($0) == ["nas.corp.example"] })
     }
 
     /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name
