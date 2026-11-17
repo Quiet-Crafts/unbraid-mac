@@ -505,12 +505,20 @@ final class AppModel {
             let engine = running == nil ? nil : self?.vpn.profileSwitchEngine
             s.beginProfileSwitch(name, id: id, running: running, engine: engine)
         }, targets: [.profile], after: { [weak self] _, _ in
+            self?.forgetMoves()
             guard let self, self.profileSwitchID == id, self.setup.pendingSwitch?.id == id else { return }
             if self.vpn.state.phase != .on, connectIfOff { self.connect() }
         }, valid: { [weak self] in
             guard let self, self.profileSwitchID == id, wanted?() ?? true else { return false }
             return offeredGeneration == nil || self.profileGeneration == offeredGeneration
         })
+    }
+
+    /// Edit › Undo and Redo of app and website moves name the profile they were made in: once another is in use (a
+    /// switch, by hand or by network, or one rolled back), they are dropped, so none lands on a profile it wasn't made in.
+    private func forgetMoves() {
+        MoveHistory.generation += 1
+        for w in NSApp.windows { w.undoManager?.removeAllActions() }
     }
 
     /// Switches profile by network while connected (Profiles › Switch by Itself).
@@ -569,6 +577,7 @@ final class AppModel {
                 pending.rollback(&s, fallback: ran)
                 s.pendingSwitch = nil
             }
+            forgetMoves()
             refusedProfile = pending.target
             AccessibilityNotification.Announcement("Couldn't switch to \(pending.target). \(setup.profile ?? "Your previous setup") is still in use.").post()
         }
