@@ -17,7 +17,7 @@ nonisolated enum Backup {
     /// The profile a restore keeps this Mac's setup as (or "Previous 2", and so on).
     static let previous = "Previous"
     /// What a backup may hold at most: more than unbraid lets anyone set up, far less than would slow a restore.
-    static let maxRoutes = 200, maxServers = 100, maxApps = 5000, maxString = 64 << 10, maxConfig = 256 << 10
+    static let maxRoutes = 200, maxServers = 100, maxApps = 1000, maxString = 64 << 10, maxConfig = 256 << 10
 
     /// Why a plaintext can't be restored. `invalid` says what, never a key or a password.
     enum Failure: Error, Equatable {
@@ -73,6 +73,7 @@ nonisolated enum Backup {
         c.home = Home(wg: keys ? s.home.wg : nil)
         c.prefs.stats = false
         c.pendingSwitch = nil; c.profileSalt = nil; c.testing = []; c.blockedForLostRoute = 0
+        c = named(c)
         guard !keys else { return c }
         c = linked(c)
         c.servers = c.servers.map { $0.withoutSecrets() }
@@ -87,6 +88,22 @@ nonisolated enum Backup {
         encoder.outputFormatting = [.sortedKeys]
         // Every part of a setup encodes; a failure here would be a bug, and an empty file is never written for it.
         return (try? encoder.encode(body)) ?? Data()
+    }
+
+    /// `s` with each pinned provider server kept by its name and host only. Its address and key are the provider's
+    /// to say: every provider looks a pinned server up in its own list again, and takes the saved address and key only
+    /// while that list can't be read. A backup must never be what names the server a provider's tunnel is made to,
+    /// so a restored pin waits for the provider's list instead (written this way, and read this way whatever was written).
+    static func named(_ s: Setup) -> Setup {
+        func bare(_ l: Location) -> Location {
+            var l = l
+            l.pinned = l.pinned.map { Server(name: $0.name, host: $0.host, ip: "", publicKey: "", load: -1, city: $0.city, country: $0.country) }
+            return l
+        }
+        var s = s
+        for i in s.routes.indices { s.routes[i].loc = bare(s.routes[i].loc) }
+        s.favorites = s.favorites.map(bare)
+        return s
     }
 
     /// `s` with every imported route tied to an own server, so one saved without keys has a way to get them back.
@@ -144,7 +161,7 @@ nonisolated enum Backup {
             body = try SavedDecoding.$strict.withValue(true) { try JSONDecoder().decode(Body.self, from: plain) }
             raw = try JSONDecoder().decode(Raw.self, from: plain)
         } catch is Setup.Newer { throw Failure.newer } catch { throw Failure.damaged }
-        var s = body.mac
+        var s = named(body.mac)
         s.defaultRoute = raw.mac.defaultRoute ?? s.defaultRoute; s.apps = raw.mac.apps ?? [:]; s.sites = raw.mac.sites ?? [:]
         s.profiles = (raw.mac.profiles ?? []).map { Profile(name: $0.name, defaultRoute: $0.defaultRoute, apps: $0.apps ?? [:], sites: $0.sites ?? [:]) }
         s.profile = raw.mac.profile
@@ -183,7 +200,8 @@ nonisolated enum Backup {
         try need(s.routes.count <= maxRoutes && s.servers.count <= maxServers && s.profiles.count <= Setup.maxProfiles && s.favorites.count <= 2000
                  && s.apps.count <= maxApps && s.profiles.allSatisfy({ $0.apps.count <= maxApps }) && s.prefs.filter.apps.count <= maxApps,
                  "it holds more than unbraid keeps")
-        func ids(_ list: [String]) -> Bool { list.allSatisfy { $0.wholeMatch(of: idPattern) != nil && $0 != DIRECT && $0 != BLOCK } && Set(list).count == list.count }
+        // Never a name the compiler keeps for itself: a route called so would be read as Direct, Block or a refusal.
+        func ids(_ list: [String]) -> Bool { list.allSatisfy { $0.wholeMatch(of: idPattern) != nil && !Compiler.reservedIds.contains($0) } && Set(list).count == list.count }
         try need(ids(s.routes.map(\.id)), "a route has a missing or repeated name")
         try need(ids(s.servers.map(\.id)), "an own server has a missing or repeated name")
         for sv in s.servers {
@@ -198,6 +216,9 @@ nonisolated enum Backup {
             // A route saved without keys gets them back only through its own server, which must be saved without them too.
             let own = s.servers.first { $0.id == r.own }
             try need(r.keyless == (own?.keyless == true) && (!r.keyless || (n == 1 && r.tsExit == nil)), "a route and its own server don't match")
+            // And it is that server's: this Mac's config for the server is what the route gets back, so a route that
+            // names one server while describing another would come out somewhere else than it says.
+            if r.keyless, let own { try need(r.wg == own.wg && r.ovpn == own.ovpn && r.ss == own.ss, "a route and its own server don't match") }
             if r.wg != nil || r.ovpn != nil || r.ss != nil { try check(r.name, r.wg, r.ovpn, r.ss, keyless: r.keyless) }
         }
         if let w = s.home.wg { try check(w.name, w, nil, nil, keyless: false) }
@@ -223,7 +244,10 @@ nonisolated enum Backup {
         // Every saved profile too: one that can't run would only fail once the user switches to it.
         var v = s
         try need(runs(v), "its setup can't run")
+        // Profiles that choose the same build the same config: each distinct choice is built once.
+        var built: Set<Profile> = [Profile(name: "", defaultRoute: s.defaultRoute, apps: s.apps, sites: s.sites)]
         for p in s.profiles where p.name != s.profile {
+            guard built.insert(Profile(name: "", defaultRoute: p.defaultRoute, apps: p.apps, sites: p.sites)).inserted else { continue }
             v = s
             v.use(p.name)
             try need(runs(v), "profile \(p.name) can't run")
@@ -291,6 +315,27 @@ nonisolated enum Backup {
         var protectionChanges = false
         /// Own servers that wait for their config, by name.
         var needConfig: [String] = []
+        /// Where the restored setup protects less than this Mac's does now, one sentence each: said before the user
+        /// confirms, since a restore replaces these along with everything else.
+        var weakens: [String] = []
+    }
+
+    /// Where `next` protects less than `current` (see `Plan.weakens`).
+    static func weakens(_ current: Setup, _ next: Setup) -> [String] {
+        var out: [String] = []
+        let levels: [KillLevel: (Int, String)] = [.off: (0, "Off"), .internet: (1, "Internet"), .home: (2, "Internet and home network")]
+        if let was = levels[current.prefs.killLevel], let now = levels[next.prefs.killLevel], now.0 < was.0 { out.append("The kill switch goes from \(was.1) to \(now.1).") }
+        if current.prefs.alwaysOn && !next.prefs.alwaysOn { out.append("Connect on demand is turned off.") }
+        let was = current.prefs.effectiveFilter, now = next.prefs.effectiveFilter
+        if was.server != nil && now.server == nil { out.append("The DNS filter is turned off.") }
+        else if was.server != nil, was.server != now.server { out.append("The DNS filter changes to another server.") }
+        else if was.server != nil, (was.routes && !now.routes) || (was.direct && !now.direct) || (was.directApps && !now.directApps) { out.append("The DNS filter covers less than it does now.") }
+        if !current.prefs.lan && next.prefs.lan { out.append("Apps can reach the local network again.") }
+        let apps = current.apps.filter { $0.value == BLOCK && next.apps[$0.key] != BLOCK }.count
+        if apps > 0 { out.append(apps == 1 ? "1 app that is blocked now won't be." : "\(apps) apps that are blocked now won't be.") }
+        let sites = current.sites.filter { $0.value == BLOCK && next.sites[$0.key] != BLOCK }.count
+        if sites > 0 { out.append(sites == 1 ? "1 website that is blocked now won't be." : "\(sites) websites that are blocked now won't be.") }
+        return out
     }
 
     /// Whether anything is set up on this Mac beyond what a new install starts with.
@@ -332,6 +377,7 @@ nonisolated enum Backup {
         replaced.homeTunnel = current.home.wg != nil && content.keys
         var plan = Plan(setup: r, holds: content.summary, replaces: replaced,
                         protectionChanges: current.prefs.killLevel != r.prefs.killLevel || current.prefs.alwaysOn != r.prefs.alwaysOn)
+        plan.weakens = weakens(current, r)
         guard keepPrevious, setUp(current) else { plan.needConfig = needConfig(plan.setup); return plan }
         guard r.profiles.count < Setup.maxProfiles,
               let name = ([previous] + (2...Setup.maxProfiles + 1).map { "\(previous) \($0)" }).lazy.compactMap({ r.profileName($0) }).first else {

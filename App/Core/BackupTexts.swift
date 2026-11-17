@@ -96,6 +96,7 @@ nonisolated enum BackupTexts {
         if plan.setup.routes.contains(where: { !$0.imported && accounts[$0.loc.provider] == nil }) {
             notes.append("Routes on a provider you aren't signed in to stay blocked until you sign in.")
         }
+        notes += plan.weakens
         if tunnelUp {
             notes.append(plan.protectionChanges ? "The kill switch or Connect on Demand setting changes, so the VPN restarts." : "The VPN reconnects for a moment.")
         }

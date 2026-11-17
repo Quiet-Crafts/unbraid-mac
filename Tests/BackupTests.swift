@@ -313,6 +313,105 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.Failure.invalid("a route has more than one exit").message, "This backup can't be restored: a route has more than one exit.")
     }
 
+    // MARK: What a file from elsewhere can't do
+
+    /// No route may carry a name the compiler reads as Direct, Block or a refusal: a Tailscale route called so would
+    /// show as that route and run as Direct.
+    func testARouteCantTakeAnInternalName() throws {
+        for id in ["__filtered_direct", "denied", DIRECT, BLOCK] {
+            var s = full()
+            s.routes.append(Route(id: id, tsExit: "100.64.0.9", tsName: "exit"))
+            s.apps["org.example.z"] = id
+            XCTAssertEqual(refused(s), "a route has a missing or repeated name", id)
+            let data = try edited(full()) { mac in
+                var routes = mac["routes"] as? [[String: Any]] ?? []
+                routes.append(["id": id, "tsExit": "100.64.0.9", "tsName": "exit"])
+                mac["routes"] = routes
+            }
+            XCTAssertNotNil(failure { try Backup.read(data) }, id)
+        }
+    }
+
+    /// A pinned provider server comes back by its name and host only: the address and key a file gives are never what
+    /// a provider's tunnel is made to, in a route or in a favourite, written by this app or by someone else.
+    func testAPinnedServersAddressAndKeyAreNeverTakenFromAFile() throws {
+        let pin = Server(name: "se-got-wg-001", host: "se-got-wg-001.relays.example", ip: "203.0.113.66", publicKey: peerKey, load: 12, city: "Gothenburg", country: "Sweden")
+        var s = full()
+        s.routes[4].loc.pinned = pin
+        s.favorites = [Location(provider: "mullvad", countryCode: "SE", country: "Sweden", pinned: pin)]
+        XCTAssertFalse(text(s).contains("203.0.113.66"))
+        let back = try read(s).setup
+        XCTAssertEqual(back.routes[4].loc.pinned, Server(name: pin.name, host: pin.host, ip: "", publicKey: "", load: -1, city: "Gothenburg", country: "Sweden"))
+        XCTAssertEqual(back.favorites.first?.pinned?.ip, "")
+        // Put back in by hand: read the same way.
+        let data = try edited(s) { mac in
+            var routes = mac["routes"] as? [[String: Any]] ?? []
+            var loc = routes[4]["loc"] as? [String: Any] ?? [:]
+            loc["pinned"] = ["name": pin.name, "host": pin.host, "ip": "203.0.113.66", "publicKey": self.peerKey, "load": 1, "city": "", "country": ""]
+            routes[4]["loc"] = loc
+            mac["routes"] = routes
+        }
+        let forged = try Backup.read(data).setup
+        XCTAssertEqual(forged.routes[4].loc.pinned?.ip, "")
+        XCTAssertEqual(forged.routes[4].loc.pinned?.publicKey, "")
+        XCTAssertEqual(forged.routes[4].loc.pinned?.host, pin.host)
+    }
+
+    /// A route saved without keys must describe the very server it names: this Mac's config for that server is what
+    /// it gets back.
+    func testAKeylessRouteMustBeItsOwnServers() throws {
+        let content = try read(full(), keys: false)
+        var s = content.setup
+        let i = try XCTUnwrap(s.routes.firstIndex { $0.id == "w1" })
+        XCTAssertTrue(s.routes[i].keyless)
+        XCTAssertNoThrow(try Backup.valid(s))
+        s.routes[i].wg?.endpoint = "198.51.100.9:51820"
+        XCTAssertEqual(refused(s), "a route and its own server don't match")
+        // Another kind than its server's, too.
+        var other = content.setup
+        (other.routes[i].wg, other.routes[i].ss) = (nil, other.servers.first { $0.ss != nil }?.ss)
+        XCTAssertEqual(refused(other), "a route and its own server don't match")
+    }
+
+    /// What a restore would weaken is said, one sentence each; what stays as strong or gets stronger is not.
+    func testWhatARestoreWeakensIsSaid() throws {
+        var here = full()
+        here.sites["tracker.example"] = BLOCK
+        var weaker = full()
+        weaker.prefs.killLevel = .internet; weaker.prefs.alwaysOn = false; weaker.prefs.filter = Filter(); weaker.prefs.lan = true
+        weaker.apps["org.example.d"] = DIRECT
+        XCTAssertEqual(Backup.weakens(here, weaker), [
+            "The kill switch goes from Internet and home network to Internet.", "Connect on demand is turned off.", "The DNS filter is turned off.",
+            "Apps can reach the local network again.", "1 app that is blocked now won't be.", "1 website that is blocked now won't be.",
+        ])
+        XCTAssertEqual(Backup.weakens(weaker, here), [])
+        XCTAssertEqual(Backup.weakens(here, here), [])
+        var filter = here
+        filter.prefs.filter = Filter(id: "quad9", routes: true)
+        XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter changes to another server."])
+        filter.prefs.filter = Filter(id: "adguard", routes: false, direct: true)
+        XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter covers less than it does now."])
+        // The plan carries them, and the sheet's notes show them.
+        let plan = Backup.plan(onto: here, from: try read(weaker), keepPrevious: false, now: .now)
+        XCTAssertEqual(plan.weakens.count, 6)
+        XCTAssertTrue(BackupTexts.restoreNotes(plan, accounts: [:], tunnelUp: false).contains("The DNS filter is turned off."))
+    }
+
+    /// A file can't make the check cost more than its size: app choices are capped, and profiles that choose the same
+    /// are built once.
+    func testValidationWorkIsBounded() throws {
+        var many = full()
+        many.apps = Dictionary(uniqueKeysWithValues: (0...Backup.maxApps).map { ("org.example.app\($0)", BLOCK) })
+        XCTAssertEqual(refused(many), "it holds more than unbraid keeps")
+        var same = full()
+        same.apps = Dictionary(uniqueKeysWithValues: (0..<Backup.maxApps).map { ("org.example.app\($0)", $0 % 2 == 0 ? BLOCK : DIRECT) })
+        same.profiles = (0..<Setup.maxProfiles).map { Profile(name: "P\($0)", defaultRoute: "nl", apps: same.apps) }
+        same.profile = nil
+        let start = ContinuousClock.now
+        XCTAssertNoThrow(try Backup.valid(same))
+        XCTAssertLessThan(ContinuousClock.now - start, .seconds(20))
+    }
+
     func testNewerAndAndroidBackupsAreToldApart() throws {
         let newer = try edited(full()) { $0["version"] = Setup.format + 1 }
         XCTAssertEqual(failure { try Backup.read(newer) }, .newer)
