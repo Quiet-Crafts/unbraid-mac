@@ -49,16 +49,19 @@ providers. It needs Android 13 or later.
 
 - Give any app its own exit country or server, let it skip the VPN with Direct, or block its internet access.
   Several exits stay connected at once.
+- Give a website its own route too, or block it, whatever app opens it. A website's route wins over the app's.
 - Use the VPN accounts you already have. One route can go through Mullvad while another uses NordVPN.
 - Reach your home network through Tailscale, Headscale or a home WireGuard tunnel, or send chosen apps out through a
   Tailscale exit node.
-- Connection checks watch each provider tunnel and, after repeated failures, try another port or server.
+- Connection checks watch each provider tunnel and, after repeated failures, try another port or server. Your own
+  servers are checked too, and a route that stops answering says so.
 - A DNS filter of your choice for VPN routes and Direct traffic, plus the provider's own ad and tracker blocking
   where it has one.
-- Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets and Control Center
-  controls.
-- Stats on this Mac: data per route and app, live speed and connected time, and M-Lab speed tests through one route
-  or several at once.
+- Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets that show whether your
+  routes are working, and Control Center controls.
+- Back up your setup to a passphrase-protected file and restore it on this Mac or another one.
+- Stats on this Mac: data per route, app and routed website, live speed and connected time, and M-Lab speed tests
+  through one route or several at once.
 - No ads, no unbraid account and no analytics. Free software under the GPL.
 
 ## What it works with
@@ -86,6 +89,8 @@ Routes can mix providers. One app can use Mullvad in Sweden while another uses N
 5. To send some apps somewhere else, click *Add Route* and choose another country or server. In *All Apps*, click
    *Show My Apps* (the list stays on your Mac), then drag apps onto a route in the sidebar or use *Move To*. Choose
    *Direct* for apps that should not use the VPN at all, like a banking app.
+6. To route a website, open *Websites* in the sidebar, click *+*, type or paste its address and pick a route, *Direct*
+   or *Blocked*. It applies in every app that looks names up through macOS.
 
 Each release lists the DMG's SHA-256 checksum and is signed with a Developer ID and notarized by Apple.
 [Check the download](#check-the-download) explains how to confirm both before you install.
@@ -113,6 +118,15 @@ Settings › About), unbraid looks about once a day for a newer version and tell
 
 In many VPN apps, split tunneling means you can pick apps that skip the VPN, while every other app leaves from the
 same place. unbraid lets you choose a route for each app, and those routes can come from different providers.
+
+### Can I route a website and not a whole app?
+
+Yes. On the *Websites* page, give an address its own route, *Direct* or *Blocked*, and that beats the route of the app
+that opens it, apps set to *Direct* included. A rule covers the address and everything under it (example.com and
+www.example.com); a service that uses other addresses needs each one added. unbraid knows a website by the name an app
+looks up through macOS, never by a name read off the connection, so a browser set to its own secure DNS keeps its
+app's route. Website rules apply while unbraid is connected, not during a pause, and a blocked website does not turn
+the kill switch on.
 
 ### Can I use it without a VPN subscription?
 
@@ -155,7 +169,7 @@ behind it. The app compiles the configuration, picks servers and watches their h
 engine.
 
 ```
-apps -> utun -> sing-box -> rules: DNS, blocked, home, LAN, the app's route, default
+apps -> utun -> sing-box -> rules: DNS, blocked, home, LAN, website routes, the app's route, default
                             |- one WireGuard, OpenVPN or Shadowsocks exit per location
                             |- Tailscale (home, exit nodes)
                             '- direct
@@ -164,8 +178,12 @@ apps -> utun -> sing-box -> rules: DNS, blocked, home, LAN, the app's route, def
 Each TCP and UDP connection is routed by the program that opened it, matched by its path, including helpers inside an
 app's bundle. A connection macOS opens on an app's behalf, such as Safari's pages through WebKit or a download
 through nsurlsessiond, counts as that app's. DNS is answered with fake addresses and looked up again on the route the
-app really uses, so a site sees the country you picked for that app. IPv6 follows an app's route or is refused. Only
-the default route and the routes your apps use are connected.
+app really uses, so a site sees the country you picked for that app, or for that website when it has a route of its
+own. IPv6 follows an app's route or is refused. Only the default route and the routes your apps and websites use are
+connected.
+
+A website rule matches the name unbraid itself answered with a fake address, never a name read from the connection,
+so an app can't claim another site's route. Blocked apps are refused before any other rule, a website's included.
 
 Server lists come from each provider's public API where there is one, and otherwise from
 [gluetun-servers](https://github.com/qdm12/gluetun-servers).
@@ -201,7 +219,10 @@ signing, notarization and the DMG.
 
 We add no advertising or analytics. You don't need an unbraid account. Your provider credentials are sealed with a key
 kept in the Keychain and are only sent to the service they belong to. The list of installed apps is read on the Mac so
-you can assign routes, and it never leaves the Mac. Statistics are off until you turn them on and stay on the Mac. The
+you can assign routes, and it never leaves the Mac. Statistics are off until you turn them on and stay on the Mac;
+they count data per route and app, and for the websites you gave a route of their own, and record nothing else about
+where you browse. A backup is a file you save yourself, locked with your passphrase; it never holds your provider
+sign-ins. The
 update check is off until you say yes; when on, it asks unbraid.app for the newest version number and sends nothing
 else, so the site sees only your IP address, like any visit. unbraid's own requests to your providers and to
 unbraid.app use your normal connection, not the VPN. The privacy policy, with every service the app talks to, is at
