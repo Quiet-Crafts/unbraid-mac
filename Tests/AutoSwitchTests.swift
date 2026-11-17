@@ -113,24 +113,62 @@ final class AutoSwitchTests: XCTestCase {
         let prefix: [UInt8] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
         let routes = NetworkMark.records(message(in6(prefix), in6(router(9))) + message(in6(any), in6(router(4))))
         XCTAssertEqual(routes.count, 2)
-        let told = NetworkMark.router6(on: "lo0", routes: routes)
-        XCTAssertEqual(told, "fe80000000000000021122fffe334455")
+        let told = NetworkMark.routers6(on: "lo0", routes: routes)
+        XCTAssertEqual(told, ["fe80000000000000021122fffe334455"])
         // The same router whatever number the kernel gave the interface.
-        XCTAssertEqual(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(12))))), told)
-        XCTAssertNil(NetworkMark.router6(on: "en9", routes: routes), "another interface's router is not this one's")
+        XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(12))))), told)
+        XCTAssertEqual(NetworkMark.routers6(on: "en9", routes: routes), [], "another interface's router is not this one's")
         // No default route, or a route that isn't through a router: nothing.
-        XCTAssertNil(NetworkMark.router6(on: "lo0", routes: Array(routes.prefix(1))))
-        XCTAssertNil(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(4)), flags: RTF_UP))))
+        XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: Array(routes.prefix(1))), [])
+        XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(4)), flags: RTF_UP))), [])
         // A router that calls itself "1" (or anything as short) is any router: no fingerprint. Nor is one named by a
         // global address, which is the provider's to change.
         for plain: [UInt8] in [[0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], [0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
                                [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55], any] {
-            XCTAssertNil(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(plain)))))
+            XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(plain)))), [])
         }
+        // Several routers: each one that qualifies, sorted and once, whichever order the table lists them in; one that
+        // calls itself "1" is left out.
+        func other(_ last: UInt8) -> [UInt8] { [0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, last] }
+        let one: [UInt8] = [0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]
+        for order in [[other(0x66), router(4), one], [one, router(4), other(0x66), router(7)]] {
+            XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: NetworkMark.records(order.flatMap { message(in6(any), in6($0)) })),
+                           ["fe80000000000000021122fffe334455", "fe80000000000000021122fffe334466"])
+        }
+        XCTAssertEqual(NetworkMark.reading(["b", "a", "b"]), "a,b")
+        XCTAssertEqual(NetworkMark.reading(["a"]), "a", "one router: its fingerprint, as networks remembered before")
         // A default route whose destination is cut short, as the kernel may write it.
-        XCTAssertEqual(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message([0, 0, 0, 0], in6(router(4))))), told)
+        XCTAssertEqual(NetworkMark.routers6(on: "lo0", routes: NetworkMark.records(message([0, 0, 0, 0], in6(router(4))))), told)
         // This Mac's own table reads without a crash.
-        _ = NetworkMark.router6(on: "en0", routes: NetworkMark.table(AF_INET6, RTF_GATEWAY))
+        _ = NetworkMark.routers6(on: "en0", routes: NetworkMark.table(AF_INET6, RTF_GATEWAY))
+    }
+
+    /// A network is its routers: remembered with all of them, recognised while every router seen is one of them.
+    func testANetworkWithSeveralRoutersIsRecognisedByAllOfThem() {
+        var r = NetworkRules(salt: "salt")
+        r.elsewhere = "Travel"
+        XCTAssertTrue(r.remember("a", name: "Flat", profile: "Flat"))
+        XCTAssertTrue(r.remember(NetworkMark.reading(["c", "b"]), name: "Home network", profile: "Home"))
+        // One router; two routers both there; one of the two away for now.
+        XCTAssertEqual(r.profile(on: "a"), "Flat")
+        XCTAssertEqual(r.profile(on: NetworkMark.reading(["b", "c"])), "Home")
+        XCTAssertEqual(r.profile(on: "b"), "Home")
+        XCTAssertEqual(r.profile(on: "c"), "Home")
+        // A router home doesn't have beside one that looks like home's: another network, never home.
+        XCTAssertNil(r.network(NetworkMark.reading(["b", "x"])))
+        XCTAssertEqual(r.profile(on: NetworkMark.reading(["b", "x"])), "Travel")
+        XCTAssertEqual(r.profile(on: NetworkMark.reading(["a", "b"])), "Travel", "two remembered networks' routers at once")
+        // Nothing read is no network, and can't be remembered.
+        XCTAssertNil(r.network(""))
+        XCTAssertEqual(r.profile(on: ""), "Travel")
+        XCTAssertFalse(r.remember("", name: "Nothing", profile: nil))
+        // Already remembered while one of its routers is away; a reading with another router is a network of its own.
+        XCTAssertFalse(r.remember("b", name: "Again", profile: nil))
+        XCTAssertTrue(r.remember(NetworkMark.reading(["b", "x"]), name: "Next door", profile: nil))
+        XCTAssertNil(r.profile(on: NetworkMark.reading(["x", "b"])))
+        // Decided on home stays decided while its routers come and go.
+        XCTAssertEqual(AutoSwitch.Acted(mark: "b", rules: r), AutoSwitch.Acted(mark: NetworkMark.reading(["b", "c"]), rules: r))
+        XCTAssertNotEqual(AutoSwitch.Acted(mark: "b", rules: r), AutoSwitch.Acted(mark: "a", rules: r))
     }
 
     func testRulesFollowTheirProfilesAndNetworks() {

@@ -17,15 +17,19 @@ nonisolated enum NetworkMark {
         SHA256.hash(data: Data("\(salt)|\(router)".utf8)).prefix(16).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// The network the Mac is on now, as a fingerprint; nil when it has no router to tell it by (no network, one whose
-    /// router hasn't answered yet, or one this app can't tell apart: see above). `interface`: the one macOS prefers
-    /// (Wi-Fi or Ethernet, never a tunnel). The IPv6 router first, always: the two ways would otherwise take turns
-    /// naming one network.
+    /// The network the Mac is on now, as a reading: the fingerprints of its routers (`NetworkRules.members`); nil when it
+    /// has no router to tell it by (no network, one whose router hasn't answered yet, or one this app can't tell apart:
+    /// see above). `interface`: the one macOS prefers (Wi-Fi or Ethernet, never a tunnel). The IPv6 routers first,
+    /// always: the two ways would otherwise take turns naming one network.
     static func current(salt: String, interface: String) async -> String? {
-        if let router = router6(on: interface, routes: table(AF_INET6, RTF_GATEWAY)) { return mark(salt: salt, router: "v6 " + router) }
+        let routers = routers6(on: interface, routes: table(AF_INET6, RTF_GATEWAY))
+        if !routers.isEmpty { return reading(routers.map { mark(salt: salt, router: "v6 " + $0) }) }
         guard let gateway = gateway(on: interface, routes: routes()), let hardware = await hardware(of: gateway, on: interface) else { return nil }
         return mark(salt: salt, router: "mac " + hardware)
     }
+
+    /// Several routers' fingerprints as one reading, the same in any order; one router's is its fingerprint alone.
+    static func reading(_ marks: [String]) -> String { Set(marks).sorted().joined(separator: ",") }
 
     /// One routing message: its flags, its interface, and the addresses it carries as the kernel wrote them (by their
     /// place in `rtm_addrs`: 0 the destination, 1 the gateway).
@@ -87,15 +91,16 @@ nonisolated enum NetworkMark {
         return address
     }
 
-    /// The IPv6 default router on `interface`, by its link-local address: who the default route goes through. Nil
-    /// when there is none, or when its address is one any router may have ("fe80::1" and the like: fewer than four
-    /// parts of its own), which would make two networks look the same.
-    static func router6(on interface: String, routes: [Record]) -> String? {
+    /// The IPv6 default routers on `interface`, by their link-local addresses: who the default routes go through (a
+    /// mesh or a second box beside the provider's adds one), sorted, each once. Empty when there is none. An address
+    /// any router may have ("fe80::1" and the like: fewer than four parts of its own) is left out, since it would make
+    /// two networks look the same.
+    static func routers6(on interface: String, routes: [Record]) -> [String] {
         let none = [UInt8](repeating: 0, count: 16)
-        return routes.lazy.filter { $0.interface == interface && $0.flags & RTF_GATEWAY != 0 && v6($0.addresses[0], short: true) == none }
+        return Set(routes.filter { $0.interface == interface && $0.flags & RTF_GATEWAY != 0 && v6($0.addresses[0], short: true) == none }
             .compactMap { v6($0.addresses[1]) }
-            .first { $0[0] == 0xfe && $0[1] & 0xc0 == 0x80 && $0[8...].filter { $0 != 0 }.count >= 4 }
-            .map { $0.map { String(format: "%02x", $0) }.joined() }
+            .filter { $0[0] == 0xfe && $0[1] & 0xc0 == 0x80 && $0[8...].filter { $0 != 0 }.count >= 4 }
+            .map { $0.map { String(format: "%02x", $0) }.joined() }).sorted()
     }
 
     /// The default router on `interface`, from the routing table (as `route -n get default -ifscope` reads it).

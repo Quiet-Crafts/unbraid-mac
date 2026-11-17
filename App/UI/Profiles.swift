@@ -181,12 +181,12 @@ private struct SwitchByItself: View {
         guard let mark = model.autoSwitch.mark else {
             return model.autoSwitch.online ? "unbraid can't tell this network apart from others, so it can't be remembered" : "No network to remember right now"
         }
-        if let known = rules.known.first(where: { $0.id == mark }) { return "Already remembered as \(known.name)" }
+        if let known = rules.network(mark) { return "Already remembered as \(known.name)" }
         return rules.known.count >= NetworkRules.max ? "\(NetworkRules.max) networks is the most. Forget one to remember another." : nil
     }
 
     private func caption(_ n: NetworkRules.Known) -> String {
-        unusable(n.profile) ?? "Remembered \(n.added.formatted(.dateTime.day().month(.abbreviated)))" + (n.id == model.autoSwitch.mark ? " · this is the network you're on" : "")
+        unusable(n.profile) ?? "Remembered \(n.added.formatted(.dateTime.day().month(.abbreviated)))" + (model.autoSwitch.mark.flatMap(rules.network)?.id == n.id ? " · this is the network you're on" : "")
     }
 
     /// A profile whose default route is gone can't be switched to: said where the caption is.

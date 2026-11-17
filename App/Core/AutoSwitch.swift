@@ -4,7 +4,7 @@ import Foundation
 /// Kept apart from the setup: nothing here changes what the engine runs until a switch is made.
 nonisolated struct NetworkRules: Codable, Equatable, Sendable {
     struct Known: Codable, Equatable, Identifiable, Sendable {
-        /// The network's fingerprint (`NetworkMark`).
+        /// The network's reading when it was remembered (`NetworkMark.current`): its routers' fingerprints.
         var id: String
         var name: String
         /// The profile to use here; nil = don't switch on this network.
@@ -23,11 +23,19 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
 
     var isEmpty: Bool { elsewhere == nil && known.allSatisfy { $0.profile == nil } }
 
-    /// The profile set for the network with fingerprint `mark`: its own if it is remembered (which may be none), else
-    /// the one for any other network.
-    func profile(on mark: String) -> String? {
-        if let here = known.first(where: { $0.id == mark }) { return here.profile }
-        return elsewhere
+    /// The profile set for the network read as `mark`: its own if it is remembered (which may be none), else the one
+    /// for any other network.
+    func profile(on mark: String) -> String? { network(mark).map(\.profile) ?? elsewhere }
+
+    /// The routers' fingerprints in a reading.
+    static func members(_ mark: String) -> Set<Substring> { Set(mark.split(separator: ",")) }
+
+    /// The remembered network read as `mark`: one whose routers include every router seen now. A home with two routers
+    /// stays itself while one is away; a network with a router of its own beside one that looks like home's is never
+    /// taken for home.
+    func network(_ mark: String) -> Known? {
+        let now = Self.members(mark)
+        return now.isEmpty ? nil : known.first { now.isSubset(of: Self.members($0.id)) }
     }
 
     /// A name as it is kept: trimmed, without control or direction characters, not longer than the limit, not one
@@ -46,7 +54,7 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
     /// can't be used, or no more fit.
     @discardableResult
     mutating func remember(_ mark: String, name raw: String, profile: String?, now: Date = .now) -> Bool {
-        guard mark != AutoSwitch.unrecognised, known.count < Self.max, !known.contains(where: { $0.id == mark }), let name = name(raw) else { return false }
+        guard mark != AutoSwitch.unrecognised, !Self.members(mark).isEmpty, known.count < Self.max, network(mark) == nil, let name = name(raw) else { return false }
         known.append(Known(id: mark, name: name, profile: profile, added: now))
         return true
     }
@@ -85,12 +93,13 @@ nonisolated enum AutoSwitch {
     /// and its profile is the one for any other network. All such networks look the same.
     static let unrecognised = "unrecognised"
 
-    /// What was last decided on: the network and the profile its rule named. Nothing more happens until either changes,
-    /// so a profile picked by hand stays through a change to the rules of another network.
+    /// What was last decided on: the network (a remembered one by its own name, so a router coming or going doesn't
+    /// make it another) and the profile its rule named. Nothing more happens until either changes, so a profile picked
+    /// by hand stays through a change to the rules of another network.
     struct Acted: Equatable, Sendable {
         var mark: String
         var profile: String?
-        init(mark: String, rules: NetworkRules) { self.mark = mark; profile = rules.profile(on: mark) }
+        init(mark: String, rules: NetworkRules) { self.mark = rules.network(mark)?.id ?? mark; profile = rules.profile(on: mark) }
     }
 
     enum Step: Equatable, Sendable {

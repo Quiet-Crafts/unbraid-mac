@@ -98,6 +98,24 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "home", rules: rules))
     }
 
+    /// A home with two routers, one of them away for a while, then back: still home, so a hand pick stays.
+    func testARouterComingAndGoingIsTheSameNetwork() {
+        var r = NetworkRules(salt: "salt")
+        r.remember("h1,h2", name: "Home network", profile: "Home")
+        r.elsewhere = "Travel"
+        var run = Run(rules: r, now: t0)
+        XCTAssertEqual(run.handle([.connected(true), on("h1,h2")], now: t0), .wait(at(5)))
+        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "h1,h2", acted: nil))
+        _ = run.handle(.pickedByHand, now: at(10))
+        XCTAssertEqual(run.handle(on("h2"), now: at(20)), .wait(at(25)))
+        XCTAssertEqual(run.handle(.timer, now: at(25)), .nothing)
+        XCTAssertEqual(run.handle(on("h1,h2"), now: at(30)), .wait(at(35)))
+        XCTAssertEqual(run.handle(.timer, now: at(35)), .nothing)
+        // A router home doesn't have: another network.
+        XCTAssertEqual(run.handle(on("h2,x"), now: at(40)), .wait(at(45)))
+        XCTAssertEqual(run.handle(.timer, now: at(45)), .decide(mark: "h2,x", acted: AutoSwitch.Acted(mark: "h1", rules: r)))
+    }
+
     func testOnlyWhileConnectedAndOnceAtEachConnect() {
         var run = Run(rules: rules, now: t0)
         XCTAssertEqual(run.handle(on("cafe"), now: t0), .nothing, "not connected")
