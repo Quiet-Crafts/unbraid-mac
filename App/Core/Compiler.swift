@@ -648,9 +648,10 @@ nonisolated enum Compiler {
     static func homeVia(_ s: Setup, _ d: FilterServer, tsDomains: [String]? = nil) -> String? {
         if let w = s.home.wg, homeCidrs(w).contains(where: { within(d.address, $0) }) { return "home-wg" }
         guard s.home.tailscale else { return nil }
-        let domains = tsDomains ?? (officialTs(s.home) ? ["ts.net"] : [])
+        // On Tailscale's own control server all of ts.net is the tailnet's; on another, only the domain the user accepted.
+        let domains = tsDomains ?? (officialTs(s.home) ? ["ts.net"] : [trustedStoredSuffix(s.home)].compactMap { $0 })
         let name = d.address.lowercased()
-        return ([tailnet] + homeSubnets(s)).contains { within(d.address, $0) } || domains.contains { name.hasSuffix("." + $0) } ? tsTag : nil
+        return ([tailnet] + homeSubnets(s)).contains { within(d.address, $0) } || d.byName && domains.contains { name.hasSuffix("." + $0) } ? tsTag : nil
     }
 
     /// How the user's own DNS server is reached when it lives at home, or what that still needs; nil when it is out
@@ -658,11 +659,10 @@ nonisolated enum Compiler {
     static func ownDnsReach(_ s: Setup) -> String? {
         let filter = s.prefs.effectiveFilter
         guard filter.id == "own", let d = filter.server else { return nil }
-        let domains = (officialTs(s.home) ? ["ts.net"] : []) + [trustedStoredSuffix(s.home)].compactMap { $0 }
-        if let via = homeVia(s, d, tsDomains: domains) { return via == tsTag ? "Reached through Tailscale" : "Reached through your home tunnel" }
+        if let via = homeVia(s, d) { return via == tsTag ? "Reached through Tailscale" : "Reached through your home tunnel" }
         var on = s
         on.home.tailscale = true
-        return homeVia(on, d, tsDomains: domains) != nil ? "Needs Home through Tailscale on, under Tailscale" : nil
+        return homeVia(on, d) != nil ? "Needs Home through Tailscale on, under Tailscale" : nil
     }
 
     /// Networks to send through the home tunnel: its private AllowedIPs, else the interface's own subnet.
