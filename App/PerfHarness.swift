@@ -434,6 +434,11 @@ private final class Meter: NSObject {
         go("apps"); await meter.frames(30)
         await shot("profiles-switch\(suffix)")
         if suffix.isEmpty {
+            // The smallest window: the sheet must end above its bottom edge.
+            let frame = window.frame
+            window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+            await shot("min-profiles-switch")
+            window.setFrame(frame, display: true); await meter.frames(45)
             Store.shared.updateNetworks { $0 = NetworkRules() }
             model.autoSwitch.perfShow("perf-cafe")
             await shot("profiles-switch-empty")

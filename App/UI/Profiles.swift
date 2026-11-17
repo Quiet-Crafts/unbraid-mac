@@ -34,7 +34,7 @@ private struct SaveProfileSheet: View {
     @State private var name = ""
 
     var body: some View {
-        SheetFrame(title: "Save as Profile", subtitle: "Keeps your default route and every app’s choice") {
+        SheetFrame(title: "Save as Profile", subtitle: "Keeps your default route, every app’s choice and your websites") {
             VStack(alignment: .leading, spacing: 12) {
                 HStack { TextField("Name", text: $name); Text("\(name.count)/12").foregroundStyle(.secondary) }
                 if !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
@@ -47,6 +47,7 @@ private struct SaveProfileSheet: View {
                     let counts = Dictionary(grouping: model.setup.apps.values, by: { $0 }).mapValues(\.count).sorted { $0.key < $1.key }
                     ForEach(Array(counts.prefix(3)), id: \.key) { id, count in Text("\(model.setup.label(id)) · \(count) app\(count == 1 ? "" : "s")") }
                     if counts.count > 3 { Text("+\(counts.count - 3) more") }
+                    if !model.setup.sites.isEmpty { Text("Websites · \(model.setup.sites.count)") }
                     Text("Routes are shared: changing a route's location changes it in every profile that uses it.").foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, Layout.gutter).padding(.bottom, Layout.inset)
@@ -74,7 +75,7 @@ struct ManageProfilesSheet: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     HStack { Text(p.name); if p.name == model.setup.profile { Text("In use").font(.caption).foregroundStyle(.secondary) } }
-                                    Text("\(model.setup.label(p.defaultRoute)) · \(p.apps.count) with their own route").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(model.setup.label(p.defaultRoute)) · " + (p.sites.isEmpty ? "\(p.apps.count)" : Snapshot.count(apps: p.apps.count, sites: p.sites.count)) + " with their own route").font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Button { model.store.update { $0.move(p.name, by: -1) } } label: { Image(systemName: "arrow.up") }
@@ -101,7 +102,9 @@ struct ManageProfilesSheet: View {
             }
         } actions: {
             Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
-        }.frame(height: 680)
+        }
+        // Fits under the toolbar of the smallest window (564 tall); the rest scrolls.
+        .frame(height: 500)
         .onExitCommand { dismiss() }
         .alert("Rename Profile", isPresented: Binding(get: { rename != nil }, set: { if !$0 { rename = nil } })) {
             TextField("Name", text: $name)
