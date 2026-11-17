@@ -112,6 +112,10 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "sub.tracker.example": BLOCK, "ads.example": BLOCK]), [])
         XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "nottracker.example": DIRECT, "ads.example": BLOCK]), [])
         XCTAssertEqual(Sites.opened(here, ["ads.example": BLOCK]), ["tracker.example"])
+        // A name under a blocked one that was open before opens nothing new.
+        let holed = here.merging(["cdn.tracker.example": DIRECT]) { $1 }
+        XCTAssertEqual(Sites.opened(holed, holed), [])
+        XCTAssertEqual(Sites.opened(holed, holed.merging(["img.tracker.example": "nl"]) { $1 }), ["tracker.example"])
     }
 
     func testAChangeAppliesAtCommit() {

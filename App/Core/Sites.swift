@@ -53,10 +53,13 @@ nonisolated enum Sites {
     }
 
     /// The websites blocked in `before` that `after` opens, whole or in part: no longer blocked itself, or a name under
-    /// it given a route or Direct of its own there (the most specific rule wins, Block included).
+    /// it given a route or Direct of its own there (the most specific rule wins, Block included). A name under it that
+    /// was open before already opens nothing new.
     static func opened(_ before: [String: String], _ after: [String: String]) -> [String] {
-        let open = applied(after).filter { $0.value != BLOCK }.keys
-        return before.filter { b in b.value == BLOCK && (after[b.key] != BLOCK || open.contains { under($0, b.key) }) }.keys.sorted()
+        func gets(_ name: String, _ rules: [String: String]) -> String? { rules.filter { under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
+        let was = applied(before), now = applied(after)
+        let holes = now.filter { $0.value != BLOCK && gets($0.key, was) == BLOCK }.keys
+        return before.filter { b in b.value == BLOCK && (gets(b.key, now) != BLOCK || holes.contains { under($0, b.key) }) }.keys.sorted()
     }
 
     /// Whether `name` is `suffix` or a name under it.
