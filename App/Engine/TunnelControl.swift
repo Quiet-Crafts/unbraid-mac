@@ -362,6 +362,12 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
 
     typealias Revisions = Lifecycle.Revisions
 
+    /// The count of this user's engine in the extension (every start, reload and stop counts on, including a reload the
+    /// extension makes on its own); nil when it didn't answer or no engine of theirs runs.
+    func engineCount() async -> Int? {
+        await EngineLink.call(timeout: 5) { $0.revisions(reply: $1) }.flatMap { $0["engine"].flatMap(Int.init) }
+    }
+
     /// `cleared`: nothing of this user's that could hold a signed-out account is left in the sealed copy (dropped, none
     /// there, or one that can't be read now kept from ever starting as theirs). `foreign`: the copy is another user's,
     /// left as it is. `superseded`: a newer copy of this user's was sealed since it was named, and stays. `suppressed`: it

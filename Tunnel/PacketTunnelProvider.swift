@@ -496,6 +496,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             var out = Ownership.revisions(uid, running: engine, sealed: sealed.map { ($0.revision, $0.owner) },
                                           fallback: (fallbackRun.withLock { $0 == count }, sealed?.fallback == true))
             out["seal"] = sealing(uid)
+            // Which engine, for the owner: one restarted on its own (a move to fresh stand-in addresses) runs the same
+            // revision, and a node speed test must still tell it from the one it switched.
+            if engine?.1 == uid { out["engine"] = String(count) }
             return out
         }
     }

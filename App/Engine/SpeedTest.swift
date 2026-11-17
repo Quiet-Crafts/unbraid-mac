@@ -108,6 +108,9 @@ final class SpeedTest {
         /// A Tailscale node test: what the engine ran when it switched (`Connection.engineEpoch`). Anything else since, and
         /// the result isn't the node's.
         var engine: [Int]? = nil
+        /// And the extension's own count of that engine (`TunnelControl.engineCount`): it also changes for a reload the
+        /// extension makes on its own, which rebuilds the configured exit node.
+        var tunnelEngine: Int? = nil
     }
 
     /// Tests `exit`; `anywhere` = with the nearest M-Lab server even outside the exit's country.
@@ -153,6 +156,8 @@ final class SpeedTest {
             // Measured only through the configuration it switched: a reload or a pause meanwhile ends the test.
             var job = job
             job.engine = Connection.shared.engineEpoch
+            job.tunnelEngine = await Connection.shared.tunnel.engineCount()
+            if attempt != job.mine { return }
             var (ok, sent) = await switchNode(node.id, job.mine)
             // No answer in time: it may still land, or not. Tailscale's status says which (for a few seconds).
             if ok == nil, let sent, attempt == job.mine, await Self.shown(node.id, after: sent, within: .seconds(5)) { ok = true }
@@ -465,6 +470,15 @@ final class SpeedTest {
             }
             if stop() { return }
             if j.engine == nil && !sameRoute() { routeChanged(j.mine); return }
+            // A node test counts only if the extension ran the same engine from before the switch to now.
+            if j.engine != nil {
+                let now = await Connection.shared.tunnel.engineCount()
+                if attempt != j.mine { return }
+                if now == nil || now != j.tunnelEngine {
+                    update(j.mine) { $0.phase = .failed; $0.error = "The connection changed during the test. Try again." }
+                    return
+                }
+            }
             update(j.mine) { $0.phase = .done; $0.up = up }
             guard let done = run else { return }
             Stats.shared.saveTest(TestResult(at: Int64(Date.now.timeIntervalSince1970 * 1000), exit: j.recordAs, via: j.via, server: j.name, ip: j.ip,
