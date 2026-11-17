@@ -1959,6 +1959,9 @@ final class Connection {
     /// which with the kill switch keeps the Mac offline. Dropped once the off is saved (`retireFallback`). Inside
     /// `exclusive` only.
     private func sealFallbackIfStuck() async {
+        // A setup saved by a newer unbraid shows as a stand-in with default preferences: sealing "everything direct"
+        // from it would let out what that setup blocks or routes. Nothing is sealed until the user updates or starts fresh.
+        guard !store.newerSetup else { return Log.info("on-demand: no fallback sealed for a setup saved by a newer unbraid") }
         let on = await tunnel.onDemandOn()
         guard on != false else { return }
         let engine = await tunnel.revisions(timeout: 5).map(Self.engine)

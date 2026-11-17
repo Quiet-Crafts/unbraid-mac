@@ -122,19 +122,31 @@ final class Store {
     /// sealed or change the engine with it.
     var setupStandIn: Bool { isHeld || newerSetup }
 
-    /// Leaves a setup saved by a newer unbraid: it is kept as "setup.bin.newer" (best effort: the user chose to replace
-    /// it), and the default setup is saved in its place. Provider sign-ins (accounts.bin) stay.
-    func startFresh() {
-        guard newerSetup else { return }
+    /// Leaves a setup saved by a newer unbraid: it is kept as "setup.bin.newer", and the default setup is saved in its
+    /// place. Provider sign-ins (accounts.bin) stay. False, with nothing changed, when the copy couldn't be made: the
+    /// newer setup is never replaced without one.
+    @discardableResult
+    func startFresh() -> Bool {
+        guard newerSetup else { return true }
         let file = dir.appending(path: "setup.bin"), copy = dir.appending(path: "setup.bin.newer")
-        try? FileManager.default.removeItem(at: copy)
-        if (try? FileManager.default.copyItem(at: file, to: copy)) == nil { Log.error("store: newer setup not kept", facts: "setup.bin") }
+        // Made beside it first and checked, then moved into place: an earlier copy gives way only to a whole new one.
+        let staged = dir.appending(path: "setup.bin.newer.\(UUID().uuidString)")
+        do {
+            try FileManager.default.copyItem(at: file, to: staged)
+            guard FileManager.default.contentsEqual(atPath: file.path, andPath: staged.path) else { throw CocoaError(.fileWriteUnknown) }
+            _ = try FileManager.default.replaceItemAt(copy, withItemAt: staged)
+        } catch {
+            try? FileManager.default.removeItem(at: staged)
+            Log.error("store: newer setup not kept, nothing replaced", error: error)
+            return false
+        }
         newerSetup = false
         setupUnsaved = false
         var s = Setup()
         s.profileSalt = UUID().uuidString
         setup = s
         save("setup", s)
+        return true
     }
 
     /// Opens held files once the keychain answers: their contents come back in place of the stand-ins. Returns the

@@ -301,6 +301,7 @@ struct NoticeRow: View {
 struct NewerSetupRow: View {
     private let model = AppModel.shared
     @State private var confirming = false
+    @State private var failed = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
@@ -320,10 +321,15 @@ struct NewerSetupRow: View {
         .accessibilityElement(children: .contain)
         .onAppear { AccessibilityNotification.Announcement("These settings were saved by a newer unbraid").post() }
         .alert("Start fresh?", isPresented: $confirming) {
-            Button("Start Fresh", role: .destructive) { model.store.startFresh() }
+            Button("Start Fresh", role: .destructive) { failed = !model.store.startFresh() }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Your routes, app choices and profiles on this Mac are replaced by a new setup. Your provider sign-ins stay. A copy of the newer settings is kept, but this unbraid can't read it.")
+        }
+        .alert("Nothing was changed", isPresented: $failed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("unbraid couldn't keep a copy of the newer settings, so it left them as they are. Check that your disk has room, then try again.")
         }
     }
 }

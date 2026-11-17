@@ -829,7 +829,16 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(store().accounts, ["mullvad": "A", "ivpn": "B"])
         XCTAssertTrue(store().newerSetup)
         // Start Fresh: the newer file is kept beside, the default saved, and a relaunch reads it.
-        s.startFresh()
+        // A copy that can't be made changes nothing: the newer file is never replaced without one.
+        try FileManager.default.createDirectory(at: dir.appending(path: "setup.bin.newer"), withIntermediateDirectories: false)
+        try Data("x".utf8).write(to: dir.appending(path: "setup.bin.newer/held"))
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: dir.path)
+        XCTAssertFalse(s.startFresh())
+        XCTAssertTrue(s.newerSetup)
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "setup.bin")), original)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: dir.path)
+        try FileManager.default.removeItem(at: dir.appending(path: "setup.bin.newer"))
+        XCTAssertTrue(s.startFresh())
         XCTAssertFalse(s.newerSetup)
         await settle()
         XCTAssertFalse(s.unsaved)

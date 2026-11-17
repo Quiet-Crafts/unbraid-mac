@@ -135,6 +135,9 @@ nonisolated enum Compiler {
     /// The default route of a deny-all configuration that doesn't let everything else out directly.
     static let denied = "denied"
     private static let filteredDirect = "__filtered_direct"
+    /// Names the compiler gives a meaning of their own: no route may be called one (a saved or restored setup that has
+    /// one would have it read as Direct, Block or a refusal, whatever the route says it is).
+    static let reservedIds: Set = [DIRECT, BLOCK, denied, filteredDirect]
 
     /// The tailnet's search domain the tunnel's resolver gets with [i] (short names expand to it, as with the Tailscale
     /// app): its MagicDNS domain while the setup has a Tailscale home and the extension takes the name, otherwise none ("").
@@ -199,6 +202,7 @@ nonisolated enum Compiler {
             self.s = s; self.i = i; self.active = active; self.deny = deny
             // Block is an app's choice, not a default: everything else would go Direct, or to tunnels that don't exist.
             guard s.defaultRoute != BLOCK else { throw Fail("Block can't be the default route. Make Direct or a VPN route the default.") }
+            guard !s.routes.contains(where: { Compiler.reservedIds.contains($0.id) }) else { throw Fail("A route has a name unbraid keeps for itself. Remove that route, then connect again.") }
             // A default that names no route (a damaged or older saved setup) would send everything Direct when nothing else
             // is in use, and name a tunnel that doesn't exist otherwise: refused either way, never silently Direct.
             guard deny || s.defaultRoute == DIRECT || s.route(s.defaultRoute) != nil else {

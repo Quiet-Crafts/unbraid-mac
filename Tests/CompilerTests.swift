@@ -238,6 +238,17 @@ final class CompilerTests: XCTestCase {
         XCTAssertNil(Compiler.ownDnsReach(preset))
     }
 
+    /// No route may carry a name the compiler reads as Direct, Block or a refusal.
+    func testARouteNamedLikeAnInternalWayOutIsRefused() {
+        for id in Compiler.reservedIds.sorted() {
+            var s = example
+            s.routes.append(Route(id: id, tsExit: "100.64.0.9", tsName: "exit"))
+            s.apps["com.a"] = id
+            XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: s, links: links(example), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp))), id)
+        }
+        XCTAssertTrue(Compiler.reservedIds.isSuperset(of: [DIRECT, BLOCK, "denied", "__filtered_direct"]))
+    }
+
     // MARK: Websites
 
     /// NL default, A on US, X Direct, example.com on IT (no app uses IT), a name under it on US, bank.example Direct.
