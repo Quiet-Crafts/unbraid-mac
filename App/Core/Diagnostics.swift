@@ -27,6 +27,8 @@ nonisolated struct DiagnosticsReport: Equatable, Sendable {
     var failure: Diagnostics.Failure?
     var stop: Diagnostics.Failure?
     var rejection: Diagnostics.Rejection?
+    /// How many websites have a route of their own, never which.
+    var sites = Diagnostics.Sites()
 
     func text(now: Date, names: (String) -> String?) -> String {
         func flag(_ requested: Bool, _ applied: Bool?) -> String {
@@ -48,6 +50,7 @@ nonisolated struct DiagnosticsReport: Equatable, Sendable {
             "Kill switch: \(flag(killSwitch, killSwitchApplied))",
             "Connect on Demand: \(flag(onDemand, onDemandApplied))" + (onDemandUnavailable ? ", unavailable (configuration not sealed)" : ""),
             "Providers in the setup: \(listed.isEmpty ? "none" : listed.joined(separator: ", "))",
+            "Websites: \(sites.text)",
         ]
         if let home { lines.append("Home network: \(home)") }
         if let f = failure { lines.append("Last failure (\(ago(f.at))): \(f.kind), \(f.facts)") }
@@ -58,6 +61,18 @@ nonisolated struct DiagnosticsReport: Equatable, Sendable {
 }
 
 nonisolated enum Diagnostics {
+    /// Websites with a route of their own, counted by where they go: their addresses stay out of a report.
+    struct Sites: Equatable, Sendable {
+        var routes = 0, direct = 0, blocked = 0
+        init() {}
+        init(_ setup: Setup) {
+            for id in setup.sites.values { if id == DIRECT { direct += 1 } else if id == BLOCK { blocked += 1 } else { routes += 1 } }
+        }
+        var text: String {
+            routes + direct + blocked == 0 ? "none" : "\(routes) on routes, \(direct) Direct, \(blocked) Blocked"
+        }
+    }
+
     struct Rejection: Equatable, Sendable {
         var at: Date
         /// Already cleaned.

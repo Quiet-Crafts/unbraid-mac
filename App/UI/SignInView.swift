@@ -48,8 +48,9 @@ struct SignInView: View {
                 .padding(.horizontal, Layout.gutter * 2).padding(.top, Layout.gutter)
             }
             Form {
-                if model.notice != nil || (model.store.unsaved && !model.store.unsavedDismissed) {
+                if model.store.newerSetup || model.notice != nil || (model.store.unsaved && !model.store.unsavedDismissed) {
                     Section {
+                        if model.store.newerSetup { NewerSetupRow() }
                         if let n = model.notice { NoticeRow(text: n) }
                         // A failed sign-out would return after restart unless the change is saved.
                         if model.store.unsaved && !model.store.unsavedDismissed { UnsavedRow() }
@@ -291,6 +292,38 @@ struct NoticeRow: View {
             Label(text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Ink.failedText)
             Spacer()
             Button("Dismiss") { model.notice = nil }
+        }
+    }
+}
+
+/// The saved settings came from a newer unbraid: they are left as they are until unbraid is updated or the user starts
+/// fresh. Nothing dismisses it for good, since nothing can connect meanwhile.
+struct NewerSetupRow: View {
+    private let model = AppModel.shared
+    @State private var confirming = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Label {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("These settings were saved by a newer unbraid").fontWeight(.semibold)
+                    Text("Update unbraid to use them, or start fresh. Starting fresh removes your routes, app choices and profiles on this Mac; your provider sign-ins stay.")
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } icon: { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(Ink.failedText) }
+            Spacer(minLength: 8)
+            HStack {
+                Button("Download…") { if let url = URL(string: Site.download) { NSWorkspace.shared.open(url) } }
+                Button("Start Fresh…", role: .destructive) { confirming = true }
+            }.fixedSize()
+        }
+        .accessibilityElement(children: .contain)
+        .onAppear { AccessibilityNotification.Announcement("These settings were saved by a newer unbraid").post() }
+        .alert("Start fresh?", isPresented: $confirming) {
+            Button("Start Fresh", role: .destructive) { model.store.startFresh() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Your routes, app choices and profiles on this Mac are replaced by a new setup. Your provider sign-ins stay. A copy of the newer settings is kept, but this unbraid can't read it.")
         }
     }
 }

@@ -208,6 +208,10 @@ private final class Meter: NSObject {
         "com.apple.Maps": "it", "com.apple.weather": "it", "com.apple.Music": "jp", "com.apple.iBooksX": "jp",
         "com.apple.Photos": DIRECT, "com.apple.FaceTime": DIRECT,
     ]
+    /// Website → route.
+    private static let shotSites: [String: String] = [
+        "netflix.com": "us", "bbc.co.uk": "us", "rai.it": "it", "mybank.example": DIRECT, "tracker.example": BLOCK,
+    ]
     private static let shotCountries: [(code: String, name: String, cities: [String])] = [
         ("AU", "Australia", ["Sydney", "Melbourne"]), ("AT", "Austria", ["Vienna"]), ("BE", "Belgium", ["Brussels"]),
         ("BR", "Brazil", ["São Paulo"]), ("CA", "Canada", ["Toronto", "Montreal", "Vancouver"]), ("DK", "Denmark", ["Copenhagen"]),
@@ -240,6 +244,7 @@ private final class Meter: NSObject {
             }
             s.defaultRoute = "nl"
             s.apps = Self.shotApps
+            s.sites = Self.shotSites
             s.prefs.stats = true
         }
         Store.shared.disclosed = true
@@ -277,7 +282,7 @@ private final class Meter: NSObject {
         FrontApp.shared.perfShow(model.apps.app("com.apple.TV"))
         if !empty { for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) } }
         go("traffic"); await meter.frames(20)
-        let pages = [("apps", "apps"), ("route", "route:us"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
+        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
                      ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             NSApp.appearance = NSAppearance(named: look); await meter.frames(30)
@@ -301,6 +306,7 @@ private final class Meter: NSObject {
                 if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no picker sheet"); shotsMissing += 1 }
                 await shoot(window, "\(dir)/picker\(suffix).png")
                 Presentation.shared.picker = nil; await meter.frames(45)
+                await websiteShots(dir, suffix)
             }
             openPanel(solid: true); await meter.frames(50)
             if let panel { await shoot(panel, "\(dir)/\(prefix)panel\(suffix).png") }
@@ -311,6 +317,18 @@ private final class Meter: NSObject {
         }
         NSApp.appearance = nil
         report("[Perf] shots in \(dir)")
+    }
+
+    /// Add Website with a pasted link, over the Websites page; and the page with no websites.
+    private func websiteShots(_ dir: String, _ suffix: String) async {
+        go("websites"); await meter.frames(40)
+        Presentation.shared.addSite = SiteTarget(address: "https://www.example.org/news/today"); await meter.frames(90)
+        if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
+        await shoot(window, "\(dir)/add-website\(suffix).png")
+        Presentation.shared.addSite = nil; await meter.frames(45)
+        Store.shared.update { $0.sites = [:] }; await meter.frames(60)
+        await shoot(window, "\(dir)/empty-websites\(suffix).png")
+        Store.shared.update { $0.sites = Self.shotSites }; await meter.frames(45)
     }
 
     /// The update question answered with no, as the pictures start; and the check on with a newer release found.

@@ -25,6 +25,9 @@ final class Store {
     /// open and couldn't be kept as ".bad". Never written over (an empty setup would replace the real one); read again
     /// once the key is available, and they replace what is in memory, which was never saved.
     @ObservationIgnored private var held: Set<String> = []
+    /// The setup file was saved by a newer unbraid (`Setup.Newer`): what shows is a stand-in, the file is never copied
+    /// as ".bad" nor written over, and nothing may connect with the stand-in until the user updates or starts fresh.
+    private(set) var newerSetup = false
     /// Credential files a Sign Out of Everything couldn't delete yet: retried at every launch, never read back. One
     /// written again since holds new data (its old contents are gone with the replace) and leaves the list.
     @ObservationIgnored private var forgetting: Set<String> = []
@@ -53,7 +56,9 @@ final class Store {
         let keyed = vault.keyAvailable
         let readable = { (name: String) in !left.contains(name) }
         var unkept: Set<String> = []
-        let loaded = readable("setup.bin") ? Self.load(vault, "setup.bin", Setup.self, dir, keyed: keyed, unkept: &unkept) : nil
+        var newer = false
+        let loaded = readable("setup.bin") ? Self.load(vault, "setup.bin", Setup.self, dir, keyed: keyed, unkept: &unkept, newer: &newer) : nil
+        newerSetup = newer
         var s = loaded ?? Setup()
         if loaded != nil, s.profileSalt == nil { s.profileSalt = UUID().uuidString }
         setup = s
@@ -68,7 +73,7 @@ final class Store {
         if loaded != nil, loaded?.profileSalt == nil { save("setup", setup) }
         // Kept in plain defaults before it moved into the sealed setup: Tailscale's own domain carries over, any other is
         // asked about again (a file any process running as the user can write is no one's consent).
-        if held.isEmpty, let legacy = defaults.string(forKey: "tsSuffix") {
+        if held.isEmpty, !newerSetup, let legacy = defaults.string(forKey: "tsSuffix") {
             if s.home.tsSuffix == nil, let t = Compiler.tsSuffix(legacy), Compiler.officialTs(s.home), Compiler.tsSuffixIsTailscales(t) { update { $0.home.tsSuffix = t } }
             defaults.removeObject(forKey: "tsSuffix")
         }
@@ -113,6 +118,25 @@ final class Store {
     /// Still showing stand-ins for files the keychain wouldn't open: nothing saved now would last.
     var isHeld: Bool { !held.isEmpty }
 
+    /// The setup that shows is a stand-in (held for the keychain, or saved by a newer unbraid): nothing may connect, be
+    /// sealed or change the engine with it.
+    var setupStandIn: Bool { isHeld || newerSetup }
+
+    /// Leaves a setup saved by a newer unbraid: it is kept as "setup.bin.newer" (best effort: the user chose to replace
+    /// it), and the default setup is saved in its place. Provider sign-ins (accounts.bin) stay.
+    func startFresh() {
+        guard newerSetup else { return }
+        let file = dir.appending(path: "setup.bin"), copy = dir.appending(path: "setup.bin.newer")
+        try? FileManager.default.removeItem(at: copy)
+        if (try? FileManager.default.copyItem(at: file, to: copy)) == nil { Log.error("store: newer setup not kept", facts: "setup.bin") }
+        newerSetup = false
+        setupUnsaved = false
+        var s = Setup()
+        s.profileSalt = UUID().uuidString
+        setup = s
+        save("setup", s)
+    }
+
     /// Opens held files once the keychain answers: their contents come back in place of the stand-ins. Returns the
     /// files reloaded, whose stand-in values must not be written after them.
     @discardableResult
@@ -120,12 +144,14 @@ final class Store {
         guard !held.isEmpty, vault.keyAvailable else { return [] }
         // With the key read, a file that still won't open is kept as ".bad" before the stand-in may be written over it.
         var migrate = false, unkept: Set<String> = []
-        if held.contains("setup.bin"), var s = Self.load(vault, "setup.bin", Setup.self, dir, keyed: true, unkept: &unkept) {
+        var newer = false
+        if held.contains("setup.bin"), var s = Self.load(vault, "setup.bin", Setup.self, dir, keyed: true, unkept: &unkept, newer: &newer) {
             migrate = s.profileSalt == nil
             if migrate { s.profileSalt = UUID().uuidString }
             setup = s; setupUnsaved = false
         }
         if held.contains("accounts.bin"), let a = Self.load(vault, "accounts.bin", [String: String].self, dir, keyed: true, unkept: &unkept) { accounts = a; accountsUnsaved = false }
+        if newer { newerSetup = true }
         let reloaded = held
         held = unkept
         if migrate { save("setup", setup) }
@@ -160,8 +186,8 @@ final class Store {
         // `value` was taken from the stand-in: once the real file came back, it is never written over it.
         if reloadHeld().contains("\(name).bin"), !held.contains("\(name).bin") { completion?(false); return }
         unsavedDismissed = false
-        // Still held: the real file stays as it is, and the change is reported unsaved.
-        if held.contains("\(name).bin") {
+        // Still held, or saved by a newer unbraid: the real file stays as it is, and the change is reported unsaved.
+        if held.contains("\(name).bin") || name == "setup" && newerSetup {
             if name == "setup" { setupUnsaved = true } else { accountsUnsaved = true }
             completion?(false)
             return
@@ -435,6 +461,7 @@ final class Store {
         forgetting = Set(Self.credentialFiles)
         Self.persist(forgetting, defaults)
         held = []
+        newerSetup = false
         // Writes already queued run first; their completions no longer report on these values.
         for name in ["setup", "accounts"] { saveVersions[name, default: 0] += 1 }
         setupUnsaved = false; accountsUnsaved = false
@@ -464,8 +491,8 @@ final class Store {
 
     private nonisolated static let forgettingKey = "forgetAllPending"
     /// Everything that holds credentials: the setup, accounts, cached tunnels, the running tunnel's state, the record of
-    /// what the extension sealed, and copies kept of unreadable ones.
-    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin"].flatMap { [$0, "\($0).bad"] }
+    /// what the extension sealed, copies kept of unreadable ones, and a newer unbraid's setup kept by Start Fresh.
+    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin"].flatMap { [$0, "\($0).bad"] } + ["setup.bin.newer"]
 
     /// The files a deletion still has to finish. Earlier versions kept only "something is pending" (true): all of them.
     private nonisolated static func pending(_ defaults: UserDefaults) -> Set<String> {
@@ -497,13 +524,22 @@ final class Store {
         return load(vault, name, type, dir, keyed: keyed, unkept: &unkept)
     }
 
-    /// [unkept]: files that won't open and couldn't be kept as ".bad", to be held.
     private nonisolated static func load<T: Decodable>(_ vault: Sealed, _ name: String, _ type: T.Type, _ dir: URL?, keyed: Bool,
                                                        unkept: inout Set<String>) -> T? {
+        var newer = false
+        return load(vault, name, type, dir, keyed: keyed, unkept: &unkept, newer: &newer)
+    }
+
+    /// [unkept]: files that won't open and couldn't be kept as ".bad", to be held. [newer]: the file opened but was saved
+    /// by a newer unbraid (`Setup.Newer`): nil, and it is neither copied nor held, as it is no damage and never unreadable.
+    private nonisolated static func load<T: Decodable>(_ vault: Sealed, _ name: String, _ type: T.Type, _ dir: URL?, keyed: Bool,
+                                                       unkept: inout Set<String>, newer: inout Bool) -> T? {
         // `keyed` is asked before the read: a found key stays cached, so the read used it, and a key that turns up only
         // after a failed read can't make a healthy file look bad.
         if let data = vault.read(name) {
-            if let v = try? SavedDecoding.$strict.withValue(true, operation: { try JSONDecoder().decode(type, from: data) }) { return v }
+            do { return try SavedDecoding.$strict.withValue(true, operation: { try JSONDecoder().decode(type, from: data) }) }
+            catch is Setup.Newer { newer = true; return nil }
+            catch {}
             // It opens, but a value in it won't read: that value takes its default and the rest is used as it is (its
             // blocks among it), as before; the file is kept as ".bad" before a save may replace it. That copy is a best
             // effort: protection comes first, so a change is saved as before even if it couldn't be made.

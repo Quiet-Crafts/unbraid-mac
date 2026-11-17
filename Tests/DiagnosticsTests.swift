@@ -137,6 +137,22 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertFalse(text.contains("evil"), text)
     }
 
+    /// Websites are counted by where they go; no address of one is in the report.
+    func testTheReportCountsWebsitesWithoutNamingThem() {
+        var s = Setup()
+        s.sites = ["netflix.com": "nl", "bbc.co.uk": "nl", "mybank.example": DIRECT, "tracker.example": BLOCK]
+        var report = DiagnosticsReport(
+            app: "1.0 (7)", system: "macOS 26.1", extensionState: "ready", extensionAnswers: true, phase: "on",
+            killSwitch: true, killSwitchApplied: true, onDemand: false, onDemandApplied: false, onDemandUnavailable: false,
+            providers: [], imported: 0, home: nil, runningDiffers: nil, failure: nil, stop: nil, rejection: nil, sites: Diagnostics.Sites(s))
+        let text = report.text(now: t0) { _ in nil }
+        XCTAssertTrue(text.contains("Websites: 2 on routes, 1 Direct, 1 Blocked"), text)
+        for name in s.sites.keys { XCTAssertFalse(text.contains(name), name) }
+        for word in ["netflix", "bbc", "mybank", "tracker"] { XCTAssertFalse(text.lowercased().contains(word), word) }
+        report.sites = Diagnostics.Sites(Setup())
+        XCTAssertTrue(report.text(now: t0) { _ in nil }.contains("Websites: none"))
+    }
+
     /// The setup that was checked, as the compiler writes it: the user's own values among the engine's words.
     private let config = #"""
     {"outbounds": [{"type": "wireguard", "tag": "r-r1a2b3c4", "server": "homeserver", "private_key": "Ab+/Cd=="},

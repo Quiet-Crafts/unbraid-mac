@@ -8,10 +8,11 @@
 #   SAMPLE=switch.all tools/perf.sh   also a call graph of that step (path printed as [Sample])
 #   SHOTS=<folder> tools/perf.sh      no timing: pictures for the README and the website, made-up data only (Apple's own
 #                                     apps, four made-up routes and accounts, no network), light and dark, as macOS draws
-#                                     the windows: All Apps, a route, Direct, Blocked, Traffic, Activity and Speed Test
-#                                     (apps, route, direct, blocked, traffic, activity, speed), the same five without Direct
-#                                     and Blocked at the smallest window, 770x564 (min-apps, min-route, min-traffic,
-#                                     min-activity, min-speed), the location picker (picker), the menu bar panel (panel) and
+#                                     the windows: All Apps, Websites, a route, Direct, Blocked, Traffic, Activity and Speed
+#                                     Test (apps, websites, route, direct, blocked, traffic, activity, speed), the same six
+#                                     without Direct and Blocked at the smallest window, 770x564 (min-apps, min-websites,
+#                                     min-route, min-traffic, min-activity, min-speed), the location picker (picker), Add
+#                                     Website (add-website), Websites with none (empty-websites), the menu bar panel (panel) and
 #                                     every Settings pane (settings-general, -providers, -home, -tailscale, -protection,
 #                                     -statistics, -about, and -about-update with a newer release found), the update
 #                                     notice at both sizes (update-notice, min-update-notice) and the one-time update

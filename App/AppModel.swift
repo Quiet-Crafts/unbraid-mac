@@ -415,7 +415,7 @@ final class AppModel {
             let record = vpn.state.phase == .on ? await Running.load() : nil
             guard routeEdits.contains(ticket), valid() else { return }
             store.reloadHeld()
-            guard !store.isHeld else { return }
+            guard !store.setupStandIn else { return }
             let old = setup
             let currentAccounts = accounts
             let targets = routeEdits.targets(ticket)
@@ -482,7 +482,7 @@ final class AppModel {
     }
 
     var profileGeneration: String {
-        guard !store.isHeld else { return "" }
+        guard !store.setupStandIn else { return "" }
         return ProfileGeneration.value(setup, accounts: accounts)
     }
 
@@ -540,7 +540,7 @@ final class AppModel {
         }
         if let notice, notice != lastProfileNotice { AccessibilityNotification.Announcement(notice).post() }
         lastProfileError = state.error; lastProfileBlocked = state.blocked; lastProfileNotice = notice
-        guard !store.isHeld, let pending = setup.pendingSwitch else { switchingProfile = nil; return }
+        guard !store.setupStandIn, let pending = setup.pendingSwitch else { switchingProfile = nil; return }
         let status = vpn.tunnel.status
         let stopped = vpn.tunnel.statusLoaded && (status == .disconnected || status == .invalid)
             && state.phase != .connecting && state.phase != .on
@@ -605,6 +605,8 @@ final class AppModel {
             s.routes.removeAll { $0.id == id }
             if s.defaultRoute == id { s.defaultRoute = s.routes.first?.id ?? DIRECT }
             s.apps = s.apps.filter { $0.value != id }
+            // Its websites follow their apps again (profiles are tidied with the routes).
+            s.sites = s.sites.filter { $0.value != id }
             s.tidyProfiles()
         }
     }
@@ -699,6 +701,61 @@ final class AppModel {
                 self.apps.reassigned(Array(self.routeEdits.remaining(change, in: ticket).keys))
                 self.askBlockScope(old.apps.values.contains(BLOCK))
             }, accepted: nil, valid: { true }, finished: { applied in completed(applied); finished() })
+        }
+    }
+
+    // MARK: Websites
+
+    /// Adds a website (an address and every address under it) on a route, Direct or Blocked: one change Edit > Undo
+    /// takes back, checked against the plan's limit like an app move. Returns why it can't be added, in the sheet's
+    /// words, or nil when it goes ahead.
+    @discardableResult
+    func addSite(_ raw: String, to routeId: String, undo: UndoManager?, completion: @escaping (Bool) -> Void = { _ in }) -> String? {
+        switch SiteEdits.check(raw, in: setup.sites) {
+        case .empty: return "That isn't a website address"
+        case .refused(let why): return why
+        case .valid(let name):
+            guard routeId == DIRECT || routeId == BLOCK || setup.route(routeId) != nil else { return "That route is gone" }
+            changeSites([name: routeId], name: "Add Website", undo: undo, finished: completion)
+            return nil
+        }
+    }
+
+    /// Moves websites to a route, Direct or Blocked, in one undoable change.
+    func moveSites(_ sites: [String], to routeId: String, undo: UndoManager?, completion: @escaping (Bool) -> Void = { _ in }) {
+        let keys = Set(sites).filter { setup.sites[$0] != nil && setup.sites[$0] != routeId }
+        guard !keys.isEmpty else { completion(false); return }
+        changeSites(Dictionary(uniqueKeysWithValues: keys.map { ($0, routeId) }), name: keys.count == 1 ? "Move Website" : "Move \(keys.count) Websites", undo: undo, finished: completion)
+    }
+
+    /// Takes websites' rules away (they follow their apps again), in one undoable change.
+    func removeSites(_ sites: [String], undo: UndoManager?) {
+        let keys = Set(sites).filter { setup.sites[$0] != nil }
+        guard !keys.isEmpty else { return }
+        changeSites(Dictionary(uniqueKeysWithValues: keys.map { ($0, String?.none) }), name: keys.count == 1 ? "Remove Website" : "Remove \(keys.count) Websites", undo: undo)
+    }
+
+    /// As `apply` for apps: a website on a route not in use yet activates it, so the plan's limit is asked about first.
+    private func changeSites(_ change: SiteEdits.Assignments, name: String, undo: UndoManager?, finished: @escaping (Bool) -> Void = { _ in }) {
+        let ticket = routeEdits.begin(Set(change.keys.map { .site($0) }), move: true)
+        nextLimitAsk()
+        checkLimit({ [self] in SiteEdits.apply(routeEdits.remainingSites(change, in: ticket), to: &$0) }, ticket: ticket, after: { [weak self, weak undo] old, new in
+            guard let self, let undo, old.sites != new.sites else { return }
+            let keys = Array(self.routeEdits.remainingSites(change, in: ticket).keys)
+            _ = MoveHistory(before: SiteEdits.assignments(keys, in: old), after: SiteEdits.assignments(keys, in: new),
+                undo: undo, name: name, submit: { [weak self] change, completed in
+                    guard let self else { completed(false); return }; self.replaySites(change, completed: completed)
+                })
+        }, accepted: nil, valid: { true }, finished: finished)
+    }
+
+    private func replaySites(_ change: SiteEdits.Assignments, completed: @escaping (Bool) -> Void) {
+        let ticket = routeEdits.begin(Set(change.keys.map { .site($0) }), preserving: moveReplays.tickets)
+        nextLimitAsk()
+        moveReplays.append(ticket) { [weak self] finished in
+            guard let self else { completed(false); finished(); return }
+            self.checkLimit({ [self] in SiteEdits.apply(routeEdits.remainingSites(change, in: ticket), to: &$0) }, ticket: ticket,
+                after: { _, _ in }, accepted: nil, valid: { true }, finished: { applied in completed(applied); finished() })
         }
     }
 

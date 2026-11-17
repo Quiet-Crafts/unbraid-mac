@@ -19,6 +19,8 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
         var isDefault: Bool
         /// ISO country code for provider routes only; absent in snapshots from older app versions.
         var country: String? = nil
+        /// Websites with this route of their own; absent in older snapshots.
+        var sites: Int? = nil
     }
 
     /// One day of this week: bytes per route id.
@@ -34,6 +36,9 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     var routes: [Route] = []
     var direct = 0
     var blocked = 0
+    /// Websites on Direct and Blocked; absent in older snapshots.
+    var directSites: Int? = nil
+    var blockedSites: Int? = nil
     var week: [Day] = []
     /// When the app last confirmed this; the widgets stop vouching for a state the app hasn't confirmed for 75 minutes.
     var updated = Date.distantPast
@@ -47,6 +52,13 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     var profileGeneration: String? = nil
     /// Whether a confirmed running configuration has a VPN route. Absent in older snapshots.
     var protected: Bool? = nil
+
+    /// How many apps and websites take a route: "5 apps · 2 websites", "2 websites", or the apps alone.
+    static func count(apps: Int, sites: Int) -> String {
+        let a = "\(apps) app\(apps == 1 ? "" : "s")", w = websites(sites)
+        return sites == 0 ? a : apps == 0 ? w : "\(a) · \(w)"
+    }
+    static func websites(_ n: Int) -> String { "\(n) website\(n == 1 ? "" : "s")" }
 
     var connectionTitle: String {
         switch phase {

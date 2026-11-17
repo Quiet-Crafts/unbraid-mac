@@ -34,7 +34,8 @@ extension DiagnosticsReport {
             onDemand: s.prefs.alwaysOn, onDemandApplied: t.profile?.onDemand, onDemandUnavailable: t.onDemandUnavailable,
             providers: providers, imported: imported, home: home.isEmpty ? nil : home,
             runningDiffers: m.vpn.running.map { $0 != s },
-            failure: Diagnostics.lastFailure, stop: Diagnostics.lastStop, rejection: Diagnostics.lastRejection)
+            failure: Diagnostics.lastFailure, stop: Diagnostics.lastStop, rejection: Diagnostics.lastRejection,
+            sites: Diagnostics.Sites(s))
     }
 
     static func providerName(_ id: String) -> String? { id == "tailscale" ? "Tailscale exit node" : Providers.get(id)?.name }

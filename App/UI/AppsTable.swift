@@ -4,6 +4,7 @@ import SwiftUI
 /// The apps list: an AppKit table with hand-drawn cells. SwiftUI's Table measured every row and rebuilt itself on each
 /// page and search (120 ms a page, 25 ms a key, with 135 apps); this draws only the rows on screen, at a fixed height,
 /// and a menu exists only while it is open. The same table serves every page, so a page change is a reload.
+/// With `sites` it lists websites instead (`SitesRow`): the same rows, route chip, menus and drag onto the sidebar.
 struct AppsTable: NSViewRepresentable {
     let rows: [Row]
     /// What a row shows beyond `rows`. Passed in so that a new week redraws the rows on screen.
@@ -12,11 +13,12 @@ struct AppsTable: NSViewRepresentable {
     let page: String
     @Binding var selection: Set<String>
     @Binding var sort: AppsSort
+    var sites = false
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> Host {
-        let table = NSTableView()
+        let table = KeyTable()
         table.style = .inset
         table.backgroundColor = .clear
         table.usesAutomaticRowHeights = false
@@ -39,11 +41,14 @@ struct AppsTable: NSViewRepresentable {
             c.sortDescriptorPrototype = NSSortDescriptor(key: id.rawValue, ascending: true)
             table.addTableColumn(c)
         }
-        column(.name, "App", min: 200, ideal: 350, max: 440, fills: true)
+        column(.name, sites ? "Website" : "App", min: 200, ideal: 350, max: 440, fills: true)
         column(.route, "Route", min: 120, ideal: 234, max: 10_000, fills: true)
         column(.week, "This Week", min: 136, ideal: 160, max: 190)
         let c = context.coordinator
+        c.sites = sites
         c.table = table
+        // Delete (and Forward Delete) removes the selected websites' rules, as in lists elsewhere on the Mac.
+        if sites { table.delete = { [weak c] in c?.removeSelected() } }
         table.dataSource = c
         table.delegate = c
         let menu = NSMenu()
@@ -108,6 +113,7 @@ struct AppsTable: NSViewRepresentable {
     @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         weak var table: NSTableView?
         weak var header: NSTableHeaderView?
+        var sites = false
         var selection: Binding<Set<String>>?
         var sort: Binding<AppsSort>?
         var undo: UndoManager?
@@ -157,8 +163,8 @@ struct AppsTable: NSViewRepresentable {
 
         private func fill(_ cell: NSView, with row: Row) {
             switch cell {
-            case let c as AppCell: c.show(row)
-            case let c as RouteCell: c.show(row.id) { [weak self, weak c] in if let c { self?.openMenu(row.id, from: c) } }
+            case let c as AppCell: c.show(row, site: sites)
+            case let c as RouteCell: c.show(row.id, site: sites) { [weak self, weak c] in if let c { self?.openMenu(row.id, from: c) } }
             case let c as WeekRowCell: c.show(row.id, bytes: week[row.id], peak: peak)
             default: break
             }
@@ -212,13 +218,19 @@ struct AppsTable: NSViewRepresentable {
         func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
             guard row < rows.count else { return nil }
             let item = NSPasteboardItem()
-            item.setString(rows[row].id, forType: .string)
+            item.setString(sites ? SitesRow.drag(rows[row].id) : rows[row].id, forType: .string)
             return item
+        }
+
+        func removeSelected() {
+            guard let selection, !selection.wrappedValue.isEmpty else { return }
+            model.removeSites(Array(selection.wrappedValue), undo: undo)
         }
 
         // MARK: Menus, built when they open
 
         private func openMenu(_ app: String, from cell: NSView) {
+            if sites { return openSiteMenu(app, from: cell) }
             let s = model.setup
             let current = s.apps[app]
             let menu = NSMenu()
@@ -252,6 +264,26 @@ struct AppsTable: NSViewRepresentable {
             return item
         }
 
+        /// A website's route: every route in sidebar order, Direct and Blocked (a website has no default to follow), then
+        /// Remove, which gives it back to its app's route.
+        private func openSiteMenu(_ site: String, from cell: NSView) {
+            let s = model.setup
+            let current = s.sites[site]
+            let menu = NSMenu()
+            menu.autoenablesItems = false
+            for id in s.sidebarRoutes {
+                let item = menuAction(s.label(id)) { [weak self] in
+                    guard let self, id != current else { return }
+                    model.moveSites([site], to: id, undo: undo)
+                }
+                item.state = id == current ? .on : .off
+                menu.addItem(item)
+            }
+            menu.addItem(.separator())
+            menu.addItem(menuAction("Remove") { [weak self] in guard let self else { return }; model.removeSites([site], undo: undo) })
+            menu.popUp(positioning: nil, at: NSPoint(x: 0, y: cell.bounds.height / 2 + 14), in: cell)
+        }
+
         /// The clicked row's menu: for the selection if the row is in it, as elsewhere on the Mac.
         func menuNeedsUpdate(_ menu: NSMenu) {
             menu.removeAllItems()
@@ -259,6 +291,7 @@ struct AppsTable: NSViewRepresentable {
             let clicked = rows[table.clickedRow].id
             let chosen = selection?.wrappedValue ?? []
             let ids = chosen.contains(clicked) ? Array(chosen) : [clicked]
+            if sites { return siteContextMenu(menu, ids) }
             let move: (String?) -> Void = { [weak self] to in
                 guard let self else { return }
                 model.move(ids, to: to, undo: undo)
@@ -284,7 +317,41 @@ struct AppsTable: NSViewRepresentable {
                 menu.addItem(menuAction("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: a.path)]) })
             }
         }
+
+        /// Move To (every route, Direct and Blocked) and Remove, for the websites clicked or selected.
+        private func siteContextMenu(_ menu: NSMenu, _ ids: [String]) {
+            let routes = NSMenu()
+            for id in model.setup.sidebarRoutes {
+                routes.addItem(menuAction(model.setup.label(id)) { [weak self] in guard let self else { return }; model.moveSites(ids, to: id, undo: undo) })
+            }
+            let to = NSMenuItem(title: "Move To", action: nil, keyEquivalent: "")
+            to.submenu = routes
+            menu.addItem(to)
+            menu.addItem(.separator())
+            menu.addItem(menuAction(ids.count == 1 ? "Remove" : "Remove \(ids.count) Websites") { [weak self] in
+                guard let self else { return }; model.removeSites(ids, undo: undo)
+            })
+        }
     }
+}
+
+/// The table, with Delete for what the list can remove.
+private final class KeyTable: NSTableView {
+    var delete: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        // Delete and Forward Delete, without a modifier that would make them something else.
+        if let delete, [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !selectedRowIndexes.isEmpty {
+            delete()
+        } else { super.keyDown(with: event) }
+    }
+}
+
+/// How a website's row travels in a drag: its address with a prefix no app key has (app keys are bundle identifiers
+/// or paths), so a drop onto a route tells the two apart.
+enum SitesRow {
+    static func drag(_ site: String) -> String { "site:" + site }
+    static func site(_ dragged: String) -> String? { dragged.hasPrefix("site:") ? String(dragged.dropFirst(5)) : nil }
 }
 
 /// What a menu item does. The item keeps it, as its represented object.
@@ -446,9 +513,25 @@ private final class AppCell: DrawnCell {
         .withSymbolConfiguration(.init(pointSize: Measure.tableIcon * 0.5, weight: .regular).applying(.init(paletteColors: [.labelColor])))
     private static let warning = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
         .withSymbolConfiguration(.init(pointSize: 11, weight: .regular).applying(.init(paletteColors: [Palette.nsWarning])))
+    private static let globe = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: Measure.tableIcon * 0.5, weight: .regular).applying(.init(paletteColors: [.labelColor])))
+    private var site = false
 
-    func show(_ row: Row) {
+    func show(_ row: Row, site: Bool = false) {
         let model = AppModel.shared
+        if site {
+            // A website: a globe in the tile, its address, and its route said with it to VoiceOver.
+            setAccessibilityElement(true)
+            setAccessibilityRole(.staticText)
+            setAccessibilityLabel("\(row.name), \(row.routeName)")
+            let new = Shows(name: row.name)
+            guard new != shows || !self.site else { return }
+            shows = new; self.site = true
+            toolTip = nil
+            needsDisplay = true
+            return
+        }
+        self.site = false
         let app = model.apps.app(row.id)
         var new = Shows(name: row.name)
         if let app, app.path.hasSuffix(".app") { new.icon = model.apps.icon(app) }
@@ -490,7 +573,7 @@ private final class AppCell: DrawnCell {
         } else {
             NSColor.quaternaryLabelColor.setFill()
             NSBezierPath(roundedRect: tile, xRadius: size * 0.22, yRadius: size * 0.22).fill()
-            if let symbol = Self.terminal {
+            if let symbol = site ? Self.globe : Self.terminal {
                 symbol.draw(in: NSRect(x: tile.midX - symbol.size.width / 2, y: tile.midY - symbol.size.height / 2, width: symbol.size.width, height: symbol.size.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
             }
         }
@@ -533,10 +616,11 @@ private final class RouteCell: DrawnCell {
     private static let chevron = chevron(Palette.nsDim)
     private static let selectedChevron = chevron(selectionInk)
 
-    func show(_ app: String, press: @escaping () -> Void) {
+    func show(_ app: String, site: Bool = false, press: @escaping () -> Void) {
         self.press = press
         let s = AppModel.shared.setup
-        let current = s.apps[app]
+        // A website always has a route of its own: it never follows a default.
+        let current = site ? s.sites[app] ?? DIRECT : s.apps[app]
         let id = current ?? s.defaultRoute
         let new = Shows(app: app, label: s.label(id), inherited: current == nil, color: s.nsColor(id))
         guard new != shows else { return }
@@ -549,10 +633,10 @@ private final class RouteCell: DrawnCell {
         if new.inherited { selected.append(attributed(" · Default", font, selectionInk.withAlphaComponent(0.75))) }
         selectedText = selected
         wordsWidth = textWidth(words) + 1
-        toolTip = current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
+        toolTip = site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
         setAccessibilityElement(true)
         setAccessibilityRole(.popUpButton)
-        setAccessibilityLabel("Route for \(AppModel.shared.appName(app))")
+        setAccessibilityLabel("Route for \(site ? app : AppModel.shared.appName(app))")
         setAccessibilityValue(current == nil ? "\(new.label), default" : new.label)
         needsDisplay = true
     }

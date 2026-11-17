@@ -28,6 +28,7 @@
 		156D71625EDB9EC5BF4FCA3C /* FileWorkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56132231BD27DDAEDE916B3E /* FileWorkTests.swift */; };
 		15BB609665F2BA6D08B5CA92 /* Surfshark.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2587E9972CE4D006CFB5B2FC /* Surfshark.swift */; };
 		167675AEA7550FD694F2D9FE /* Sites.swift in Sources */ = {isa = PBXBuildFile; fileRef = 145F6B890393446EC35B4E06 /* Sites.swift */; };
+		177650ADC173F15553AE9C8E /* SiteEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95657EF32180C38A822C694 /* SiteEdits.swift */; };
 		18DD475E3A569E5CF30B88C6 /* ProviderFixesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B10CDF892D2E0475652CD4A6 /* ProviderFixesTests.swift */; };
 		196C996DBC05A56130A929E7 /* SpeedTestView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4785607FED79AD809FBF193E /* SpeedTestView.swift */; };
 		1A3F4506A0FA31CF6ED9B476 /* ConfigVet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D82318930587017455D7D9 /* ConfigVet.swift */; };
@@ -111,6 +112,7 @@
 		5CEEE3F542465B75E76E1B7E /* Appearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD379A233842C7895C3A30DF /* Appearance.swift */; };
 		5E81B75BEB586E2248D6E54C /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98821B9E3C4EA8B23F047FA7 /* AppGroup.swift */; };
 		5ECAF4151CAFD1F393CDF722 /* SpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17E365433524B187D56B4755 /* SpeedTest.swift */; };
+		5F646CF9D53D367E2CD88397 /* SiteEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95657EF32180C38A822C694 /* SiteEdits.swift */; };
 		5FEB189B6F6C3465B700EF88 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FEE9490FAF8A8ECACDA43011 /* NetworkExtension.framework */; };
 		61094EDE3E1A672F05A5B423 /* AppGroupTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E794E0E5BC97C0A6A0A43192 /* AppGroupTests.swift */; };
 		61817F1788982A1D6EF754B3 /* AppScanTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFBC32D4C5D5011BB7692483 /* AppScanTests.swift */; };
@@ -161,6 +163,7 @@
 		8C85540E8E7CA9805D470232 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADBC21CC6096733D97519366 /* WidgetSnapshot.swift */; };
 		8CADC25BDBB29D132AD3228E /* IconCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA443DBF14C783612CF5B931 /* IconCache.swift */; };
 		8F35671CB27D57F924971042 /* WidgetIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ECEFE7303AC82AD7ED4B93D /* WidgetIntents.swift */; };
+		90DCCADFA5AA321C7E392CCE /* WebsitesView.swift in Sources */ = {isa = PBXBuildFile; fileRef = E4B806B0700153F8C41D3ACA /* WebsitesView.swift */; };
 		92A57D7E3D2EB26E32CB81B1 /* Mullvad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D4E5E9ED501FC0EB0B7B02 /* Mullvad.swift */; };
 		92C82F701C94DE047022F950 /* Mullvad.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91D4E5E9ED501FC0EB0B7B02 /* Mullvad.swift */; };
 		93A0806140A74708463914B2 /* Ivpn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8882D44810E7996091C410 /* Ivpn.swift */; };
@@ -208,6 +211,7 @@
 		BF79DDFCA9F381BD750A6476 /* ProtonFree.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDEFDF1996E23DF0CC856DD4 /* ProtonFree.swift */; };
 		BFBDCA800A2BF08A91547BDC /* PacketTunnelProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C456F962E3992F28505540E /* PacketTunnelProvider.swift */; };
 		C0586C72403D0FC916501837 /* SnapshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C2168603DE95FFE54996E54B /* SnapshotTests.swift */; };
+		C0AFBD9340C8C57BEAF4EB85 /* SiteEditsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE71B0CFB30E8126AC1FC1C /* SiteEditsTests.swift */; };
 		C16EA1E99C62CE6C83EB046C /* SetupSignOut.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3D7D10659C3A1AA56A97A4F /* SetupSignOut.swift */; };
 		C203B3EF39EBE877E3DC7D68 /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF569689C3CFECE875E64FA /* AppPaths.swift */; };
 		C2C4E28D2100183A92950483 /* WidgetActionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C244074CE28F863FAF6FACAC /* WidgetActionTests.swift */; };
@@ -420,6 +424,7 @@
 		780F1844002B2C237EE2744E /* AppCatalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppCatalog.swift; sourceTree = "<group>"; };
 		787CCEEF91EE371CA53B7D97 /* RescansTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RescansTests.swift; sourceTree = "<group>"; };
 		78BD97F01999700E74BC9D01 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		7AE71B0CFB30E8126AC1FC1C /* SiteEditsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteEditsTests.swift; sourceTree = "<group>"; };
 		7E8A8C13C5A5F8C5BF3B8421 /* Rescans.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rescans.swift; sourceTree = "<group>"; };
 		829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupSignOutTests.swift; sourceTree = "<group>"; };
 		8591ED5655491897B5E01B38 /* ProviderStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderStatus.swift; sourceTree = "<group>"; };
@@ -501,6 +506,7 @@
 		E35906D7F18335B982D89392 /* CatalogPin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogPin.swift; sourceTree = "<group>"; };
 		E3D7D10659C3A1AA56A97A4F /* SetupSignOut.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupSignOut.swift; sourceTree = "<group>"; };
 		E3DB22B20CCC8A1A75D50ABF /* Snapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Snapshot.swift; sourceTree = "<group>"; };
+		E4B806B0700153F8C41D3ACA /* WebsitesView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebsitesView.swift; sourceTree = "<group>"; };
 		E50CF971534A8D80EE513048 /* Platform.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Platform.swift; sourceTree = "<group>"; };
 		E794E0E5BC97C0A6A0A43192 /* AppGroupTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppGroupTests.swift; sourceTree = "<group>"; };
 		E7F651543DAF590B3A5E3614 /* CountryFlag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CountryFlag.swift; sourceTree = "<group>"; };
@@ -515,6 +521,7 @@
 		F625DBA86C069EEDFC7B7164 /* IconTile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconTile.swift; sourceTree = "<group>"; };
 		F673B0D7F9E2E6F12B82EB04 /* JSONValue.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JSONValue.swift; sourceTree = "<group>"; };
 		F8D82318930587017455D7D9 /* ConfigVet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigVet.swift; sourceTree = "<group>"; };
+		F95657EF32180C38A822C694 /* SiteEdits.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteEdits.swift; sourceTree = "<group>"; };
 		F99A005A7B9ED8D631A41E22 /* Manual.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Manual.swift; sourceTree = "<group>"; };
 		FCF569689C3CFECE875E64FA /* AppPaths.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPaths.swift; sourceTree = "<group>"; };
 		FEE9490FAF8A8ECACDA43011 /* NetworkExtension.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = NetworkExtension.framework; path = System/Library/Frameworks/NetworkExtension.framework; sourceTree = SDKROOT; };
@@ -625,6 +632,7 @@
 				1C0514AECD553BC17B7DF530 /* SealedKeyTests.swift */,
 				21F65DB16FC16B36303194F4 /* SetupImportTests.swift */,
 				829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */,
+				7AE71B0CFB30E8126AC1FC1C /* SiteEditsTests.swift */,
 				1266ABF408263C5BA4F2A98D /* SitesTests.swift */,
 				C2168603DE95FFE54996E54B /* SnapshotTests.swift */,
 				4E53942020FC006F068397D6 /* StagingTests.swift */,
@@ -674,6 +682,7 @@
 				0C8F2955A17FA21741B5E6E3 /* Theme.swift */,
 				CE9978D061EBEC0E97859EA6 /* TrafficView.swift */,
 				F553F04E8961A50E94732C23 /* UpdateText.swift */,
+				E4B806B0700153F8C41D3ACA /* WebsitesView.swift */,
 			);
 			path = UI;
 			sourceTree = "<group>";
@@ -757,6 +766,7 @@
 				9640535C88C8838D9B31E1DE /* RunState.swift */,
 				955ED297B6D9901F19F3974B /* SetupImport.swift */,
 				E3D7D10659C3A1AA56A97A4F /* SetupSignOut.swift */,
+				F95657EF32180C38A822C694 /* SiteEdits.swift */,
 				145F6B890393446EC35B4E06 /* Sites.swift */,
 				5C3CE97A9815E711F5AC6939 /* StatsInbox.swift */,
 				4FBF9D44B32EBAF555ADB997 /* StatsMath.swift */,
@@ -1124,6 +1134,7 @@
 				6BDBEBA29B10741ED05AC6D2 /* SetupImport.swift in Sources */,
 				00F25EB0FDC3FF481E7CC543 /* SetupSignOut.swift in Sources */,
 				DFA907EE26C1B6C7C2A36EB6 /* SignInView.swift in Sources */,
+				177650ADC173F15553AE9C8E /* SiteEdits.swift in Sources */,
 				167675AEA7550FD694F2D9FE /* Sites.swift in Sources */,
 				D882C3D64E870EDB2146E6FA /* Slash.swift in Sources */,
 				89F808B183715EF9310A8652 /* Snapshot.swift in Sources */,
@@ -1146,6 +1157,7 @@
 				B953025C52EDD55CB611F752 /* Units.swift in Sources */,
 				1E7C04E0C14525A6FCAE9FF6 /* UpdateCheck.swift in Sources */,
 				5A3C90D07DBE55D3C17B2887 /* UpdateText.swift in Sources */,
+				90DCCADFA5AA321C7E392CCE /* WebsitesView.swift in Sources */,
 				272F586D1DA1BDB289ED68B1 /* WgConf.swift in Sources */,
 				C313C5FC8E91DD0FD963465A /* WidgetIntents.swift in Sources */,
 				8C85540E8E7CA9805D470232 /* WidgetSnapshot.swift in Sources */,
@@ -1258,6 +1270,8 @@
 				C94055860E77CF830C82FA3E /* SetupImportTests.swift in Sources */,
 				C16EA1E99C62CE6C83EB046C /* SetupSignOut.swift in Sources */,
 				6E551F7EA3DBA2FF7276B306 /* SetupSignOutTests.swift in Sources */,
+				5F646CF9D53D367E2CD88397 /* SiteEdits.swift in Sources */,
+				C0AFBD9340C8C57BEAF4EB85 /* SiteEditsTests.swift in Sources */,
 				DFD6A716240DA75F3884A8B7 /* Sites.swift in Sources */,
 				0C589CCC94B65B2CB5837985 /* SitesTests.swift in Sources */,
 				A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */,

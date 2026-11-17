@@ -799,6 +799,96 @@ final class StoreTests: XCTestCase {
         XCTAssertEqual(store().setup.apps["com.blocked"], BLOCK)
     }
 
+    /// A setup saved by a newer unbraid is never read in part, copied as ".bad" or written over; accounts are as usual.
+    /// Start Fresh keeps it as ".newer" and saves the default setup in its place.
+    func testASetupFromANewerBuildIsNeverSavedOverUntilStartFresh() async throws {
+        let vault = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        let newer = Data(#"{"version":99,"routes":[{"id":"main"}],"defaultRoute":"main","apps":{"mail":"BLOCK"},"sites":{"example.com":"BLOCK"},"opts":{}}"#.utf8)
+        XCTAssertTrue(vault.write("setup.bin", newer))
+        XCTAssertTrue(vault.write("accounts.bin", try JSONEncoder().encode(["mullvad": "A"])))
+        let original = try Data(contentsOf: dir.appending(path: "setup.bin"))
+        let s = store()
+        XCTAssertTrue(s.newerSetup)
+        XCTAssertTrue(s.setupStandIn)
+        XCTAssertFalse(s.isHeld)
+        XCTAssertEqual(s.setup.apps, [:])
+        XCTAssertEqual(s.accounts, ["mullvad": "A"])
+        XCTAssertFalse(exists("setup.bin.bad"))
+        s.update { $0.apps["com.other"] = DIRECT }
+        s.update { _ in }
+        let done = expectation(description: "refused")
+        s.confirmSetup { ok in XCTAssertFalse(ok); done.fulfill() }
+        await fulfillment(of: [done], timeout: 5)
+        await settle()
+        XCTAssertTrue(s.unsaved)
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "setup.bin")), original)
+        XCTAssertFalse(exists("setup.bin.bad"))
+        // Accounts are written as usual.
+        s.account("ivpn", "B")
+        await settle()
+        XCTAssertEqual(store().accounts, ["mullvad": "A", "ivpn": "B"])
+        XCTAssertTrue(store().newerSetup)
+        // Start Fresh: the newer file is kept beside, the default saved, and a relaunch reads it.
+        s.startFresh()
+        XCTAssertFalse(s.newerSetup)
+        await settle()
+        XCTAssertFalse(s.unsaved)
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "setup.bin.newer")), original)
+        let fresh = store()
+        XCTAssertFalse(fresh.newerSetup)
+        XCTAssertEqual(fresh.setup, Setup())
+        XCTAssertEqual(fresh.accounts, ["mullvad": "A", "ivpn": "B"])
+        // Sign Out of Everything takes the kept copy too: it can hold keys.
+        let forgotten = await fresh.forgetAll()
+        XCTAssertTrue(forgotten)
+        XCTAssertFalse(exists("setup.bin.newer"))
+    }
+
+    /// Held at launch (keychain locked), then found newer once the key answers: flagged, not copied, not replaced.
+    func testANewerSetupFoundAfterUnlockIsFlagged() async throws {
+        let vault = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        XCTAssertTrue(vault.write("setup.bin", Data(#"{"version":99,"routes":[],"defaultRoute":"DIRECT","apps":{}}"#.utf8)))
+        let original = try Data(contentsOf: dir.appending(path: "setup.bin"))
+        let real = key.withLock { $0 }
+        key.withLock { $0 = nil }
+        let locked = store()
+        XCTAssertTrue(locked.isHeld)
+        XCTAssertFalse(locked.newerSetup)
+        key.withLock { $0 = real }
+        locked.update { $0.apps["a"] = DIRECT }
+        await settle()
+        XCTAssertFalse(locked.isHeld)
+        XCTAssertTrue(locked.newerSetup)
+        XCTAssertTrue(locked.unsaved)
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "setup.bin")), original)
+        XCTAssertFalse(exists("setup.bin.bad"))
+    }
+
+    /// The current format, and a damaged file, load exactly as before: no flag, and a damaged one is kept as ".bad".
+    func testCurrentAndDamagedSetupsAreNotNewer() async throws {
+        let vault = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        var current = Setup(); current.sites = ["example.com": DIRECT]
+        XCTAssertTrue(vault.write("setup.bin", try JSONEncoder().encode(current)))
+        let s = store()
+        XCTAssertFalse(s.newerSetup)
+        XCTAssertEqual(s.setup.sites, ["example.com": DIRECT])
+        s.update { $0.apps["a"] = DIRECT }
+        await settle()
+        XCTAssertFalse(s.unsaved)
+        XCTAssertEqual(store().setup.apps["a"], DIRECT)
+        try Data("not sealed".utf8).write(to: dir.appending(path: "setup.bin"))
+        let damaged = store()
+        XCTAssertFalse(damaged.newerSetup)
+        XCTAssertTrue(exists("setup.bin.bad"))
+        damaged.update { $0.apps["b"] = DIRECT }
+        await settle()
+        XCTAssertFalse(damaged.unsaved)
+        XCTAssertEqual(store().setup.apps["b"], DIRECT)
+        // A version number that isn't one is no number: the file reads as it is.
+        XCTAssertTrue(vault.write("setup.bin", Data(#"{"version":"x","routes":[],"defaultRoute":"DIRECT","apps":{"c":"DIRECT"}}"#.utf8)))
+        XCTAssertFalse(store().newerSetup)
+    }
+
     /// A change made while held is reported unsaved, even if an earlier warning was dismissed.
     func testAChangeWhileHeldIsReportedEvenAfterADismissal() async throws {
         _ = await signedIn()

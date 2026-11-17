@@ -1,8 +1,12 @@
 import Foundation
 
-/// A newer edit supersedes an older one only where their targets overlap. Moves keep their remaining apps.
+/// A newer edit supersedes an older one only where their targets overlap. Moves keep their remaining apps or websites.
 nonisolated struct RouteEdits {
-    enum Target: Hashable, Sendable { case app(String), defaultRoute, location(String), profile }
+    enum Target: Hashable, Sendable {
+        case app(String), site(String), defaultRoute, location(String), profile
+        /// An app's or a website's route: what a move changes, one at a time.
+        var moved: Bool { switch self { case .app, .site: true; default: false } }
+    }
     struct Ticket: Hashable, Sendable { fileprivate var order: UInt64 }
     private var order: UInt64 = 0
     private var latest: [Target: UInt64] = [:]
@@ -15,8 +19,7 @@ nonisolated struct RouteEdits {
         for (old, current) in pending where !preserving.contains(old) && Self.overlap(current, targets) {
             let remaining = current.subtracting(targets)
             if moves.contains(old), !targets.contains(.profile),
-               current.intersection(targets).allSatisfy({ if case .app = $0 { return true }; return false }),
-               remaining.contains(where: { if case .app = $0 { return true }; return false }) {
+               current.intersection(targets).allSatisfy(\.moved), remaining.contains(where: \.moved) {
                 pending[old] = remaining
             } else { finish(old) }
         }
@@ -38,6 +41,10 @@ nonisolated struct RouteEdits {
     func remaining(_ change: AppMove.Assignments, in ticket: Ticket) -> AppMove.Assignments {
         let targets = targets(ticket)
         return change.filter { targets.contains(.app($0.key)) }
+    }
+    func remainingSites(_ change: SiteEdits.Assignments, in ticket: Ticket) -> SiteEdits.Assignments {
+        let targets = targets(ticket)
+        return change.filter { targets.contains(.site($0.key)) }
     }
 
     mutating func clearProfiles() {

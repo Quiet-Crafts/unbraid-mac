@@ -126,6 +126,8 @@ struct UnbraidCommands: Commands {
             // From any page of the window: the route picker belongs to the window, not to a page.
             Button("New Route…") { Presentation.shared.picker = PickerTarget(id: "") }.keyboardShortcut("n").disabled(goTo == nil)
             Button("Add App…") { actions?.addApp?() }.keyboardShortcut("n", modifiers: [.command, .shift]).disabled(actions?.addApp == nil)
+            // From any page of the window; a route's page starts it on that route.
+            Button("Add Website…") { Presentation.shared.addSite = .fromPage }.disabled(goTo == nil)
         }
         CommandGroup(after: .textEditing) {
             Button("Find") { actions?.find?() }.keyboardShortcut("f").disabled(actions?.find == nil)
@@ -133,6 +135,7 @@ struct UnbraidCommands: Commands {
         CommandGroup(after: .toolbar) {
             Section {
                 Button("All Apps") { goTo?(.apps(nil)) }.keyboardShortcut("1")
+                Button("Websites") { goTo?(.websites) }
                 Button("Traffic") { goTo?(.traffic) }.keyboardShortcut("2")
                 Button("Activity") { goTo?(.activity) }.keyboardShortcut("3")
                 Button("Speed Test") { goTo?(.speed) }.keyboardShortcut("4")

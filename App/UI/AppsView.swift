@@ -14,6 +14,9 @@ struct AppsView: View {
     /// The sort and the system-apps switch outlive the page, so leaving for Traffic and coming back keeps them.
     @Bindable private var filter = AppsFilter.shared
     @State private var selection = Set<String>()
+    /// The route's websites, listed under its apps, and their own selection and order.
+    @State private var siteSelection = Set<String>()
+    @State private var siteSort = AppsSort(terms: [.init(key: .name, ascending: true)])
     /// Bytes per app this week, from the statistics. Outlives the page, so coming back shows the numbers at once.
     private let week = WeekBytes.shared
     /// The week's bytes when the list was last sorted: rows keep their places while the numbers refresh underneath,
@@ -44,7 +47,11 @@ struct AppsView: View {
                 LiveStrip(route: id, color: s.color(id), week: week)
             }
             banners(s)
-            table(rows)
+            // With websites under them, the apps take only the room their rows need, so the two lists sit together.
+            let siteCount = route.map { SiteEdits.on($0, in: s).count } ?? 0
+            table(rows).frame(maxHeight: siteCount == 0 ? .infinity : max(SitesTable.height(rows.count), 300)).layoutPriority(1)
+            if let id = route { sites(id, s) }
+            if siteCount > 0 { Spacer(minLength: 0) }
         }
         // A route's page carries its colour: a soft light from the top, under the clear toolbar.
         .background(alignment: .top) { if let id = route, !reduceTransparency { RouteGlow(color: s.color(id)) } }
@@ -79,7 +86,7 @@ struct AppsView: View {
         .onAppear { ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK) }
         .onDisappear { ExitCheck.shared.watch(exitWatch, visible: false) }
         .onChange(of: route) {
-            selection = []; query = ""
+            selection = []; siteSelection = []; query = ""
             ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK)
         }
         // Only what is on screen stays selected, so Move To never acts on apps the search or a move has hidden.
@@ -114,7 +121,11 @@ struct AppsView: View {
 
     @ViewBuilder private func header(_ s: Setup) -> some View {
         if let id = route {
-            PageHeader(title: s.label(id), subtitle: about(id, s), slash: s.color(id))
+            // With websites on it, the line says how many of each: first on Direct and Blocked, whose line is a sentence.
+            let sites = SiteEdits.on(id, in: s).count
+            let count = sites == 0 ? nil : Snapshot.count(apps: model.apps.count(on: id), sites: sites)
+            let parts = id == DIRECT || id == BLOCK ? [count, about(id, s)] : [about(id, s), count]
+            PageHeader(title: s.label(id), subtitle: parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), slash: s.color(id))
         } else {
             let custom = s.apps.keys.filter { model.apps.app($0) != nil }.count
             PageHeader(title: "All Apps", subtitle: "\(model.apps.listed.count) apps · " + (custom == 0 ? "all on the default route" : "\(custom) with their own route"))
@@ -159,6 +170,20 @@ struct AppsView: View {
             }
             .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, Layout.gutter)
             .padding(.bottom, s.allAppsUseDefault || s.home.tailscale || s.home.wg != nil ? 12 : 0)
+        }
+    }
+
+    /// The route's websites under its apps, only when it has any: the same rows as the Websites page.
+    @ViewBuilder private func sites(_ id: String, _ s: Setup) -> some View {
+        let rows = SitesTable.rows(s, route: id, sort: siteSort)
+        if !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Websites").overline().padding(.horizontal, Layout.gutter).accessibilityAddTraits(.isHeader)
+                SitesTable(rows: rows, selection: $siteSelection, sort: $siteSort)
+                    .frame(height: SitesTable.height(min(rows.count, 4)))
+            }
+            .padding(.top, 10)
+            .onChange(of: rows.map(\.id)) { siteSelection.formIntersection(rows.map(\.id)) }
         }
     }
 
@@ -373,7 +398,7 @@ private struct LiveStrip: View {
     var body: some View {
         if model.vpn.state.phase == .on && model.setup.prefs.stats {
             let series = route == DIRECT ? Stats.shared.live.direct : Stats.shared.live.down[route] ?? []
-            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route)
+            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route), sites = SiteEdits.on(route, in: model.setup).count
             let now = Units.rate(Double(series.last ?? 0))
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
@@ -385,7 +410,7 @@ private struct LiveStrip: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("This week").overline()
                     Figure(value: Units.bytes(week), unit: "").lineLimit(1)
-                    Text("\(apps) app\(apps == 1 ? "" : "s")").font(.system(size: 12)).foregroundStyle(Ink.dim)
+                    Text(Snapshot.count(apps: apps, sites: sites)).font(.system(size: 12)).foregroundStyle(Ink.dim)
                 }
             }
             .monospacedDigit().padding(.horizontal, Layout.inset).padding(.vertical, 14)

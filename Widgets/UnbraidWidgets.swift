@@ -126,15 +126,16 @@ struct WidgetView: View {
         Label(title, systemImage: symbol).font(.caption.weight(.semibold)).frame(maxWidth: .infinity)
     }
 
-    /// The default route first (Direct when that is the default), then the others with apps, then Direct and Blocked
-    /// when they hold any: five rows at most.
+    /// The default route first (Direct when that is the default), then the others with apps or websites, then Direct
+    /// and Blocked when they hold any: five rows at most.
     private var routes: some View {
-        let def = s.routes.filter(\.isDefault), other = s.routes.filter { !$0.isDefault && $0.apps > 0 }
+        let def = s.routes.filter(\.isDefault), other = s.routes.filter { !$0.isDefault && $0.apps + ($0.sites ?? 0) > 0 }
         let directDefault = s.defaultRoute == "direct"
+        let direct = (s.direct, s.directSites ?? 0), blocked = (s.blocked, s.blockedSites ?? 0)
         var rows: [(id: String, name: String, color: Color, note: String)] = directDefault ? [("direct", "Direct", Palette.direct, "Default")] : []
-        rows += (def + other).map { ($0.id, $0.name, Palette.mark($0.hue), $0.isDefault ? "Default" : count($0.apps)) }
-        if s.direct > 0, !directDefault { rows.append(("direct", "Direct", Palette.direct, count(s.direct))) }
-        if s.blocked > 0 { rows.append(("block", "Blocked", Palette.block, count(s.blocked))) }
+        rows += (def + other).map { ($0.id, $0.name, Palette.mark($0.hue), $0.isDefault ? "Default" : Snapshot.count(apps: $0.apps, sites: $0.sites ?? 0)) }
+        if direct.0 + direct.1 > 0, !directDefault { rows.append(("direct", "Direct", Palette.direct, Snapshot.count(apps: direct.0, sites: direct.1))) }
+        if blocked.0 + blocked.1 > 0 { rows.append(("block", "Blocked", Palette.block, Snapshot.count(apps: blocked.0, sites: blocked.1))) }
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(rows.prefix(5), id: \.id) { r in
                 HStack(spacing: 8) {
@@ -150,7 +151,6 @@ struct WidgetView: View {
         .frame(maxWidth: .infinity)
     }
 
-    private func count(_ n: Int) -> String { "\(n) app\(n == 1 ? "" : "s")" }
 
     @ViewBuilder private var week: some View {
         // Only what the bars draw: the active VPN routes (never Direct, home or a route since removed).

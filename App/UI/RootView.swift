@@ -5,12 +5,28 @@ import SwiftUI
 enum Page: Hashable {
     /// nil = all apps; else a route id, DIRECT or BLOCK.
     case apps(String?)
+    /// Websites with a route of their own.
+    case websites
     case traffic, activity, speed
 }
 
 /// Opens the location picker for a target: "" = new route, a route id = change it, "app:<key>" = new route for an app.
 struct PickerTarget: Identifiable, Hashable {
     var id: String
+}
+
+/// Opens Add Website: `route` is the page's route it starts on (nil: not opened from a route's page).
+struct SiteTarget: Identifiable {
+    let id = UUID()
+    var route: String?
+    /// What the address field starts with (the test copy's pictures).
+    var address = ""
+
+    /// From the page on show: a route's page preselects its route.
+    static var fromPage: SiteTarget {
+        if case .apps(let id?) = Presentation.shared.page { return SiteTarget(route: id) }
+        return SiteTarget()
+    }
 }
 
 /// Shared by the main window and the menu bar scene, including when the window is closed.
@@ -24,6 +40,7 @@ struct PickerTarget: Identifiable, Hashable {
     var renaming: String?
     /// The route about to be removed: its apps go back to the default and it can't be brought back, so it is confirmed first.
     var removing: String?
+    var addSite: SiteTarget?
     /// The first app was just blocked: ask whether Block covers the home network too.
     var blockScope = false
     var settingsTab: Int?
@@ -31,7 +48,7 @@ struct PickerTarget: Identifiable, Hashable {
     func startTour() { page = .apps(nil); tourStep = 0; AppDelegate.openMain() }
     func nextTour() {
         guard let step = tourStep else { return }
-        if step == 4 { tourStep = nil; return }
+        if step == TourCard.titles.count - 1 { tourStep = nil; return }
         if step == 1 { page = .apps(nil) }
         tourStep = step + 1
     }
@@ -53,25 +70,27 @@ extension View {
     }
 }
 
-private struct TourCard: View {
+struct TourCard: View {
     let step: Int
-    private let titles = ["Your routes", "Connect, pause, stop", "Choose per app", "Speed Test", "Settings"]
+    static let titles = ["Your routes", "Connect, pause, stop", "Choose per app", "Websites", "Speed Test", "Settings"]
     private let bodies = [
         "Every app uses the default route unless you give it another. Add a route to send apps another way, such as through a VPN location.",
         "Connect here. Once connected, you can pause or disconnect.",
         "Choose a route for each app in the Route column. Direct skips the VPN.",
+        "Give a website its own route too. It applies whatever app opens it, and comes before the app's route.",
         "Test the speed of a route. M-Lab publishes speed test results.",
         "Add connections and change protection here. Show this tour again from Help."
     ]
     var body: some View {
+        let last = Self.titles.count - 1
         VStack(alignment: .leading, spacing: 12) {
-            Text("\(step + 1) / 5").font(.caption).foregroundStyle(.secondary)
-            Text(titles[step]).font(.headline).accessibilityAddTraits(.isHeader)
+            Text("\(step + 1) / \(Self.titles.count)").font(.caption).foregroundStyle(.secondary)
+            Text(Self.titles[step]).font(.headline).accessibilityAddTraits(.isHeader)
             Text(bodies[step])
             HStack {
                 Button("Close") { Presentation.shared.tourStep = nil }
                 Spacer()
-                Button(step == 4 ? "Done" : "Next") { Presentation.shared.nextTour() }.keyboardShortcut(.defaultAction)
+                Button(step == last ? "Done" : "Next") { Presentation.shared.nextTour() }.keyboardShortcut(.defaultAction)
             }
         }.padding(Layout.inset).frame(width: 300)
     }
@@ -88,11 +107,12 @@ struct RootView: View {
     /// The picker's target while "Add a Provider" is open, so the picker comes back for it afterwards.
     @State private var resumePicker: String?
     @State private var newName = ""
+    @Environment(\.undoManager) private var undo
 
     /// Another sheet or question is up.
     private var busy: Bool {
         model.disclosure || presentation.blockScope || presentation.renaming != nil || presentation.removing != nil
-            || presentation.picker != nil || adding || addAfterPicker
+            || presentation.picker != nil || presentation.addSite != nil || adding || addAfterPicker
     }
 
     /// The update question waits while another question, sheet or the tour (or its offer) is up.
@@ -164,8 +184,10 @@ struct RootView: View {
             let s = model.setup
             let after = presentation.removing == s.defaultRoute ? s.label(s.routes.first { $0.id != presentation.removing }?.id ?? DIRECT) : s.label(s.defaultRoute)
             let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(after))."
-            Text(apps + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
+            let sites = SiteEdits.losing(presentation.removing.map { SiteEdits.on($0, in: s).count } ?? 0).map { " " + $0 } ?? ""
+            Text(apps + sites + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
         }
+        .sheet(item: $presentation.addSite) { target in AddWebsiteSheet(target: target, undo: undo) }
         .sheet(item: $presentation.picker, onDismiss: {
             if addAfterPicker { addAfterPicker = false; adding = true }
         }) { item in
@@ -195,6 +217,7 @@ struct RootView: View {
             case "traffic", "overview", "flows": presentation.page = .traffic
             case "activity": presentation.page = .activity
             case "speed": presentation.page = .speed
+            case "websites": presentation.page = .websites
             case "route": presentation.page = .apps(model.setup.routes.first { $0.id != model.setup.defaultRoute }?.id ?? model.setup.defaultRoute)
             case let s? where s.hasPrefix("route:"): presentation.page = .apps(String(s.dropFirst(6)))
             default: presentation.page = .apps(nil)
@@ -211,6 +234,7 @@ private struct DetailPage: View {
     var body: some View {
         switch Presentation.shared.page ?? .apps(nil) {
         case .apps(let route): AppsView(route: route)
+        case .websites: WebsitesView()
         case .traffic: TrafficView()
         case .activity: ActivityView()
         case .speed: SpeedTestView()
@@ -256,14 +280,18 @@ private struct Sidebar: View {
         List(selection: Binding(get: { presentation.page }, set: { if let page = $0 { presentation.page = page } })) {
             Label { Text("All Apps") } icon: { Image(systemName: "square.grid.2x2").foregroundStyle(Ink.accentText) }
                 .badge(model.apps.listed.count).tag(Page.apps(nil))
+            Label { Text("Websites") } icon: { Image(systemName: "globe").foregroundStyle(Ink.accentText) }
+                .badge(s.sites.count).tag(Page.websites).tourAnchor(3)
             Section {
                 ForEach(s.sidebarRoutes, id: \.self) { id in
                     RouteSidebarRow(id: id).tag(Page.apps(id))
                         .dropDestination(for: String.self) { items, _ in
-                            // Only app keys: text dragged in from elsewhere is not an app.
+                            // Only app keys and websites' rows: text dragged in from elsewhere is neither.
                             let apps = items.filter { model.apps.app($0) != nil }
-                            model.move(apps, to: id, undo: undo)
-                            return !apps.isEmpty
+                            let sites = items.compactMap(SitesRow.site).filter { model.setup.sites[$0] != nil }
+                            if !apps.isEmpty { model.move(apps, to: id, undo: undo) }
+                            if !sites.isEmpty { model.moveSites(sites, to: id, undo: undo) }
+                            return !apps.isEmpty || !sites.isEmpty
                         }
                         .contextMenu { RouteActions(id: id) }
                 }
@@ -278,7 +306,7 @@ private struct Sidebar: View {
             Section("Insights") {
                 Label { Text("Traffic") } icon: { Image(systemName: "chart.bar.xaxis").foregroundStyle(Ink.accentText) }.tag(Page.traffic)
                 Label { Text("Activity") } icon: { Image(systemName: "calendar").foregroundStyle(Ink.accentText) }.tag(Page.activity)
-                Label { Text("Speed Test") } icon: { Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(Ink.accentText) }.tag(Page.speed).tourAnchor(3)
+                Label { Text("Speed Test") } icon: { Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(Ink.accentText) }.tag(Page.speed).tourAnchor(4)
             }
         }
         // The wordmark heads the sidebar; the connection sits at its foot, the same on every page.
@@ -290,13 +318,15 @@ private struct Sidebar: View {
     }
 }
 
-/// A route in the sidebar: its slash and name, "Default" for the default, and how many apps leave through it.
+/// A route in the sidebar: its slash and name, "Default" for the default, and how many apps leave through it ("5 · 2"
+/// with the websites that have it as their own).
 private struct RouteSidebarRow: View {
     private let model = AppModel.shared
     let id: String
 
     var body: some View {
         let s = model.setup
+        let apps = model.apps.count(on: id), sites = SiteEdits.on(id, in: s).count
         Label {
             HStack(spacing: 8) {
                 Text(s.label(id)).lineLimit(1).layoutPriority(1)
@@ -310,9 +340,10 @@ private struct RouteSidebarRow: View {
                 }
             }
         } icon: { Slash(color: s.color(id)).frame(width: Measure.slashColumn) }
-        .badge(model.apps.count(on: id))
-        .help(s.route(id).map { place($0, model.vpn.state.servers) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
-        .accessibilityLabel(id == s.defaultRoute ? "\(s.label(id)), default route" : s.label(id))
+        .badge(sites == 0 ? Text("\(apps)") : Text("\(apps) · \(sites)"))
+        .help((s.route(id).map { place($0, model.vpn.state.servers) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
+              + (sites == 0 ? "" : " · " + Snapshot.count(apps: apps, sites: sites)))
+        .accessibilityLabel((id == s.defaultRoute ? "\(s.label(id)), default route" : s.label(id)) + (sites == 0 ? "" : ", " + Snapshot.count(apps: apps, sites: sites)))
     }
 }
 
@@ -386,10 +417,14 @@ private struct Attention: View {
 
     var body: some View {
         TimelineView(.periodic(from: .now, by: 5)) { context in
-            let error = model.vpn.state.error, unsaved = model.store.unsaved && !model.store.unsavedDismissed
+            let newer = model.store.newerSetup
+            // The newer-settings row says it all: not said twice by a refused Connect.
+            let error = model.vpn.state.error.flatMap { newer && $0 == Connection.newer ? nil : $0 }
+            let unsaved = model.store.unsaved && !model.store.unsavedDismissed
             let names = keySetupNames(now: context.date)
-            if model.notice != nil || error != nil || unsaved || !model.vpn.state.blocked.isEmpty || model.switchingProfile != nil || model.refusedProfile != nil || !names.isEmpty {
+            if newer || model.notice != nil || error != nil || unsaved || !model.vpn.state.blocked.isEmpty || model.switchingProfile != nil || model.refusedProfile != nil || !names.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
+                    if newer { NewerSetupRow().contentButton() }
                     if let name = model.switchingProfile { Text("Switching to \(name) · apps reconnect for a moment") }
                     if let name = model.refusedProfile {
                         HStack { Text("Couldn't switch to \(name). \(model.setup.profile ?? "Your previous setup") is still in use."); Button("Try Again") { model.switchProfile(name) }.contentButton() }
@@ -494,7 +529,7 @@ private struct SettingsToolbarItem: ToolbarContent {
             SettingsLink {
                 Label { Text("Settings") } icon: { Image(systemName: "gearshape.fill").foregroundStyle(Ink.accentText) }
             }
-            .help("Settings (⌘,)").tourAnchor(4)
+            .help("Settings (⌘,)").tourAnchor(5)
         }
     }
 }

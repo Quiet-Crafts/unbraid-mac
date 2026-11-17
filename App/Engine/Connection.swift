@@ -442,8 +442,8 @@ final class Connection {
         // What shows is a stand-in until the keychain opens the real setup: never connected (nor sealed) with it. Refused
         // before anything is overtaken (a takeover waiting for the keychain carries on); a timed resume tries again.
         store.reloadHeld()
-        if store.isHeld {
-            state.error = Self.locked
+        if store.setupStandIn {
+            state.error = store.newerSetup ? Self.newer : Self.locked
             if store.pause != nil, resume == nil { armResume(retry: true) }
             return
         }
@@ -878,7 +878,7 @@ final class Connection {
                 // Stand-ins for a setup the keychain wouldn't open yet would drop the blocked apps: the pause stays as it is,
                 // and is looked at again every 30 s until the keychain opens (nothing else changes while it is held).
                 store.reloadHeld()
-                guard !store.isHeld else { return wakeWhenHeld(g) { await self.reconcilePause(launch: launch) } }
+                guard !store.setupStandIn else { return wakeWhenHeld(g) { await self.reconcilePause(launch: launch) } }
                 cancelHeldWake()
                 let input = makePausedInput(), key = PauseKey(input, search: search(input))
                 let previous = state
@@ -895,7 +895,7 @@ final class Connection {
                     try Task.checkCancellation()
                     guard g == generation, state.phase == .paused, launch || !store.extensionWipePending else { return }
                     store.reloadHeld()
-                    guard !store.isHeld else { return wakeWhenHeld(g) { await self.reconcilePause(launch: launch) } }
+                    guard !store.setupStandIn else { return wakeWhenHeld(g) { await self.reconcilePause(launch: launch) } }
                     // Changed meanwhile: the reconciliation that change started decides.
                     guard pauseKey() == key, tunnel.status == .connected else { return }
                     pauseAskAt = runs == nil ? .now + Self.probe : nil
@@ -1066,7 +1066,7 @@ final class Connection {
     private func sealPause(_ g: Int, arm: Bool) async {
         let request = eraseRequest
         func still() -> Bool {
-            g == generation && request == eraseRequest && store.pause != nil && !store.extensionWipePending && !store.isHeld
+            g == generation && request == eraseRequest && store.pause != nil && !store.extensionWipePending && !store.setupStandIn
                 && tunnel.status == .connected
         }
         func notSealed(_ why: String, retry key: SealKey? = nil, after: Duration? = nil) {
@@ -1458,6 +1458,7 @@ final class Connection {
     private func revokes() -> Bool { Lifecycle.revokes(running: running, linked: Set(links.keys), applied: committed?.accounts, accounts: store.accounts) }
     private static let signedOut = "An account in use was signed out. Sign in again."
     private static let locked = "unbraid can't read its keychain right now, so it can't use your setup yet. Unlock the keychain, then try again."
+    static let newer = "These settings were saved by a newer unbraid. Update unbraid to use them, or start fresh."
 
     /// Reconciliation again once a failed change is due.
     private func wakeAfter(_ wait: Duration) {
@@ -2129,7 +2130,7 @@ final class Connection {
             guard var input = old else { throw Fail("No previous configuration") }
             // A deny-all put back is built from the setup as it is now: an app moved from Direct to a VPN route since the
             // last one is blocked too. From what ran only while the keychain won't open the setup.
-            if blocking { return try await block(store.isHeld ? input : makeInput(store.setup, [:], probe: nil), failure, request, g) }
+            if blocking { return try await block(store.setupStandIn ? input : makeInput(store.setup, [:], probe: nil), failure, request, g) }
             if !input.setup.testing.isEmpty {
                 input.setup.testing = []
                 let active = Set(input.setup.activeRoutes.map(\.id))
@@ -2163,7 +2164,7 @@ final class Connection {
             // Another user's engine runs now: nothing of this user's to block, nor to stop. Built from the setup as it is
             // now (which apps go direct), never from stand-ins for one the keychain won't open. A deny-all that failed to
             // go back was built the same way: not tried twice.
-            if !blocking, !TunnelControl.foreign(error), !store.isHeld {
+            if !blocking, !TunnelControl.foreign(error), !store.setupStandIn {
                 do { return try await block(makeInput(store.setup, [:], probe: nil), failure, request, g) } catch {
                     guard g == generation else { return .off }
                     reason = message(error, "Could not block VPN apps")
@@ -2210,9 +2211,9 @@ final class Connection {
     /// other failure is recovered from as a failed change is (a deny-all again, or the tunnel stops). Inside `exclusive`.
     private func reblock(_ old: Committed, _ error: Error, _ g: Int) async -> Recovered? {
         let input = makeInput(store.setup, [:], probe: nil)
-        let fresh = old.blocking && !store.isHeld
+        let fresh = old.blocking && !store.setupStandIn
             ? (try? Compiler.denyAll(input)).map { (json: $0, search: search(Compiler.denyAllInput(input))) } : nil
-        guard Lifecycle.reblock(blocking: old.blocking, held: store.isHeld, running: (old.json, old.search), fresh: fresh) else { return nil }
+        guard Lifecycle.reblock(blocking: old.blocking, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh) else { return nil }
         do { return try await block(input, message(error, "Change not applied"), eraseRequest, g) }
         catch is CancellationError { return nil }
         catch let e where e is TunnelControl.Unstaged || TunnelControl.foreign(e) {
@@ -2995,7 +2996,7 @@ final class Connection {
         // An update whose recovery ended (`ReplacedReady`: a tunnel after it came up and stopped, or the new extension runs
         // one): stopped, however this is asked (at once, put off, or once the keychain opens).
         let stopped = recorded || replaced && replacedReady.ended(r)
-        switch Lifecycle.ready(replaced: replaced, read: kind, held: store.isHeld, provenance: record.map(provenance), stopped: stopped) {
+        switch Lifecycle.ready(replaced: replaced, read: kind, held: store.setupStandIn, provenance: record.map(provenance), stopped: stopped) {
         case .wake:
             // Whether Connect on Demand has anything to start needs no keychain: not left on with nothing meanwhile (and
             // said, since the reseal check that would have said so needs it on).
@@ -3025,7 +3026,7 @@ final class Connection {
         resealChecked = true
         // Connect on Demand is the Mac's, not this user's: another user may have left it on.
         let said: String?
-        switch Lifecycle.reseal(engine: engine, ready: !store.isHeld, provenance: record.map(provenance), sealedBy: sealedBy, previous: previous,
+        switch Lifecycle.reseal(engine: engine, ready: !store.setupStandIn, provenance: record.map(provenance), sealedBy: sealedBy, previous: previous,
                                 build: Running.build, wanted: store.setup.prefs.alwaysOn, stopped: stopped) {
         case .none: said = nil
         case .connect: return await connect()
@@ -3172,7 +3173,7 @@ final class Connection {
         store.reloadHeld()
         let read = await Running.read()
         guard g == generation else { return }
-        var locked = store.isHeld, record: Running.State?
+        var locked = store.setupStandIn, record: Running.State?
         switch read {
         case .locked: locked = true
         case .none: break
@@ -3277,7 +3278,7 @@ final class Connection {
             // extension confirms the exact user engine recorded at the switch and its accounts are still vouched for.
             if error is Refused, let pending = store.setup.pendingSwitch, let previous = pending.previous,
                let engine, pending.confirmsPrevious(engine: engine.running, foreign: engine.foreign, fallback: engine.fallbackRunning,
-                    trusted: provenance(record) == .same && unvouched(record) == nil && !store.isHeld) {
+                    trusted: provenance(record) == .same && unvouched(record) == nil && !store.setupStandIn) {
                 var ran = store.setup
                 ran.profile = previous.name.isEmpty ? nil : previous.name
                 ran.defaultRoute = previous.defaultRoute
@@ -3375,7 +3376,7 @@ final class Connection {
         }
         store.reloadHeld()
         guard adopting else { return false }
-        guard !store.isHeld else { return later() }
+        guard !store.setupStandIn else { return later() }
         let read = await Running.read()
         var record: Running.State?
         switch read {
@@ -3384,7 +3385,7 @@ final class Connection {
         case .record(let r): record = r
         }
         guard adopting, g == generation else { return false }
-        guard !store.isHeld else { return later() }
+        guard !store.setupStandIn else { return later() }
         guard revocation(record) != nil else { return false }
         // Only once the extension says the engine is this user's: its ownership check gives up after seconds, and another
         // user's tunnel is never stopped from here. Until it answers, the takeover keeps waiting and this is asked again,
@@ -3396,7 +3397,7 @@ final class Connection {
         // The deny-all a failed change left running holds no account: nothing to revoke while it runs.
         let blocker = engine?.running == nil ? nil : await Running.blocker()
         guard g == generation, adopting else { return false }
-        switch Lifecycle.adoptedRevocation(engine: engine, held: store.isHeld, blocker: blocker, revocation: revocation(record)) {
+        switch Lifecycle.adoptedRevocation(engine: engine, held: store.setupStandIn, blocker: blocker, revocation: revocation(record)) {
         case .wait: return false
         case .probe: return later()
         case .leave:
