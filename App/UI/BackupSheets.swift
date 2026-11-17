@@ -388,7 +388,7 @@ private struct RestoreSheet: View {
                     Text("In this backup").overline()
                     Text(Backup.inBackup(content.summary)).fixedSize(horizontal: false, vertical: true)
                     Text("It replaces").overline().padding(.top, 4)
-                    Text(Backup.replaces(plan.replaces)).fixedSize(horizontal: false, vertical: true)
+                    Text(Backup.replaces(plan.replaces, keptAs: plan.keptAs)).fixedSize(horizontal: false, vertical: true)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -402,7 +402,8 @@ private struct RestoreSheet: View {
                     SwitchCard(title: BackupTexts.weakTitle, caption: BackupTexts.weakCaption(plan.weak), isOn: $weakAccepted)
                 }
                 if !notes.isEmpty {
-                    Label { Text(notes.joined(separator: " ")).fixedSize(horizontal: false, vertical: true) } icon: {
+                    // One line each: a restore can have several things to say, and a paragraph of them reads as one.
+                    Label { Text(notes.joined(separator: "\n")).fixedSize(horizontal: false, vertical: true) } icon: {
                         Image(systemName: "info.circle").foregroundStyle(Ink.warningText)
                     }
                     .font(.system(size: 12)).foregroundStyle(Ink.dim)

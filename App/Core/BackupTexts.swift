@@ -96,8 +96,12 @@ nonisolated enum BackupTexts {
     }
 
     /// The switch Restore waits for when the backup holds a server the import would warn about (`Plan.weak`).
-    static let weakTitle = "Restore servers with weak security"
-    static func weakCaption(_ weak: [String]) -> String { weak.map { "Weak security in \($0)" }.joined(separator: "\n") }
+    /// An acceptance, not a choice: these servers come with the backup either way, and Restore waits until it is on.
+    static let weakTitle = "Accept weak security to restore"
+    static func weakCaption(_ weak: [String]) -> String {
+        (weak + ["Someone between you and \(weak.count == 1 ? "this server" : "these servers") may be able to read or change the traffic. Restore waits until you accept it."])
+            .joined(separator: "\n")
+    }
 
     /// The keep switch's title, with the name the plan would give the kept profile.
     static func keepTitle(_ name: String?) -> String { "Keep my current setup as the profile \"\(name ?? Backup.previous)\"" }

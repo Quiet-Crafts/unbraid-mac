@@ -340,7 +340,7 @@ nonisolated enum Backup {
         var weakens: [String] = []
         /// This Mac's Home WireGuard tunnel goes, and the backup has none to put in its place.
         var dropsHome = false
-        /// Own servers whose security is weak, as an import warns before taking them ("name: why"); this Mac's own
+        /// Own servers whose security is weak, as an import warns before taking them ("name: what is weak"); this Mac's own
         /// servers with the very same config were accepted here already and aren't listed. Restore waits for the
         /// user to accept them, as the import does.
         var weak: [String] = []
@@ -378,72 +378,104 @@ nonisolated enum Backup {
         let sites = current.sites.filter { vpn($0.value) && next.sites[$0.key] == DIRECT }.count
         let direct = [count(apps, "app"), count(sites, "website")].filter { !$0.hasPrefix("0 ") }
         if !direct.isEmpty { out.append("\(list(direct)) \(apps + sites == 1 ? "goes" : "go") from a VPN route to Direct.") }
+        out += blockingLost(current, next)
         let blocked = current.apps.filter { $0.value == BLOCK && next.apps[$0.key] != BLOCK }.count
         if blocked > 0 { out.append(blocked == 1 ? "1 app that is blocked now won't be." : "\(blocked) apps that are blocked now won't be.") }
-        let unblocked = current.sites.filter { $0.value == BLOCK && next.sites[$0.key] != BLOCK }.count
+        // By what each name gets: a website under one blocked here, with a route of its own in the backup, opens that
+        // part of the block (the most specific website wins).
+        func site(_ name: String, _ sites: [String: String]) -> String? { sites.filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
+        let unblocked = Set(current.sites.filter { $0.value == BLOCK && site($0.key, next.sites) != BLOCK }.map(\.key)
+                            + next.sites.filter { $0.value != BLOCK && site($0.key, current.sites) == BLOCK }.map(\.key)).count
         if unblocked > 0 { out.append(unblocked == 1 ? "1 website that is blocked now won't be." : "\(unblocked) websites that are blocked now won't be.") }
         return out
     }
 
-    /// An own server, a route of its own or the Home WireGuard tunnel that keeps its name here but connects somewhere
-    /// else, or sets other DNS servers: a familiar name is no sign that the traffic goes where it went. Hosts only,
-    /// never a key.
+    /// An own server, a route through one or the Home WireGuard tunnel that keeps its id or name here but connects to
+    /// another host, port or server key, or sets other DNS servers: a familiar name is no sign that the traffic goes
+    /// where it went. Each is named with its host only, never a key; a sentence said for a server isn't said again for
+    /// its route.
     private static func exitChanges(_ current: Setup, _ next: Setup) -> [String] {
-        let was = exits(current), now = exits(next)
+        let was = exits(current)
         var out: [String] = []
-        for (name, n) in now.sorted(by: { $0.key < $1.key }) {
-            guard let c = was[name] else { continue }
-            let who = name == homeKey ? "The Home WireGuard tunnel" : "\"\(name)\""
-            if let h = n.host, let o = c.host, h.lowercased() != o.lowercased() { out.append("\(who) connects to \(h) instead of \(o).") }
-            if n.dns != c.dns { out.append(n.dns.isEmpty ? "\(who) no longer sets its own DNS servers." : "\(who) uses other DNS servers: \(n.dns.joined(separator: ", ")).") }
+        for n in exits(next) {
+            guard let c = was.first(where: { $0.key == n.key }) ?? was.first(where: { $0.name == n.name }) else { continue }
+            let who = n.key == homeKey ? "The Home WireGuard tunnel" : "\"\(n.name)\""
+            var said: [String] = []
+            if let h = n.host, let o = c.host, h.lowercased() != o.lowercased() { said.append("\(who) connects to \(h) instead of \(o).") }
+            else if n.host != nil, n.port != c.port || n.peer != c.peer { said.append("\(who) connects to another server at \(n.host ?? "").") }
+            if n.dns != c.dns { said.append(n.dns.isEmpty ? "\(who) no longer sets its own DNS servers." : "\(who) uses other DNS servers: \(n.dns.joined(separator: ", ")).") }
+            for line in said where !out.contains(line) { out.append(line) }
         }
         return out
     }
 
     private static let homeKey = "\u{0}home"
 
-    /// Where each exit of `s` that the user set up connects (its host) and the DNS servers it sets, by name.
-    private static func exits(_ s: Setup) -> [String: (host: String?, dns: [String])] {
-        func host(_ wg: WgPeer?, _ ovpn: OvpnProfile?, _ ss: SsProfile?) -> String? {
-            if let e = wg?.endpoint, let colon = e.lastIndex(of: ":") { return String(e[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]")) }
-            if let ss { return ss.server }
-            for line in (ovpn?.config ?? "").split(whereSeparator: \.isNewline) {
-                let words = line.split(whereSeparator: \.isWhitespace)
-                if words.count > 1, words[0] == "remote" { return String(words[1]) }
+    /// One exit the user set up: what it is (`key`: a server's or route's id), its name, where it connects (host and port,
+    /// and a WireGuard server's public key) and the DNS servers it sets.
+    private struct Exit { var key: String, name: String, host: String?, port: String?, peer: String?, dns: [String] }
+
+    /// Every own server, every route through one (it runs its own copy of the config) and the Home WireGuard tunnel.
+    private static func exits(_ s: Setup) -> [Exit] {
+        func exit(_ key: String, _ name: String, _ wg: WgPeer?, _ ovpn: OvpnProfile?, _ ss: SsProfile?) -> Exit {
+            var host: String?, port: String?
+            if let e = wg?.endpoint, let colon = e.lastIndex(of: ":") {
+                (host, port) = (String(e[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]")), String(e[e.index(after: colon)...]))
+            } else if let ss { (host, port) = (ss.server, String(ss.port)) }
+            else {
+                for line in (ovpn?.config ?? "").split(whereSeparator: \.isNewline) {
+                    let words = line.split(whereSeparator: \.isWhitespace)
+                    if words.count > 1, words[0] == "remote" { (host, port) = (String(words[1]), words.count > 2 ? String(words[2]) : nil); break }
+                }
             }
-            return nil
+            return Exit(key: key, name: name, host: host.map { String($0.prefix(80)) }, port: port, peer: wg?.publicKey, dns: wg?.dns ?? [])
         }
-        var out: [String: (host: String?, dns: [String])] = [:]
-        func add(_ name: String, _ wg: WgPeer?, _ ovpn: OvpnProfile?, _ ss: SsProfile?) {
-            if out[name] == nil { out[name] = (host(wg, ovpn, ss).map { String($0.prefix(80)) }, wg?.dns ?? []) }
+        return s.servers.map { exit("s:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
+            + s.routes.filter { $0.imported && $0.tsExit == nil }.map { exit("r:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
+            + (s.home.wg.map { [exit(homeKey, "", $0, nil, nil)] } ?? [])
+    }
+
+    /// The default route, apps and websites that keep a VPN route but lose the provider's own blocking they get now:
+    /// each read in its own setup, as the engine would run it (`Setup.protects`). Those moved to Direct or Block are said
+    /// elsewhere.
+    private static func blockingLost(_ current: Setup, _ next: Setup) -> [String] {
+        let vpn = { (s: Setup, id: String) in id != DIRECT && id != BLOCK && s.route(id) != nil }
+        func lost(_ was: String, _ now: String) -> Bool {
+            vpn(current, was) && vpn(next, now) && current.route(was).map(current.protects) == true && next.route(now).map(next.protects) != true
         }
-        for sv in s.servers { add(sv.name, sv.wg, sv.ovpn, sv.ss) }
-        for r in s.routes where r.imported && r.tsExit == nil && r.own == nil { add(r.name, r.wg, r.ovpn, r.ss) }
-        if let w = s.home.wg { add(homeKey, w, nil, nil) }
-        return out
+        let apps = Set(current.apps.keys).union(next.apps.keys).filter { lost(current.routeOf($0), next.routeOf($0)) }.count
+        let sites = current.sites.filter { site in next.sites[site.key].map { lost(site.value, $0) } == true }.count
+        let parts = (lost(current.defaultRoute, next.defaultRoute) ? ["The default route"] : []) + [count(apps, "app"), count(sites, "website")].filter { !$0.hasPrefix("0 ") }
+        guard !parts.isEmpty else { return [] }
+        let one = parts.count == 1 && (parts[0].hasPrefix("The") || parts[0].hasPrefix("1 "))
+        return ["\(list(parts)) \(one ? "loses the provider's ad and tracker blocking it has" : "lose the provider's ad and tracker blocking they have") now."]
     }
 
     /// The provider settings that block or choose more carefully, turned off for a provider `next` has routes on; the
-    /// block list a backup never holds, gone back to the standard one; and routes whose own blocking choice turns it off.
+    /// block list a backup never holds, gone back to the standard one; and routes whose own blocking choice turns it
+    /// off. Blocking settings count only where a route of that provider blocks now.
     private static func providerWeakens(_ current: Setup, _ next: Setup) -> [String] {
-        var out: [String] = [], said: Set<String> = []
+        let blocks = ["protect": "ads and trackers", "adult": "adult sites", "gambling": "gambling sites", "social": "social media", "hardcore": "Google and Facebook"]
+        var out: [String] = []
         for id in Set(next.routes.filter { !$0.imported }.map(\.loc.provider)).sorted() {
             guard let p = Providers.get(id) else { continue }
-            // The blocking settings count only where a route of this provider blocks now; which servers it uses always.
-            let blocking = current.routes.contains { !$0.imported && $0.loc.provider == id && current.protects($0) }
-            let off = (blocking ? ["protect", "adult", "gambling", "social", "hardcore", "owned"] : ["owned"]).compactMap { key in
-                p.option(key).flatMap { current.opt(id, key) == "on" && next.opt(id, key) != "on" ? $0.label : nil }
+            func off(_ key: String) -> Bool { p.option(key) != nil && current.opt(id, key) == "on" && next.opt(id, key) != "on" }
+            if current.routes.contains(where: { !$0.imported && $0.loc.provider == id && current.protects($0) }) {
+                let what = ["protect", "adult", "gambling", "social", "hardcore"].filter(off).compactMap { blocks[$0] }
+                // "ads and trackers" is a pair already: what follows it comes after a comma.
+                if !what.isEmpty { out.append("\(p.name) stops blocking " + (what.count > 1 && what[0] == blocks["protect"] ? "\(what[0]), and \(list(Array(what.dropFirst())))." : "\(list(what)).")) }
+                if next.opt(id, "protect") == "on", let l = p.option("list"), current.opt(id, "list") != l.defaultValue, next.opt(id, "list") == l.defaultValue {
+                    out.append("\(p.name)'s \(l.label.lowercased()) goes back to the standard one.")
+                }
             }
-            if !off.isEmpty { out.append("\(list(off)) \(off.count == 1 ? "is" : "are") turned off for \(p.name).") }
-            if current.opt(id, "protect") == "on", next.opt(id, "protect") != "on" { said.insert(id) }
-            if blocking, next.opt(id, "protect") == "on", let l = p.option("list"), current.opt(id, "list") != l.defaultValue, next.opt(id, "list") == l.defaultValue {
-                out.append("\(p.name)'s \(l.label.lowercased()) goes back to the standard one.")
-            }
+            if off("owned") { out.append("\(p.name) no longer keeps to the servers it owns.") }
         }
+        // A route's own choice, where the provider's setting doesn't already say it.
         let routes = next.routes.filter { r in
-            !said.contains(r.loc.provider) && !next.protects(r) && current.route(r.id).map { !$0.imported && $0.loc.provider == r.loc.provider && current.protects($0) } == true
+            !next.protects(r) && !(current.opt(r.loc.provider, "protect") == "on" && next.opt(r.loc.provider, "protect") != "on")
+                && current.route(r.id).map { !$0.imported && $0.loc.provider == r.loc.provider && current.protects($0) } == true
         }.count
-        if routes > 0 { out.append("The provider's own blocking is turned off for \(count(routes, "route")).") }
+        if routes > 0 { out.append("Ad and tracker blocking is turned off for \(count(routes, "route")).") }
         return out
     }
 
@@ -525,6 +557,8 @@ nonisolated enum Backup {
         r.profiles.append(kept)
         plan.setup = r
         plan.keptAs = name
+        // The setup in use comes along: what goes is this Mac's other profiles, settings and Home WireGuard tunnel.
+        plan.replaces = Summary(profiles: current.profiles.count, homeTunnel: replaced.homeTunnel)
         plan.needConfig = needConfig(r)
         return plan
     }
@@ -540,7 +574,11 @@ nonisolated enum Backup {
         let all = s.servers.filter { !$0.keyless }.map { ($0.name, $0.ovpn, $0.ss) } + s.routes.filter { !$0.keyless }.map { ($0.name, $0.ovpn, $0.ss) }
         for (name, ovpn, ss) in all {
             let why = ovpn.flatMap { known.contains($0) ? nil : (try? Manual.weakness($0)) ?? nil } ?? ss.flatMap { known.contains($0) ? nil : Manual.weakness($0) }
-            if let why, !out.contains("\(name): \(why)") { out.append("\(name): \(why)") }
+            // The import's first sentence says what is weak; the rest (what it risks) the sheet says once for all.
+            guard let why, let first = why.split(separator: ". ", maxSplits: 1).first else { continue }
+            var what = String(first).hasSuffix(".") ? String(first.dropLast()) : String(first)
+            if what.hasPrefix("This config ") { what = String(what.dropFirst("This config ".count)) }
+            if !out.contains("\(name): \(what)") { out.append("\(name): \(what)") }
         }
         return out
     }
@@ -587,7 +625,11 @@ nonisolated enum Backup {
 
     /// The restore sheet's "It replaces": "Your 3 routes, 8 app choices and 1 profile on this Mac. Provider sign-ins,
     /// your Tailscale sign-in and statistics stay as they are."
-    static func replaces(_ s: Summary) -> String {
+    static func replaces(_ s: Summary, keptAs: String? = nil) -> String {
+        if let keptAs {
+            let parts = ["settings"] + counts(s) + (s.homeTunnel ? ["Home WireGuard tunnel"] : [])
+            return "Your \(list(parts)) on this Mac. The setup in use is kept as the profile \"\(keptAs)\". Provider sign-ins, your Tailscale sign-in and statistics stay as they are."
+        }
         let parts = counts(s) + (s.homeTunnel ? ["Home WireGuard tunnel"] : [])
         let stay = "Provider sign-ins, your Tailscale sign-in and statistics stay as they are."
         return parts.isEmpty ? "Nothing set up on this Mac yet. \(stay)" : "Your \(list(parts)) on this Mac. \(stay)"

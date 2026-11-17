@@ -590,6 +590,20 @@ private final class Meter: NSObject {
             let content = try Backup.read(Backup.export(other, app: "1.2.0", created: Date(timeIntervalSince1970: 1_794_900_000), keys: false))
             flow.perfShow(.restore, in: w, fileName: file, content: content); await sheet("backup-restore")
         } catch { report("[Perf] made-up backup refused: \((error as? Backup.Failure)?.message ?? "\(error)")"); shotsMissing += 1 }
+        // With keys, a server of weak security and a setup that protects less than this one: the acceptance the restore
+        // waits for, and every note at once.
+        do {
+            var weaker = other
+            let old = try Manual.parseSs("ss://aes-128-cfb:pw@192.0.2.20:8388", name: "Old box")
+            let office = try Manual.parseOvpn("client\ndev tun\nproto udp\nremote vpn.example.net 1194\ntls-version-min 1.0\n<ca>\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n</ca>\n", name: "Office", username: "", password: "")
+            weaker.servers += [OwnServer(id: "s2", ss: old), OwnServer(id: "s3", ovpn: office)]
+            weaker.routes += [Route(id: "ob", ss: old, hue: 7, own: "s2"), Route(id: "of", ovpn: office, hue: 8, own: "s3")]
+            weaker.defaultRoute = DIRECT
+            weaker.apps = weaker.apps.mapValues { $0 == BLOCK ? $0 : DIRECT }.merging(["com.apple.Safari": "ob", "com.apple.Notes": "of"]) { $1 }
+            (weaker.prefs.killLevel, weaker.prefs.alwaysOn, weaker.prefs.filter, weaker.prefs.lan) = (.off, false, Filter(), true)
+            let content = try Backup.read(Backup.export(weaker, app: "1.2.0", created: Date(timeIntervalSince1970: 1_794_900_000), keys: true))
+            flow.perfShow(.restore, in: w, fileName: file, content: content); await sheet("backup-restore-weak")
+        } catch { report("[Perf] made-up weak backup refused: \((error as? Backup.Failure)?.message ?? "\(error)")"); shotsMissing += 1 }
         flow.perfShow(nil, in: w); await meter.frames(30)
     }
 
