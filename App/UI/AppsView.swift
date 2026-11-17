@@ -81,10 +81,10 @@ struct AppsView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let id = route {
                     if s.route(id) != nil {
-                        // A symbol like the items beside it: as words it was wide enough to push the Settings gear into
-                        // the overflow in a narrow window.
-                        Button { Presentation.shared.picker = PickerTarget(id: id) } label: { Label("Change Location…", systemImage: "mappin.and.ellipse") }
-                            .help("Change this route's location")
+                        // A symbol like the items beside it, so the Settings gear keeps its place in a narrow window; its
+                        // name is its tooltip and what VoiceOver reads, and texts that point to it call it the pin.
+                        Button { Presentation.shared.picker = PickerTarget(id: id) } label: { Label(Self.changeLocation, systemImage: "mappin.and.ellipse") }
+                            .help(Self.changeLocation)
                     }
                     if s.route(id) != nil || (id != BLOCK && id != s.defaultRoute) {
                         Menu { RouteActions(id: id) } label: { Label("Actions for \(s.label(id))", systemImage: "ellipsis") }
@@ -221,6 +221,8 @@ struct AppsView: View {
         .padding(.top, 10).padding(.bottom, Layout.gutter)
         .onChange(of: rows.map(\.id)) { siteSelection.formIntersection(rows.map(\.id)) }
     }
+
+    static let changeLocation = "Change Location…"
 
     /// The empty state's room, in rows, when a route with websites has no apps.
     private static let emptyRows = 6

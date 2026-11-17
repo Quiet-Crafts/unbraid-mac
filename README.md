@@ -84,8 +84,9 @@ Routes can mix providers. One app can use Mullvad in Sweden while another uses N
    Extensions. unbraid lives in the menu bar; its window opens from there.
 3. Accept the terms and choose your VPN. You can sign in to a provider, import a WireGuard or OpenVPN file (*Your own
    server*), paste a Shadowsocks key, or use Tailscale on its own.
-4. Select the default route in the sidebar and choose *Change Location…* to pick a country. This is where every app
-   goes unless you say otherwise. Then click *Connect* and allow the VPN configuration when macOS asks.
+4. Select the default route in the sidebar and click the pin at the top of its page (*Change Location…*) to pick a
+   country. This is where every app goes unless you say otherwise. Then click *Connect* and allow the VPN
+   configuration when macOS asks.
 5. To send some apps somewhere else, click *Add Route* and choose another country or server. In *All Apps*, click
    *Show My Apps* (the list stays on your Mac), then drag apps onto a route in the sidebar or use *Move To*. Choose
    *Direct* for apps that should not use the VPN at all, like a banking app.
