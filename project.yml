@@ -81,6 +81,7 @@ targets:
       - Shared/ConfigVet.swift
       - Shared/Staging.swift
       - Shared/SiteMatch.swift
+      - Shared/FakePool.swift
     dependencies:
       # A static library (gomobile): linked into the binary, nothing to embed.
       - framework: Frameworks/Libbox.xcframework
@@ -163,6 +164,7 @@ targets:
       - Shared/Staging.swift
       - Shared/CommandXPCProtocol.swift
       - Shared/SiteMatch.swift
+      - Shared/FakePool.swift
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES

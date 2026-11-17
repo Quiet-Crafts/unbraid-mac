@@ -59,6 +59,7 @@
 		272F586D1DA1BDB289ED68B1 /* WgConf.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3DBA46D96775F4CED61AE0E8 /* WgConf.swift */; };
 		274FEEA1ABE997737A3D3A15 /* ExitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5341561122D8DF8AA08C142D /* ExitProbe.swift */; };
 		29A7513F30E02F18803665D2 /* Fonts in Resources */ = {isa = PBXBuildFile; fileRef = 94A7738E3E1241BAADCB4AE6 /* Fonts */; };
+		29E6A23C0F5AC08316DF3F7B /* FakePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F47B193FFE5584903923C3 /* FakePool.swift */; };
 		2B3F6F7B63A6BF3B1F36771A /* PickerSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9060318165B60A1DFD49010F /* PickerSheet.swift */; };
 		2DEA63F3916A8A371CB30AED /* BackupFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = BAE2045B5F3FB8F071DA15C7 /* BackupFile.swift */; };
 		2E2E70DDCB0C26272CDE35C4 /* Platform.swift in Sources */ = {isa = PBXBuildFile; fileRef = E50CF971534A8D80EE513048 /* Platform.swift */; };
@@ -75,6 +76,7 @@
 		3478F3F258A7A8825684B5F9 /* ExitProbe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5341561122D8DF8AA08C142D /* ExitProbe.swift */; };
 		350E1B062D44985979AE8835 /* FileWork.swift in Sources */ = {isa = PBXBuildFile; fileRef = B80896661F80629A5EEA1D81 /* FileWork.swift */; };
 		36AABF7292DF544BF43A7F94 /* Privacy.swift in Sources */ = {isa = PBXBuildFile; fileRef = 376782ABF6F20BB15AC667F9 /* Privacy.swift */; };
+		36C4244123E89E06CC7A6B97 /* FakePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F47B193FFE5584903923C3 /* FakePool.swift */; };
 		36F35113152825B1E3FFA8C7 /* TailscaleStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD06F9AF294932A0D3943C2 /* TailscaleStatus.swift */; };
 		38615483D0B4D2D5640A060D /* ManualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749928C45FDE90DD1FC1AF69 /* ManualTests.swift */; };
 		38C8A807F70B8F30BA36123D /* Compiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220CE28E2A1DD5D6B23E1A2A /* Compiler.swift */; };
@@ -120,6 +122,7 @@
 		57AF528D0BA8A5BD2B8D54F1 /* Bounded.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AD869A2509BACD21EBB5464 /* Bounded.swift */; };
 		588953FE2B1910FDF7C86984 /* AppsSort.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B859E3A743C15303DA309B /* AppsSort.swift */; };
 		5A3C90D07DBE55D3C17B2887 /* UpdateText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F553F04E8961A50E94732C23 /* UpdateText.swift */; };
+		5AABF43C82E04132FBE2BAC4 /* FakePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F47B193FFE5584903923C3 /* FakePool.swift */; };
 		5AB7440DE9F48832FC2A4AEA /* Catalog in Resources */ = {isa = PBXBuildFile; fileRef = 3C10D2FF6C86FAC61E84632E /* Catalog */; };
 		5BA3A9B9B25DDC88EDDAB117 /* Ivpn.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8A8882D44810E7996091C410 /* Ivpn.swift */; };
 		5CEEE3F542465B75E76E1B7E /* Appearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD379A233842C7895C3A30DF /* Appearance.swift */; };
@@ -193,6 +196,7 @@
 		95DD8892D8DD1EFE13CB1BA3 /* RunState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9640535C88C8838D9B31E1DE /* RunState.swift */; };
 		9668BE76D7F272B2267DCC4A /* ExitAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = D250DB2BE575D83AAA030C34 /* ExitAddress.swift */; };
 		99C93FE8D2B1581E286FCAA3 /* RunState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9640535C88C8838D9B31E1DE /* RunState.swift */; };
+		9A2FEB8CE940DF2C495D6317 /* FakePoolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 35BDE20E1CCF99A7860D5CC3 /* FakePoolTests.swift */; };
 		9AD84481A49B2E89DB42A780 /* ConfigVet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D82318930587017455D7D9 /* ConfigVet.swift */; };
 		9C2DF80C679EF996DB36FEA0 /* RunStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C004AF4C484CE7C776E73C02 /* RunStateTests.swift */; };
 		9D61FDB1ABF84833957C4287 /* Windscribe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40089F2AF32B847A51B7520B /* Windscribe.swift */; };
@@ -377,6 +381,7 @@
 		0FDDF7466E86AA480872C0D2 /* QR.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QR.swift; sourceTree = "<group>"; };
 		1254283A3240167FE700B663 /* CommandXPC.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandXPC.swift; sourceTree = "<group>"; };
 		1266ABF408263C5BA4F2A98D /* SitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SitesTests.swift; sourceTree = "<group>"; };
+		12F47B193FFE5584903923C3 /* FakePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakePool.swift; sourceTree = "<group>"; };
 		145F6B890393446EC35B4E06 /* Sites.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sites.swift; sourceTree = "<group>"; };
 		156446EA824E4731A51964B8 /* unbraid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = unbraid.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		16540D9011D973EC4593EA77 /* LifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LifecycleTests.swift; sourceTree = "<group>"; };
@@ -409,6 +414,7 @@
 		305CD0EA4C26C5554744DE14 /* TailscaleSignIn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleSignIn.swift; sourceTree = "<group>"; };
 		31C2FF8A90DA64BCA3085336 /* UnbraidTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = UnbraidTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3238D51D442617DAC17414C9 /* LimitsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LimitsTests.swift; sourceTree = "<group>"; };
+		35BDE20E1CCF99A7860D5CC3 /* FakePoolTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakePoolTests.swift; sourceTree = "<group>"; };
 		37258C9BFCDE7925207D6D06 /* Signing.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Signing.xcconfig; sourceTree = "<group>"; };
 		376782ABF6F20BB15AC667F9 /* Privacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Privacy.swift; sourceTree = "<group>"; };
 		3C01D7BF00036B3C28A5F581 /* AppsTable.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsTable.swift; sourceTree = "<group>"; };
@@ -660,6 +666,7 @@
 				4EC733C20C0B81072D2C80BC /* ExitAddressTests.swift */,
 				261EE4615464A6502995A0E0 /* ExitCheckStateTests.swift */,
 				DF511C47B102E6D851C89BAC /* ExitProbeTests.swift */,
+				35BDE20E1CCF99A7860D5CC3 /* FakePoolTests.swift */,
 				56132231BD27DDAEDE916B3E /* FileWorkTests.swift */,
 				5146D3C02B13CFCD4425EBBB /* Fixture.swift */,
 				D52255D7E21F9B3CE0F381FA /* Fixtures */,
@@ -779,6 +786,7 @@
 				F8D82318930587017455D7D9 /* ConfigVet.swift */,
 				E7F651543DAF590B3A5E3614 /* CountryFlag.swift */,
 				74F27A06182C9F54A47D793D /* Fail.swift */,
+				12F47B193FFE5584903923C3 /* FakePool.swift */,
 				269129690FE2B3E94FB1C6FB /* Log.swift */,
 				C885B6A78F36934F52AA1EE3 /* Palette.swift */,
 				0B58E47DC1EFE502199E6107 /* Redact.swift */,
@@ -1169,6 +1177,7 @@
 				274FEEA1ABE997737A3D3A15 /* ExitProbe.swift in Sources */,
 				EECA8D2DBD0C6C48BE658C3C /* ExpressVpn.swift in Sources */,
 				6332A063F2E8584855536647 /* Fail.swift in Sources */,
+				5AABF43C82E04132FBE2BAC4 /* FakePool.swift in Sources */,
 				1FB30B3206224B878708CD1B /* FileWork.swift in Sources */,
 				338D481DF4F7A81525AF7923 /* Health.swift in Sources */,
 				F247C7BA908AA901E1487566 /* Http.swift in Sources */,
@@ -1308,6 +1317,8 @@
 				7569BD2E2E2D921157EF7A0D /* ExitProbeTests.swift in Sources */,
 				EB25C29CC3A2134D6D14F209 /* ExpressVpn.swift in Sources */,
 				22E203E49E15C70ABAC3CBAF /* Fail.swift in Sources */,
+				36C4244123E89E06CC7A6B97 /* FakePool.swift in Sources */,
+				9A2FEB8CE940DF2C495D6317 /* FakePoolTests.swift in Sources */,
 				350E1B062D44985979AE8835 /* FileWork.swift in Sources */,
 				156D71625EDB9EC5BF4FCA3C /* FileWorkTests.swift in Sources */,
 				1FA48D42849988700B3312A5 /* Fixture.swift in Sources */,
@@ -1434,6 +1445,7 @@
 				FB27BE37159C79D57A93FB64 /* CommandXPCProtocol.swift in Sources */,
 				ECBC82BAFDA0178A0A0DE34E /* ConfigVet.swift in Sources */,
 				6C9004C03EF847152DC2BDCE /* Fail.swift in Sources */,
+				29E6A23C0F5AC08316DF3F7B /* FakePool.swift in Sources */,
 				7D6E2DF9CCA188E1C5333925 /* Log.swift in Sources */,
 				BFBDCA800A2BF08A91547BDC /* PacketTunnelProvider.swift in Sources */,
 				2E2E70DDCB0C26272CDE35C4 /* Platform.swift in Sources */,

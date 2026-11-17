@@ -12,6 +12,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Root's container inside the sandbox; only root can read it.
     private static let home = FileManager.default.homeDirectoryForCurrentUser
     private var fakeBlock: Int?
+    /// The checked configuration the engine runs and its search domain (as staged or sealed), for a move to the next
+    /// block of stand-in addresses (`rotate`).
+    private var current: (config: String, search: String?)?
+    /// Asks the engine how many stand-in addresses are left (`checkPool`), on `work`, while it runs.
+    private var pool: DispatchSourceTimer?
+    /// Logged once a block: it ran out before the next move was due.
+    private var exhausted = false
+    /// When the engine last took a new block of stand-in addresses (a start or a move), on `work` only.
+    nonisolated(unsafe) private static var blockChanged: ContinuousClock.Instant?
     static let vault = Sealed(dir: home.appending(path: "Sealed"), account: "tunnel")
     private static let invalidConfig = home.appending(path: "config.invalid")
     /// Where sing-box's own Taildrop receiver kept files from tailnet peers, before the engine patch removed it.
@@ -118,6 +127,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             try Data(String(block).utf8).write(to: Self.fakeCounter, options: .atomic)
             try Self.remove(Self.fakePending)
             fakeBlock = block
+            current = (config, search)
+            Self.blockChanged = .now
+            exhausted = false
+            watchPool()
             // Before the start completes: the app reads it once the tunnel shows connected.
             let count = Self.running.withLock { $0.engine = (Staging.revision(config, search: search), owner); return $0.count }
             Self.fallbackRun.withLock { $0 = fallback && ConfigVet.isFallback(config) ? count : nil }
@@ -181,20 +194,79 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 guard let block = fakeBlock else { throw Fail("Not running") }
                 let run = try ConfigVet.owned(ConfigVet.fakeBlock(config, block), by: owner)
                 if staged.persist { try Self.invalidateConfig() }
-                // The engine closes the old service before building the new one: a failure leaves neither running.
-                Self.running.withLock { $0.engine?.revision = nil; $0.count += 1 }
-                // The new engine opens the tun again, and with it the resolver's search domain: no restart for a new one.
-                // Its Tailscale identity is told again once it has read its state.
-                platform?.use(search: staged.search ?? profileSearch)
-                platform?.forgetIdentity()
-                try server.startOrReloadService(run, options: LibboxOverrideOptions())
-                Self.running.withLock { $0.engine = (Staging.revision(config, search: staged.search), owner) }
-                TailscaleWatch.refresh()
+                try swap(run, config: config, search: staged.search, owner: owner, server: server)
                 // Running but not sealed is its own answer: Connect on Demand can't start this configuration.
                 let sealed = !staged.persist || Self.persistOrStayInvalid(config, owner: owner, search: staged.search)
                 completionHandler?(sealed ? EngineAck.done : EngineAck.unsealed)
             } else { throw Fail("Unknown request") }
         } catch { completionHandler?(Data(Redact.clean(error.localizedDescription).utf8)) }
+    }
+
+    /// Runs [run] ([config] owned and on its block) in place of the running engine, and returns its count. The engine
+    /// closes the old service before building the new one: a failure leaves neither running (`running` then names no
+    /// revision, and the tunnel holds traffic until a reload, stop or start).
+    @discardableResult
+    private func swap(_ run: String, config: String, search: String?, owner: uid_t, server: LibboxCommandServer) throws -> Int {
+        let count = Self.running.withLock { $0.engine?.revision = nil; $0.count += 1; return $0.count }
+        // The new engine opens the tun again, and with it the resolver's search domain: no restart for a new one.
+        // Its Tailscale identity is told again once it has read its state.
+        platform?.use(search: search ?? profileSearch)
+        platform?.forgetIdentity()
+        try server.startOrReloadService(run, options: LibboxOverrideOptions())
+        Self.running.withLock { $0.engine = (Staging.revision(config, search: search), owner) }
+        current = (config, search)
+        TailscaleWatch.refresh()
+        return count
+    }
+
+    private func watchPool() {
+        pool?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: work)
+        let every = DispatchTimeInterval.seconds(Int(FakePool.every.components.seconds))
+        timer.schedule(deadline: .now() + every, repeating: every, leeway: .seconds(5))
+        timer.setEventHandler { [weak self] in self?.checkPool() }
+        timer.resume()
+        pool = timer
+    }
+
+    /// The engine never hands a stand-in address to a second name while its block stays, so a block running low is
+    /// replaced by the next (`FakePool`). Before the move is due, nothing is handed out twice: lookups of new names fail
+    /// until then, so a flood of lookups can make new lookups fail for a while, never move anyone's traffic.
+    private func checkPool() {
+        guard Self.live === self, let server, let current, let block = fakeBlock, let owner = Self.owner,
+              let engine = Self.runningEngine else { return }
+        switch FakePool.step(remaining: Int(LibboxFakeIPRemaining()), since: Self.blockChanged.map { .now - $0 }) {
+        case .nothing: break
+        case .wait(let out):
+            guard out, !exhausted else { break }
+            exhausted = true
+            Log.error("fake addresses: block used up before the next move is due, new lookups fail until then")
+        case .rotate: rotate(from: block, current, owner: owner, engine: engine, server: server)
+        }
+    }
+
+    /// Reloads the same configuration on the next block, recorded as a start records its block. The new store starts
+    /// empty (its range changed), addresses of the old block are refused as stale (`ConfigVet.fakeBlock`), and programs
+    /// look their names up again.
+    private func rotate(from block: Int, _ current: (config: String, search: String?), owner: uid_t, engine: Int, server: LibboxCommandServer) {
+        let next = ConfigVet.nextFakeBlock(block)
+        // Also when the move fails: it is tried again no sooner than a regular one.
+        Self.blockChanged = .now
+        exhausted = false
+        do {
+            let run = try ConfigVet.owned(ConfigVet.fakeBlock(current.config, next), by: owner)
+            try Data(String(next).utf8).write(to: Self.fakePending, options: .atomic)
+            // From here the engine may have handed out the next block's addresses, and dropped the old block's names: a
+            // later reload must never go back to the old block, whose addresses programs still hold.
+            fakeBlock = next
+            let count = try swap(run, config: current.config, search: current.search, owner: owner, server: server)
+            // The same configuration: still the fallback if it was.
+            Self.fallbackRun.withLock { if $0 == engine { $0 = count } }
+            Log.info("fake addresses: moved to the next block")
+            // As a start: a failure here leaves the pending block, which the next start then skips.
+            try Data(String(next).utf8).write(to: Self.fakeCounter, options: .atomic)
+            try Self.remove(Self.fakePending)
+        } catch { Log.error("fake addresses: move failed", error: error) }
     }
 
     /// The search domain older versions of the app put into the VPN profile, for a configuration staged or sealed without
@@ -220,6 +292,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         platform?.close()
         platform = nil
         fakeBlock = nil
+        current = nil
+        pool?.cancel()
+        pool = nil
         // A newer provider's engine runs (see `live`): its owner, cache and files stay.
         guard Self.live == nil || Self.live === self else { return }
         Self.live = nil
