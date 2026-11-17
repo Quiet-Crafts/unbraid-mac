@@ -45,7 +45,7 @@ struct SupportCard: View {
                     Label { Text("Support unbraid").fontWeight(.semibold) } icon: { Image(systemName: "heart") }
                     Text(Self.text).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                     buttons
-                    Text("We ask a few times a year.").font(.system(size: 11)).foregroundStyle(.tertiary)
+                    Text("We ask a few times a year.").font(.system(size: 11)).foregroundStyle(Ink.dim)
                 }
                 .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, Layout.gutter).padding(.vertical, 10).background(Ink.surface)
