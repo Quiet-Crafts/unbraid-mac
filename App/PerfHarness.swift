@@ -567,6 +567,11 @@ private final class Meter: NSObject {
         Connection.shared.perfConnected()
         Stats.shared.perfPokeLive()
         await meter.frames(15)
+        // No picture is taken taller than this: a taller window means something in it forced its height (a band whose
+        // text was measured at no width), which pushes the real window off the screen.
+        if w.frame.height > 1400 {
+            report("[Perf] window grew to \(Int(w.frame.height)) points for \((path as NSString).lastPathComponent)"); shotsMissing += 1
+        }
         capture(w, path)
     }
 

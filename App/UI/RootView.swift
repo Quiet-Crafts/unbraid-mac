@@ -111,6 +111,9 @@ struct RootView: View {
     @State private var newName = ""
     @Environment(\.undoManager) private var undo
 
+    /// The narrowest a page gets, and the bands above it with it.
+    private static let pageMinWidth: CGFloat = 560
+
     /// Another sheet or question is up.
     private var busy: Bool {
         model.disclosure || presentation.blockScope || presentation.renaming != nil || presentation.removing != nil
@@ -143,9 +146,14 @@ struct RootView: View {
                 } detail: {
                     // Pages switch without a cross-fade: a table kept on screen through a fade while its rows are torn
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
-                    DetailPage().frame(minWidth: 560, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
-                        // What needs attention shows above every page, not only the one it was raised on.
-                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice(); SupportCard(calm: supportCalm.isCalm) } }
+                    DetailPage().frame(minWidth: Self.pageMinWidth, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
+                        // What needs attention shows above every page, not only the one it was raised on. Never
+                        // narrower than the page: the window's smallest size is measured at no width, where a band's
+                        // wrapping text is one letter a line and thousands of points tall, and the window grows to it.
+                        .safeAreaInset(edge: .top, spacing: 0) {
+                            VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice(); SupportCard(calm: supportCalm.isCalm) }
+                                .frame(minWidth: Self.pageMinWidth)
+                        }
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
