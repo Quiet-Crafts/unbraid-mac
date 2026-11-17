@@ -157,7 +157,7 @@ struct UnbraidCommands: Commands {
         }
         // Moving the selected apps, from any page that lists them: ⌥⌘ and the route's place in the sidebar.
         CommandMenu("Apps") {
-            Menu("Move To") { MoveItems { actions?.move?($0) } }.disabled(actions?.move == nil)
+            Menu("Move To") { MoveItems(followDefault: actions?.followDefault ?? true) { actions?.move?($0) } }.disabled(actions?.move == nil)
         }
         CommandMenu("Connection") {
             Menu("Switch Profile") {
@@ -205,6 +205,8 @@ struct SceneActions {
     var find: (() -> Void)?
     /// Moves the selected apps to a route (nil = follow the default).
     var move: ((String?) -> Void)?
+    /// Whether Move To offers Follow Default: not for websites.
+    var followDefault = true
     var period: Binding<Period>?
     var showHistory: (() -> Void)?
     var recordStatistics: (() -> Void)?

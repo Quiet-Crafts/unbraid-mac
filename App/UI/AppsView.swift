@@ -85,7 +85,11 @@ struct AppsView: View {
             }
         }
         // The menu commands read the selection in a child, so a click redraws that child and not the whole list.
-        .background(AppsActions(selection: $selection, add: model.store.disclosed ? { add() } : nil))
+        .background(AppsActions(selection: $selection, sites: $siteSelection, add: model.store.disclosed ? { add() } : nil))
+        // Apps and the route's websites are two lists: selecting in one clears the other, so Move To, its shortcuts and
+        // Delete act on the list the user last picked from.
+        .onChange(of: selection) { if !selection.isEmpty, !siteSelection.isEmpty { siteSelection = [] } }
+        .onChange(of: siteSelection) { if !siteSelection.isEmpty, !selection.isEmpty { selection = [] } }
         // A new page starts afresh: no selection, no search left over from the last one.
         .onAppear { ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK) }
         .onDisappear { ExitCheck.shared.watch(exitWatch, visible: false) }
@@ -315,17 +319,22 @@ struct AppsView: View {
     var showSystem = false
 }
 
-/// The Apps menu and Find for this page. Reads the selection itself, so selecting rows redraws only this.
+/// The Apps menu and Find for this page. Reads the selection itself, so selecting rows redraws only this. On a route's
+/// page Move To moves the selected websites when those are what is selected (the two selections never coexist), and
+/// Follow Default, which a website has no meaning for, is then off.
 private struct AppsActions: View {
     @Binding var selection: Set<String>
+    @Binding var sites: Set<String>
     let add: (() -> Void)?
     @Environment(\.undoManager) private var undo
 
     var body: some View {
+        let move: ((String?) -> Void)? = !sites.isEmpty ? { to in if let to { AppModel.shared.moveSites(Array(sites), to: to, undo: undo) } }
+            : selection.isEmpty ? nil : { AppModel.shared.move(Array(selection), to: $0, undo: undo) }
         Color.clear.focusedSceneValue(\.sceneActions, SceneActions(
             addApp: add,
             find: { NotificationCenter.default.post(name: SearchField.focus, object: nil) },
-            move: selection.isEmpty ? nil : { AppModel.shared.move(Array(selection), to: $0, undo: undo) }))
+            move: move, followDefault: sites.isEmpty))
     }
 }
 
@@ -378,6 +387,8 @@ private struct HomeCard: View {
 /// and the Apps menu, so both list the same routes with the same shortcuts.
 struct MoveItems: View {
     private let model = AppModel.shared
+    /// Off for websites, which have no default to follow.
+    var followDefault = true
     let move: (String?) -> Void
 
     var body: some View {
@@ -387,7 +398,7 @@ struct MoveItems: View {
             if i < 9 { b.keyboardShortcut(KeyEquivalent(Character("\(i + 1)")), modifiers: [.command, .option]) } else { b }
         }
         Divider()
-        Button("Follow Default") { move(nil) }.keyboardShortcut("0", modifiers: [.command, .option])
+        Button("Follow Default") { move(nil) }.keyboardShortcut("0", modifiers: [.command, .option]).disabled(!followDefault)
     }
 }
 

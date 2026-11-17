@@ -72,7 +72,8 @@ private struct SitesActions: View {
     var body: some View {
         Color.clear.focusedSceneValue(\.sceneActions, SceneActions(
             find: { NotificationCenter.default.post(name: SearchField.focus, object: nil) },
-            move: selection.isEmpty ? nil : { to in if let to { AppModel.shared.moveSites(Array(selection), to: to, undo: undo) } }))
+            move: selection.isEmpty ? nil : { to in if let to { AppModel.shared.moveSites(Array(selection), to: to, undo: undo) } },
+            followDefault: false))
     }
 }
 

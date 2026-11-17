@@ -48,7 +48,7 @@ struct AppsTable: NSViewRepresentable {
         c.sites = sites
         c.table = table
         // Delete (and Forward Delete) removes the selected websites' rules, as in lists elsewhere on the Mac.
-        if sites { table.delete = { [weak c] in c?.removeSelected() } }
+        if sites { table.remove = { [weak c] in c?.removeSelected() } }
         table.dataSource = c
         table.delegate = c
         let menu = NSMenu()
@@ -338,15 +338,21 @@ struct AppsTable: NSViewRepresentable {
     }
 }
 
-/// The table, with Delete for what the list can remove.
+/// The table, with Delete (the key, and Edit › Delete) for what the list can remove.
 private final class KeyTable: NSTableView {
-    var delete: (() -> Void)?
+    var remove: (() -> Void)?
 
     override func keyDown(with event: NSEvent) {
         // Delete and Forward Delete, without a modifier that would make them something else.
-        if let delete, [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !selectedRowIndexes.isEmpty {
-            delete()
+        if let remove, [51, 117].contains(event.keyCode), event.modifierFlags.intersection([.command, .option, .control]).isEmpty, !selectedRowIndexes.isEmpty {
+            remove()
         } else { super.keyDown(with: event) }
+    }
+
+    @objc func delete(_ sender: Any?) { if !selectedRowIndexes.isEmpty { remove?() } }
+
+    override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+        item.action == #selector(delete(_:)) ? remove != nil && !selectedRowIndexes.isEmpty : super.validateUserInterfaceItem(item)
     }
 }
 
