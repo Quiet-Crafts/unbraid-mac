@@ -445,12 +445,17 @@ private final class Meter: NSObject {
 
     /// The update question answered with no, as the pictures start; and the check on with a newer release found.
     private static let updatesAnswered = UpdateCheck.State(asked: true)
-    private static let updatesNewer = UpdateCheck.State(enabled: true, asked: true, lastAttempt: .now, latest: "1.2.0")
+    /// The release after this one (the next minor version), so the notice shows whatever version is being built.
+    private static var updatesNewer: UpdateCheck.State {
+        let v = Updates.shared.installed?.parts ?? [1, 0]
+        return UpdateCheck.State(enabled: true, asked: true, lastAttempt: .now, latest: "\(v[0]).\(v.count > 1 ? v[1] + 1 : 1).0")
+    }
 
     /// The update notice and the one-time question, each at the usual and the smallest size, over All Apps.
     private func updateShots(_ dir: String, _ prefix: String, _ suffix: String, _ normal: NSRect) async {
         go("apps"); await meter.frames(30)
         Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
+        if !Updates.shared.showNotice { report("[Perf] no update notice"); shotsMissing += 1 }
         await shoot(window, "\(dir)/\(prefix)update-notice\(suffix).png")
         await shrink()
         await shoot(window, "\(dir)/\(prefix)min-update-notice\(suffix).png")
