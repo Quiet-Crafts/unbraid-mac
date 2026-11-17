@@ -93,7 +93,9 @@ struct SitesTable: View {
     /// count them, as they were in `rank` (the totals when the list was last sorted).
     static func rows(_ s: Setup, route: String? = nil, sort: AppsSort, rank: [String: Int64]) -> [Row] {
         let week = Self.week(rank)
-        return s.sites.filter { route == nil || $0.value == route }
+        // A route's page lists the websites whose rules put them there; the Websites page lists every one saved.
+        let listed = route == nil ? s.sites : Sites.applied(s.sites, tailnet: AppModel.shared.store.tsSuffix)
+        return listed.filter { route == nil || $0.value == route }
             .map { Row(id: $0.key, name: Sites.shown($0.key), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)
     }

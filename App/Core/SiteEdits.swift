@@ -45,6 +45,12 @@ nonisolated enum SiteEdits {
     /// The websites on `route` (a route's id, DIRECT or BLOCK), A to Z.
     static func on(_ route: String, in setup: Setup) -> [String] { setup.sites.filter { $0.value == route }.keys.sorted() }
 
+    /// The websites whose rules put them on `route` (`Sites.applied`): what its counts and its page list. One saved for a
+    /// name on the own network is listed on the Websites page only, as not applied.
+    static func applied(_ route: String, in setup: Setup, tailnet: String? = nil) -> [String] {
+        Sites.applied(setup.sites, tailnet: tailnet).filter { $0.value == route }.keys.sorted()
+    }
+
     /// The route an Add Website sheet starts on: the page's route when it was opened from one that still exists, else
     /// the first route that isn't the default, else Direct.
     static func preselected(_ page: String?, in setup: Setup) -> String {

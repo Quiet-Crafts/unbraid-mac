@@ -617,6 +617,8 @@ private final class RouteCell: DrawnCell {
         var label = ""
         var inherited = true
         var color = NSColor.clear
+        /// After the route's name, in the dim colour: " · Default", or " · Not applied" for a website rule that isn't.
+        var note: String?
     }
 
     private var shows = Shows()
@@ -637,22 +639,25 @@ private final class RouteCell: DrawnCell {
         // A website always has a route of its own: it never follows a default.
         let current = site ? s.sites[app] ?? DIRECT : s.apps[app]
         let id = current ?? s.defaultRoute
-        let new = Shows(app: app, label: s.label(id), inherited: current == nil, color: s.nsColor(id))
+        // A website rule that isn't applied (`Sites.applied`) reads dimmed, as a route it doesn't take.
+        let unapplied = site && !Sites.isApplied(app, id, tailnet: AppModel.shared.store.tsSuffix)
+        let new = Shows(app: app, label: s.label(id), inherited: current == nil || unapplied, color: s.nsColor(id),
+                        note: unapplied ? " · Not applied" : current == nil ? " · Default" : nil)
         guard new != shows else { return }
         shows = new
         let font = CellFont.route
         let words = NSMutableAttributedString(attributedString: attributed(new.label, font, Palette.nsText))
-        if new.inherited { words.append(attributed(" · Default", font, Palette.nsDim)) }
+        if let note = new.note { words.append(attributed(note, font, Palette.nsDim)) }
         text = words
         let selected = NSMutableAttributedString(attributedString: attributed(new.label, font, selectionInk))
-        if new.inherited { selected.append(attributed(" · Default", font, selectionInk.withAlphaComponent(0.75))) }
+        if let note = new.note { selected.append(attributed(note, font, selectionInk.withAlphaComponent(0.75))) }
         selectedText = selected
         wordsWidth = textWidth(words) + 1
-        toolTip = site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
+        toolTip = unapplied ? Sites.ownNetwork(app, tailnet: AppModel.shared.store.tsSuffix) : site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
         setAccessibilityElement(true)
         setAccessibilityRole(.popUpButton)
         setAccessibilityLabel("Route for \(site ? app : AppModel.shared.appName(app))")
-        setAccessibilityValue(current == nil ? "\(new.label), default" : new.label)
+        setAccessibilityValue(unapplied ? "\(new.label), not applied" : current == nil ? "\(new.label), default" : new.label)
         needsDisplay = true
     }
 

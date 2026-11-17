@@ -16,7 +16,7 @@ final class SiteEditsTests: XCTestCase {
             XCTAssertEqual(SiteEdits.check(raw, in: [:]), .refused(address), raw)
         }
         XCTAssertEqual(SiteEdits.check("netflix", in: [:]), .refused("Add the whole name, such as netflix.com"))
-        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is a name on your own network: a rule can't route it"))
+        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is this Mac itself: unbraid can't give it a rule"))
         XCTAssertEqual(SiteEdits.check("co.uk", in: [:]), .refused("co.uk ends many websites' names: add one website under it"))
         XCTAssertEqual(SiteEdits.check("bücher.de", in: ["xn--bcher-kva.de": DIRECT]), .refused("bücher.de already has a route"))
         let full = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("s\($0).example", DIRECT) })
@@ -32,14 +32,20 @@ final class SiteEditsTests: XCTestCase {
     /// Names on the local network or in a tailnet can't take a route: their own resolver answers them, which a
     /// website's route would skip (and `.local` names never pass unbraid). The tailnet's own domain counts once known.
     func testNamesOnTheOwnNetworkOrTailnetAreRefused() {
-        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box", "10.in-addr.arpa", "app.localhost", "svc.internal"] {
-            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name on your own network: a rule can't route it"), name)
+        // One sentence per kind of name, true for any route chosen, Blocked included.
+        let no = "unbraid can't give it a rule"
+        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box", "svc.internal"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name on your own network: \(no)"), name)
         }
-        for name in ["nas.tail1234.ts.net", "ts.net"] {
-            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) is a name in your tailnet: a rule can't route it"), name)
+        XCTAssertEqual(SiteEdits.check("10.in-addr.arpa", in: [:]), .refused("10.in-addr.arpa is a lookup of an address, not a website: \(no)"))
+        XCTAssertEqual(SiteEdits.check("app.localhost", in: [:]), .refused("app.localhost is this Mac itself: \(no)"))
+        // Someone else's ts.net name (a Funnel site) is Tailscale's, not the user's tailnet; the user's own says so.
+        for name in ["app.tail9999.ts.net", "ts.net"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:], tailnet: "tail1234.ts.net"), .refused("\(name) is a Tailscale name, answered by Tailscale: \(no)"), name)
         }
+        XCTAssertEqual(SiteEdits.check("nas.tail1234.ts.net", in: [:], tailnet: "tail1234.ts.net"), .refused("nas.tail1234.ts.net is a name in your tailnet: \(no)"))
         XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:]), .valid("nas.corp.example"))
-        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "corp.example"), .refused("nas.corp.example is a name in your tailnet: a rule can't route it"))
+        XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "corp.example"), .refused("nas.corp.example is a name in your tailnet: \(no)"))
         XCTAssertEqual(SiteEdits.check("lan.example.com", in: [:]), .valid("lan.example.com"))
         XCTAssertEqual(SiteEdits.check("planet.com", in: [:]), .valid("planet.com"))
         // For what is typed only: a saved setup or a backup keeps what it holds (the compiler leaves out what can't work).

@@ -109,6 +109,16 @@ final class StatsSitesTests: XCTestCase {
         XCTAssertEqual(counted.count, SiteMatch.max)
         XCTAssertNotNil(SiteMatch.accepted(counted))
         XCTAssertEqual(StatsMath.countedSites(Setup()), [])
+        // A rule that isn't applied (a name on the own network or in the tailnet, saved on a route or Direct) is not
+        // counted: its name's traffic stays its app's. The counts and the widget go by the same.
+        s.sites = ["nas.internal": DIRECT, "printer.lan": "us", "nas.corp.example": "us", "tracker.lan": BLOCK, "netflix.com": "us"]
+        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "netflix.com"])
+        XCTAssertEqual(StatsMath.countedSites(s, tailnet: "corp.example"), ["netflix.com"])
+        XCTAssertEqual(SiteEdits.applied("us", in: s, tailnet: "corp.example"), ["netflix.com"])
+        XCTAssertEqual(SiteEdits.applied(BLOCK, in: s), ["tracker.lan"])
+        XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), [])
+        let widget = Snapshot.make(phase: .off, since: nil, pausedUntil: nil, failed: false, edited: s, running: nil, exits: 0, week: [])
+        XCTAssertNil(widget.directSites)
     }
 
     func testAWebsitesExitIsItsOwnRouteWhereRoutesShareATunnel() {

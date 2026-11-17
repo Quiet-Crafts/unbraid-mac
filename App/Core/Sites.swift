@@ -30,9 +30,26 @@ nonisolated enum Sites {
     /// Why a website rule can't work for `name`: it is on the own network or in the tailnet, whose own resolver
     /// answers it, which a website's route would skip (and `.local` names are answered by multicast, which never passes
     /// unbraid). Nil for any other name. `tailnet` is the tailnet's own domain, when there is one.
+    /// One sentence per kind of name, true whatever route was chosen, Blocked included.
     static func ownNetwork(_ name: String, tailnet: String? = nil) -> String? {
-        if tailnet.map({ under(name, $0) }) == true || under(name, "ts.net") { return "\(name) is a name in your tailnet: a rule can't route it" }
-        return local.contains { under(name, $0) } ? "\(name) is a name on your own network: a rule can't route it" : nil
+        let no = "unbraid can't give it a rule"
+        if let tailnet, under(name, tailnet) { return "\(name) is a name in your tailnet: \(no)" }
+        if under(name, "ts.net") { return "\(name) is a Tailscale name, answered by Tailscale: \(no)" }
+        if under(name, "localhost") { return "\(name) is this Mac itself: \(no)" }
+        if under(name, "arpa"), !under(name, "home.arpa") { return "\(name) is a lookup of an address, not a website: \(no)" }
+        return local.contains { under(name, $0) } ? "\(name) is a name on your own network: \(no)" : nil
+    }
+
+    /// The websites whose rules apply: clean names, and for a route or Direct none on the own network or in the
+    /// tailnet (a setup saved before those were refused may hold one; a block of one stays a block). The compiler
+    /// writes rules for these only, and statistics and every count go by the same, so a rule shown as not applied
+    /// neither counts nor takes its app's traffic.
+    static func applied(_ sites: [String: String], tailnet: String? = nil) -> [String: String] {
+        sites.filter { isApplied($0.key, $0.value, tailnet: tailnet) }
+    }
+
+    static func isApplied(_ name: String, _ route: String, tailnet: String? = nil) -> Bool {
+        isClean(name) && (route == BLOCK || ownNetwork(name, tailnet: tailnet) == nil)
     }
 
     /// Whether `name` is `suffix` or a name under it.

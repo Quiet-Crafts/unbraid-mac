@@ -53,7 +53,7 @@ struct AppsView: View {
             // With websites under them, the apps take only the room their rows need (the empty state's room when there
             // are none), so the two lists sit together. In a short window both give up rows, down to two each, so
             // neither is left a bare header while the other is whole.
-            let siteCount = route.map { SiteEdits.on($0, in: s).count } ?? 0
+            let siteCount = route.map { SiteEdits.applied($0, in: s, tailnet: model.store.tsSuffix).count } ?? 0
             if siteCount == 0 { table(rows).frame(maxHeight: .infinity).layoutPriority(1) }
             else {
                 table(rows).frame(minHeight: SitesTable.height(min(max(rows.count, 1), 2)), maxHeight: rows.isEmpty ? 300 : SitesTable.height(rows.count))
@@ -98,6 +98,9 @@ struct AppsView: View {
         // Delete act on the list the user last picked from.
         .onChange(of: selection) { if !selection.isEmpty, !siteSelection.isEmpty { siteSelection = [] } }
         .onChange(of: siteSelection) { if !siteSelection.isEmpty, !selection.isEmpty { selection = [] } }
+        // Only the route's websites on screen stay selected, also once its last one has moved away and the list is gone:
+        // Move To must never act on a website the page no longer shows.
+        .onChange(of: shownSites) { _, shown in siteSelection.formIntersection(shown) }
         // A new page starts afresh: no selection, no search left over from the last one.
         .onAppear { ExitCheck.shared.watch(exitWatch, visible: route != DIRECT && route != BLOCK) }
         .onDisappear { ExitCheck.shared.watch(exitWatch, visible: false) }
@@ -135,12 +138,15 @@ struct AppsView: View {
         .onChange(of: siteSort) { siteRank = week.bytes }
     }
 
+    /// The websites this route's page lists.
+    private var shownSites: [String] { route.map { SiteEdits.applied($0, in: model.setup, tailnet: model.store.tsSuffix) } ?? [] }
+
     // MARK: Header
 
     @ViewBuilder private func header(_ s: Setup) -> some View {
         if let id = route {
             // With websites on it, the line says how many of each: first on Direct and Blocked, whose line is a sentence.
-            let sites = SiteEdits.on(id, in: s).count
+            let sites = SiteEdits.applied(id, in: s, tailnet: model.store.tsSuffix).count
             let count = sites == 0 ? nil : Snapshot.count(apps: model.apps.count(on: id), sites: sites)
             let parts = id == DIRECT || id == BLOCK ? [count, about(id, s)] : [about(id, s), count]
             PageHeader(title: s.label(id), subtitle: parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), slash: s.color(id),
@@ -203,7 +209,6 @@ struct AppsView: View {
             }
             .padding(.top, 10).padding(.bottom, Layout.gutter)
             .layoutPriority(1)
-            .onChange(of: rows.map(\.id)) { siteSelection.formIntersection(rows.map(\.id)) }
         }
     }
 
@@ -429,7 +434,8 @@ private struct RouteHealthCards: View {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(RouteHealth.title).font(.system(size: 13, weight: .semibold))
-                            Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id), sites: SiteEdits.on(route.id, in: model.setup).count,
+                            Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id),
+                                                        sites: SiteEdits.applied(route.id, in: model.setup, tailnet: model.store.tsSuffix).count,
                                                         othersAnswer: model.vpn.state.answering.contains { $0 != route.id }))
                                 .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                         }
@@ -474,7 +480,7 @@ private struct LiveStrip: View {
     var body: some View {
         if model.vpn.state.phase == .on && model.setup.prefs.stats {
             let series = route == DIRECT ? Stats.shared.live.direct : Stats.shared.live.down[route] ?? []
-            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route), sites = SiteEdits.on(route, in: model.setup).count
+            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route), sites = SiteEdits.applied(route, in: model.setup, tailnet: model.store.tsSuffix).count
             let now = Units.rate(Double(series.last ?? 0))
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {
