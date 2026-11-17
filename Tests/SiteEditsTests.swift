@@ -311,5 +311,7 @@ final class SiteEditsTests: XCTestCase {
         b.sites = ["printer.lan": BLOCK]
         b.prefs.lan = true
         XCTAssertEqual(Sites.applied(b), ["printer.lan": BLOCK])
+        // The profile summaries say how many aren't applied.
+        XCTAssertEqual(Sites.notAppliedCount(["printer.lan": "us", "netflix.com": "us", "tracker.lan": BLOCK], in: Setup(routes: [nl, us], defaultRoute: DIRECT)), 1)
     }
 }

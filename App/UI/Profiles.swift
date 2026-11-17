@@ -48,7 +48,10 @@ private struct SaveProfileSheet: View {
                     let counts = Dictionary(grouping: model.setup.apps.values, by: { $0 }).mapValues(\.count).sorted { $0.key < $1.key }
                     ForEach(Array(counts.prefix(3)), id: \.key) { id, count in Text("\(model.setup.label(id)) · \(count) app\(count == 1 ? "" : "s")") }
                     if counts.count > 3 { Text("+\(counts.count - 3) more") }
-                    if !model.setup.sites.isEmpty { Text("Websites · \(model.setup.sites.count)") }
+                    if !model.setup.sites.isEmpty {
+                        let unapplied = Sites.notAppliedCount(model.setup.sites, in: model.setup)
+                        Text("Websites · \(model.setup.sites.count)" + (unapplied > 0 ? ", \(unapplied) not applied" : ""))
+                    }
                     Text("Routes are shared: changing a route's location changes it in every profile that uses it.").foregroundStyle(.secondary)
                 }
             }.padding(.horizontal, Layout.gutter).padding(.bottom, Layout.inset)
@@ -84,7 +87,9 @@ struct ManageProfilesSheet: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     HStack { Text(p.name); if p.name == model.setup.profile { Text("In use").font(.caption).foregroundStyle(.secondary) } }
-                                    Text("\(model.setup.label(p.defaultRoute)) · own route: " + Snapshot.count(apps: p.apps.count, sites: p.sites.count).replacingOccurrences(of: " · ", with: ", ")).font(.caption).foregroundStyle(.secondary)
+                                    let unapplied = Sites.notAppliedCount(p.sites, in: model.setup)
+                                    Text("\(model.setup.label(p.defaultRoute)) · own route: " + Snapshot.count(apps: p.apps.count, sites: p.sites.count).replacingOccurrences(of: " · ", with: ", ")
+                                         + (unapplied > 0 ? ", \(unapplied) not applied" : "")).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Button { model.store.update { $0.move(p.name, by: -1) } } label: { Image(systemName: "arrow.up") }

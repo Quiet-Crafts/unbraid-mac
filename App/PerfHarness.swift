@@ -439,7 +439,10 @@ private final class Meter: NSObject {
     private func profileShots(_ dir: String, _ suffix: String) async {
         let before = Store.shared.setup
         Store.shared.update { s in
-            for (name, route) in [("Home", "nl"), ("Work", "us"), ("Travel", "jp")] { s.profile = nil; s.defaultRoute = route; s.saveAs(name) }
+            // Work keeps a rule for a printer the network answers, so its caption counts one not applied.
+            for (name, route) in [("Home", "nl"), ("Work", "us"), ("Travel", "jp")] {
+                s.profile = nil; s.defaultRoute = route; s.sites["printer.lan"] = name == "Work" ? DIRECT : nil; s.saveAs(name)
+            }
             s.use("Home")
         }
         let day = { (d: Int) in Calendar.current.date(byAdding: .day, value: -d, to: .now) ?? .now }

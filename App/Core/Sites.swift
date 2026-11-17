@@ -70,6 +70,13 @@ nonisolated enum Sites {
         setup.sites[name].flatMap { notApplied(name, $0, in: setup, tailnet: tailnet(of: setup)) }
     }
 
+    /// How many of `sites` (`setup`'s own or a saved profile's) don't apply in `setup` (see `applied`).
+    static func notAppliedCount(_ sites: [String: String], in setup: Setup) -> Int {
+        var s = setup
+        s.sites = sites
+        return sites.count - applied(s).count
+    }
+
     /// Whether `setup`'s rule for `name` applies (see `applied`).
     static func isApplied(_ name: String, in setup: Setup) -> Bool { applied(setup)[name] != nil }
 
