@@ -212,7 +212,7 @@ private final class Meter: NSObject {
     ]
     /// Website → route.
     private static let shotSites: [String: String] = [
-        "netflix.com": "us", "bbc.co.uk": "us", "rai.it": "it", "mybank.example": DIRECT, "tracker.example": BLOCK,
+        "netflix.com": "us", "bbc.co.uk": "us", "hulu.com": "us", "nytimes.com": "us", "pbs.org": "us", "rai.it": "it", "mybank.example": DIRECT, "tracker.example": BLOCK,
         "nas.example": "home",
     ]
     /// The user's own WireGuard server, the one shown not answering (`route-silent`, `panel-silent`, the widgets).
@@ -295,8 +295,9 @@ private final class Meter: NSObject {
         FrontApp.shared.perfShow(model.apps.app("com.apple.TV"))
         if !empty { for _ in 0..<80 where WeekBytes.shared.bytes.isEmpty { await meter.frames(6) } }
         go("traffic"); await meter.frames(20)
-        // `route-few`: a route with two apps and a website, whose lists sit together.
-        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("route-few", "route:it"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
+        // `route`: five apps and five websites; `route-few`: two apps and a website, whose lists sit together;
+        // `route-none`: apps only.
+        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("route-few", "route:it"), ("route-none", "route:jp"), ("direct", "route:\(DIRECT)"), ("blocked", "route:\(BLOCK)"),
                      ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         for (suffix, look) in [("", NSAppearance.Name.aqua), ("-dark", .darkAqua)] {
             NSApp.appearance = NSAppearance(named: look); await meter.frames(30)
@@ -492,7 +493,8 @@ private final class Meter: NSObject {
     /// size, the band sits below the toolbar and no list runs past the window's bottom. "home" is the own server not
     /// answering, with its card.
     private func bandShots(_ dir: String, _ prefix: String, _ suffix: String, _ normal: NSRect) async {
-        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("home", "route:home"), ("direct", "route:\(DIRECT)"),
+        let pages = [("apps", "apps"), ("websites", "websites"), ("route", "route:us"), ("route-few", "route:it"), ("route-none", "route:jp"),
+                     ("home", "route:home"), ("direct", "route:\(DIRECT)"),
                      ("blocked", "route:\(BLOCK)"), ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         let bands: [(String, () -> Void, () -> Void)] = [
             ("update-ask", { Updates.shared.setForTesting(UpdateCheck.State()) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
@@ -507,6 +509,7 @@ private final class Meter: NSObject {
                 if name == "home" { Connection.shared.perfSilent(["home"]); await meter.frames(30) }
                 if BandProbe.frame.height < 20 { report("[Perf] no \(band) band over \(name)"); shotsMissing += 1 }
                 await shoot(window, "\(dir)/\(prefix)min-\(band)-\(name)\(suffix).png")
+                await scrollsAsOne("min-\(band)-\(name)\(suffix)")
                 if name == "home" { Connection.shared.perfSilent([]); await meter.frames(20) }
             }
             off(); await meter.frames(45)
@@ -625,6 +628,38 @@ private final class Meter: NSObject {
         flow.perfShow(nil, in: w); await meter.frames(30)
     }
 
+    /// Where the bands and every list are, to tell a settled layout from one still moving.
+    private func layoutPrint(_ w: NSWindow) -> String {
+        let lists = appTables(in: w).compactMap { $0.enclosingScrollView }.map { s -> String in
+            let f = s.convert(s.bounds, to: nil)
+            return "\(Int(f.minY)):\(Int(f.height))\(s.enclosingScrollView == nil ? "" : "s")"
+        }
+        return "band \(Int(BandProbe.frame.minY)):\(Int(BandProbe.frame.height)) lists " + lists.joined(separator: ",")
+    }
+
+    /// A route's page that scrolls as one moves under the wheel even with the pointer over a list (the lists show all
+    /// their rows, so they have nothing to scroll themselves); then it goes back to the top for the next picture.
+    private func scrollsAsOne(_ name: String) async {
+        guard let table = appTables(in: window).first, let outer = table.enclosingScrollView?.enclosingScrollView else { return }
+        // Only a page with something to scroll can show it moving.
+        guard let doc = outer.documentView, doc.frame.height > outer.contentView.bounds.height + 10 else { return }
+        let before = outer.contentView.bounds.origin.y
+        report("[Perf] scrolls as one: \(name)")
+        // A mouse wheel's notch, handed to the list's own scroll view, as the window does for a wheel turned over it.
+        func wheel() -> NSEvent? {
+            CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: -3, wheel2: 0, wheel3: 0).flatMap { NSEvent(cgEvent: $0) }
+        }
+        if let e = wheel() { table.enclosingScrollView?.scrollWheel(with: e) }
+        await meter.frames(20)
+        if outer.contentView.bounds.origin.y == before {
+            if let e = wheel() { outer.scrollWheel(with: e) }
+            await meter.frames(20)
+            report("[Perf] the page didn't scroll under the wheel over a list for \(name) (straight to the page: \(outer.contentView.bounds.origin.y == before ? "no" : "yes"), \(type(of: outer)), next \(table.enclosingScrollView?.nextResponder.map { "\(type(of: $0))" } ?? "none"))"); shotsMissing += 1
+        }
+        outer.contentView.scroll(to: NSPoint(x: 0, y: doc.isFlipped ? 0 : max(0, doc.frame.height - outer.contentView.bounds.height)))
+        outer.reflectScrolledClipView(outer.contentView); await meter.frames(10)
+    }
+
     /// The window at its smallest. The first time it asks for less than it can be (AppKit holds the frame at its
     /// minimum) and remembers what it got; after that it asks for exactly that, which `shoot` then checks.
     private func shrink() async {
@@ -654,11 +689,35 @@ private final class Meter: NSObject {
             if band.height > 0, band.minY < toolbar - 0.5 || band.maxY > content.bounds.height + 0.5 {
                 report("[Perf] band at \(Int(band.minY))-\(Int(band.maxY)), toolbar ends at \(Int(toolbar)), window \(Int(content.bounds.height)) high, for \(name)"); shotsMissing += 1
             }
-            // No list runs past the window's bottom edge.
+            // No list runs past the window's bottom edge, unless the page scrolls as one; and every list shows at least
+            // two whole rows (or all it has) in its own view.
             for table in appTables(in: w) {
                 guard let scroll = table.enclosingScrollView, !scroll.isHiddenOrHasHiddenAncestor else { continue }
                 let bottom = scroll.convert(scroll.bounds, to: nil).minY
-                if bottom < -0.5 { report("[Perf] a list runs \(Int(-bottom)) points past the window's bottom for \(name)"); shotsMissing += 1 }
+                if scroll.enclosingScrollView == nil, bottom < -0.5 { report("[Perf] a list runs \(Int(-bottom)) points past the window's bottom for \(name)"); shotsMissing += 1 }
+                // In a page that scrolls as one, a list shows all its rows: it has nothing left to scroll itself.
+                if scroll.enclosingScrollView != nil, table.numberOfRows > 0 {
+                    let hidden = table.rect(ofRow: table.numberOfRows - 1).maxY - scroll.contentView.documentVisibleRect.maxY
+                    if hidden > 0.5 { report("[Perf] a list in a scrolling page hides \(Int(hidden)) points of its rows for \(name)"); shotsMissing += 1 }
+                }
+                let need = CGFloat(min(table.numberOfRows, 2)) * AppsTable.rowHeight
+                if scroll.contentView.bounds.height < need - 0.5 {
+                    report("[Perf] a list of \(table.numberOfRows) rows has room for \(Int(scroll.contentView.bounds.height)) points for \(name)"); shotsMissing += 1
+                }
+            }
+            // At the smallest size the page has settled: the same layout in three looks a few frames apart. A layout
+            // that feeds on itself never settles; the copy's own state changing (it drifts back to connecting now and
+            // then, which hides the live strip) settles at once, so one change is looked at again before it counts.
+            // Timed, not counted in display frames, so a sleeping display can't hold the run here.
+            if name.contains("min-") {
+                func looks() async -> [String] {
+                    var seen: [String] = []
+                    for _ in 0..<3 { seen.append(layoutPrint(w)); try? await Task.sleep(for: .milliseconds(50)) }
+                    return seen
+                }
+                var seen = await looks()
+                if Set(seen).count > 1 { try? await Task.sleep(for: .milliseconds(300)); seen = await looks() }
+                if Set(seen).count > 1 { report("[Perf] layout still changing for \(name): \(seen.joined(separator: " / "))"); shotsMissing += 1 }
             }
         }
         // The Settings gear stays on the toolbar on every page, whatever else goes into the overflow.

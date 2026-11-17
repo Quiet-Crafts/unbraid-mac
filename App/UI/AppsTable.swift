@@ -59,7 +59,7 @@ struct AppsTable: NSViewRepresentable {
         table.setDraggingSourceOperationMask([.copy, .move, .generic], forLocal: true)
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
 
-        let scroll = NSScrollView()
+        let scroll = ListScroll()
         scroll.documentView = table
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
@@ -85,6 +85,16 @@ struct AppsTable: NSViewRepresentable {
     }
 
     static let rowHeight: CGFloat = 40
+
+    /// A list's scroll view that hands the wheel on when it sits in a page that scrolls as one (a route's page in a
+    /// short window, where every list shows all its rows): the page moves under the pointer over a list instead of the
+    /// list bouncing in place. Straight to the page's scroll view: the views SwiftUI puts in between don't pass it on.
+    final class ListScroll: NSScrollView {
+        override func scrollWheel(with event: NSEvent) {
+            if let page = enclosingScrollView, abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX) { page.scrollWheel(with: event) }
+            else { super.scrollWheel(with: event) }
+        }
+    }
 
     /// The header, with the scrolling rows below it.
     final class Host: NSView {
