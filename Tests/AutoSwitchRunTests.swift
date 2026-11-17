@@ -231,6 +231,57 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(run.handle(.timer, now: at(80)), .nothing)
     }
 
+    // Cases found by an adversarial run, kept here: settled and decided on home, then a profile picked by hand there.
+    private func pickedOnHome() -> Run {
+        var r = rules
+        r.remember("office", name: "Office", profile: nil)
+        var run = Run(rules: r, now: t0)
+        _ = run.handle([.connected(true), on("home")], now: t0)
+        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "home", acted: nil))
+        XCTAssertEqual(run.handle(.pickedByHand, now: at(10)), .nothing)
+        return run
+    }
+    private func decides(_ actions: [Run.Action]) -> Bool { actions.contains { if case .decide = $0 { true } else { false } } }
+
+    func testAHandPickStaysWhenTheRuleForAnotherNetworkChanges() {
+        var run = pickedOnHome()
+        var r = run.rules
+        r.elsewhere = nil
+        XCTAssertFalse(decides([run.handle(.rules(r), now: at(20)), run.handle(.timer, now: at(25))]))
+    }
+
+    func testAHandPickStaysWhenTheHomeRulesProfileIsRenamed() {
+        var run = pickedOnHome()
+        var r = run.rules
+        r.renamed("Home", to: "House")
+        XCTAssertFalse(decides([run.handle([.profiles(["House", "Travel"]), .rules(r)], now: at(20)), run.handle(.timer, now: at(25))]))
+        XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "home", rules: r))
+        // Its rule then set to another profile: that applies.
+        let house = run.acted
+        r.known[0].profile = "Travel"
+        XCTAssertEqual(run.handle(.rules(r), now: at(30)), .wait(at(35)))
+        XCTAssertEqual(run.handle(.timer, now: at(35)), .decide(mark: "home", acted: house))
+    }
+
+    func testAHandPickStaysThroughAShortDropOnTheSameNetwork() {
+        var run = pickedOnHome()
+        XCTAssertEqual(run.handle(.network(.offline), now: at(20)), .nothing)
+        XCTAssertEqual(run.handle(on("home"), now: at(22)), .wait(at(27)))
+        XCTAssertEqual(run.handle(.timer, now: at(27)), .nothing)
+        XCTAssertEqual(run.handle([.connected(false)], now: at(30)), .nothing)
+        XCTAssertEqual(run.handle([.connected(true)], now: at(40)), .wait(at(45)))
+        XCTAssertEqual(run.handle(.timer, now: at(45)), .nothing)
+    }
+
+    /// Picked by hand with no network (the Wi-Fi off), then another network an hour later: that network decides.
+    func testAHandPickWithNoNetworkAndThenAnotherNetwork() {
+        var run = pickedOnHome()
+        _ = run.handle(.network(.offline), now: at(20))
+        _ = run.handle(.pickedByHand, now: at(21))
+        XCTAssertEqual(run.handle(on("cafe"), now: at(3600)), .wait(at(3605)))
+        XCTAssertEqual(run.handle(.timer, now: at(3605)), .decide(mark: "cafe", acted: AutoSwitch.Acted(mark: "home", rules: run.rules)))
+    }
+
     func testNothingIsDecidedWhileASwitchIsPending() {
         var run = Run(rules: rules, now: t0)
         XCTAssertEqual(run.handle([.connected(true), on("cafe"), .busy(true)], now: t0), .wait(at(5)))

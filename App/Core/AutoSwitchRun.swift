@@ -22,6 +22,8 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         case network(Reading)
         case connected(Bool)
         case rules(NetworkRules)
+        /// The names of the saved profiles, sent before the rules: they tell a rename from a rule set to another profile.
+        case profiles([String])
         /// A profile was chosen by hand (the menu bar, the window, Control Center, Shortcuts).
         case pickedByHand
         /// Nothing may be decided now: a profile switch is still pending, or the setup is a stand-in.
@@ -43,6 +45,7 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     private(set) var connected = false
     private(set) var rules: NetworkRules
     private(set) var busy = false
+    private(set) var profiles: [String] = []
     /// Since when the network, the connection and the profile for this network have been as they are.
     private(set) var since: Instant
     /// Since when the network has read as it does.
@@ -81,14 +84,23 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
             case .connected(let c): if c != connected { connected = c; since = now }
             case .rules(let r):
                 guard r != rules else { break }
-                // Only a new profile for this network is a change here: a hand pick stays through edits about others.
-                if let here = network(at: now), r.profile(on: here) != rules.profile(on: here) { since = now }
+                // Only a new profile for this network is a change here: a hand pick stays through edits about others,
+                // and through a rename of the profile its rule names (what was decided follows the new name).
+                if let here = network(at: now), case let (old, new) = (rules.profile(on: here), r.profile(on: here)), old != new {
+                    var renamed = rules
+                    if let old, let new { renamed.renamed(old, to: new) }
+                    if let old, let new, !profiles.contains(old), profiles.contains(new), renamed == r,
+                       acted == AutoSwitch.Acted(mark: here, rules: rules) {
+                        acted = AutoSwitch.Acted(mark: here, rules: r)
+                    } else { since = now }
+                }
                 rules = r
                 byHand = nil
             // Counts as decided for the network it was picked on: nothing changes it until the network or its rule does.
             case .pickedByHand:
                 if let here = network(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = now }
             case .busy(let b): busy = b
+            case .profiles(let p): profiles = p
             case .timer: break
             }
             take(now)

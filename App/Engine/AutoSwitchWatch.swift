@@ -75,7 +75,7 @@ final class AutoSwitchWatch {
         follow(m)
         // Busy also while a change waits for the user's answer about a provider's limit: a switch now would take that
         // question away with the change it was about.
-        apply(run.handle([.connected(m.vpn.state.phase == .on), .rules(store.networks),
+        apply(run.handle([.connected(m.vpn.state.phase == .on), .profiles(profiles), .rules(store.networks),
                           .busy(store.setupStandIn || m.setup.pendingSwitch != nil || m.limitAsk != nil)]))
     }
 
