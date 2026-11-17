@@ -196,8 +196,10 @@ private final class CommandSession: NSObject, CommandXPCProtocol, @unchecked Sen
         Self.queue.async { reply(["result": PacketTunnelProvider.forget(uid, expected: expected)]) }
     }
 
-    func subscribeStats(interval: Int64, logs: Bool, reply: @escaping (Bool) -> Void) {
+    func subscribeStats(interval: Int64, logs: Bool, sites: [String], reply: @escaping (Bool) -> Void) {
         nonisolated(unsafe) let reply = reply
+        // The app's list is data: one that can't be a setup's websites is refused whole, not repaired.
+        guard let sites = SiteMatch.accepted(sites) else { Log.error("stats: website list refused"); return reply(false) }
         let options = LibboxCommandClientOptions()
         options.addCommand(LibboxCommandStatus)
         options.addCommand(LibboxCommandConnections)
@@ -210,7 +212,7 @@ private final class CommandSession: NSObject, CommandXPCProtocol, @unchecked Sen
         Self.queue.async {
             let asked = PacketTunnelProvider.subscription
             guard asked.owner == self.uid,
-                  let client = LibboxNewCommandClient(StatsRelay(self, engine: asked.engine), options) else { return reply(false) }
+                  let client = LibboxNewCommandClient(StatsRelay(self, engine: asked.engine, sites: sites), options) else { return reply(false) }
             let box = Unchecked(value: client)
             do { try box.value.connect() } catch { Log.error("stats: no engine connection"); return reply(false) }
             // connect() waits for a server: even if the owner came back, it must still be the same engine.
@@ -321,7 +323,9 @@ private struct Unchecked<T>: @unchecked Sendable { let value: T }
 private final class StatsRelay: NSObject, LibboxCommandClientHandlerProtocol, @unchecked Sendable {
     private weak var session: CommandSession?
     private let engine: Int
-    init(_ session: CommandSession, engine: Int) { self.session = session; self.engine = engine }
+    /// The websites whose traffic statistics count apart (see `subscribeStats`).
+    private let sites: [String]
+    init(_ session: CommandSession, engine: Int, sites: [String]) { self.session = session; self.engine = engine; self.sites = sites }
 
     func write(_ events: LibboxConnectionEvents?) {
         guard let events, let it = events.iterator() else { return }
@@ -340,9 +344,11 @@ private final class StatsRelay: NSObject, LibboxCommandClientHandlerProtocol, @u
                 #if DEBUG
                 if kind == .new { trace = "\(c.network) \(c.destination) \(c.domain) rule=\(c.rule) out=\(c.outbound)" }
                 #endif
+                // The name the engine knows stays here: only the address of the website rule it falls under goes out.
+                let site = sites.isEmpty ? nil : SiteMatch.match(c.domain, sites)
                 return EngineWire.Connection(up: c.uplinkTotal, down: c.downlinkTotal, path: c.processInfo?.processPath ?? "",
                                              chain: Self.strings(c.chain()), inbound: c.inbound, createdAt: c.createdAt,
-                                             closedAt: c.closedAt, trace: trace)
+                                             closedAt: c.closedAt, site: site, trace: trace)
             }
             list.append(EngineWire.Event(kind: kind, id: e.id_, deltaUp: e.uplinkDelta, deltaDown: e.downlinkDelta, connection: connection))
         }

@@ -1,0 +1,149 @@
+import XCTest
+
+/// A website with a route of its own counted in an app's place: what the extension takes and sends, and how the app
+/// keys, attributes, sums and names it.
+final class StatsSitesTests: XCTestCase {
+    // MARK: The extension's side
+
+    func testTheExtensionTakesOnlyAListThatCanBeASetupsWebsites() {
+        XCTAssertEqual(SiteMatch.accepted([]), [])
+        XCTAssertEqual(SiteMatch.accepted(["example.com", "api.example.org", "xn--bcher-kva.example", "a-b.c0"]),
+                       ["example.com", "api.example.org", "xn--bcher-kva.example", "a-b.c0"])
+        for bad in ["", "Example.com", "localhost", "example..com", ".example.com", "example.com.", "-a.example", "a-.example",
+                    "ex_ample.com", "exämple.com", "example.com/x", "example.com:443", "*.example.com", " example.com",
+                    "example.com\n", "\(String(repeating: "a", count: 64)).com"] {
+            XCTAssertNil(SiteMatch.accepted(["example.org", bad]), bad)
+        }
+        // At most 253 bytes, and at most as many as a profile holds.
+        let long = Array(repeating: String(repeating: "a", count: 62), count: 4).joined(separator: ".") + ".com" // 255
+        XCTAssertNil(SiteMatch.accepted([long]))
+        let fits = Array(repeating: String(repeating: "a", count: 62), count: 4).joined(separator: ".") + ".c" // 253
+        XCTAssertEqual(fits.utf8.count, 253)
+        XCTAssertEqual(SiteMatch.accepted([fits]), [fits])
+        let fifty = (0..<50).map { "s\($0).example" }
+        XCTAssertEqual(SiteMatch.accepted(fifty), fifty)
+        XCTAssertNil(SiteMatch.accepted(fifty + ["one-more.example"]))
+        XCTAssertEqual(Sites.max, SiteMatch.max)
+    }
+
+    func testTheMatchIsTheRulesAddressNeverTheNameLookedUp() {
+        let sites = ["netflix.com", "example.org"]
+        XCTAssertEqual(SiteMatch.match("www.netflix.com", sites), "netflix.com")
+        XCTAssertEqual(SiteMatch.match("assets.nflx.netflix.com.", sites), "netflix.com")
+        XCTAssertEqual(SiteMatch.match("EXAMPLE.org", sites), "example.org")
+        // Names outside the list, IP addresses and an unknown name give nothing at all.
+        for host in ["", "netflix.co", "notnetflix.com", "netflix.com.evil.example", "192.0.2.7", "2001:db8::1", "example.com"] {
+            XCTAssertNil(SiteMatch.match(host, sites), host)
+        }
+        XCTAssertNil(SiteMatch.match("www.netflix.com", [String]()))
+        // Whatever is returned is an element of the list, whatever case the name came in.
+        XCTAssertTrue(sites.contains(SiteMatch.match("WWW.NETFLIX.COM", sites) ?? ""))
+    }
+
+    func testTheWireCarriesASiteOnlyWhenSet() throws {
+        let plain = EngineWire.Connection(up: 1, down: 2, path: "/x", chain: ["r-nl"], inbound: "tun", createdAt: 3, closedAt: 0)
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(plain), as: UTF8.self).contains("site"))
+        var routed = plain
+        routed.site = "netflix.com"
+        XCTAssertEqual(try JSONDecoder().decode(EngineWire.Connection.self, from: JSONEncoder().encode(routed)).site, "netflix.com")
+        // What an older extension sends (no site at all) still reads.
+        let old = Data(#"{"up":1,"down":2,"path":"/x","chain":[],"inbound":"tun","createdAt":3,"closedAt":0}"#.utf8)
+        XCTAssertNil(try JSONDecoder().decode(EngineWire.Connection.self, from: old).site)
+    }
+
+    // MARK: The app's side
+
+    private func ev(_ id: String, site: String?, own: Bool = false, total: (Int64, Int64)? = (10, 20), kind: Ledger.Kind = .new) -> Ledger.Ev {
+        Ledger.Ev(kind: kind, id: id, total: total.map { Traffic(up: $0.0, down: $0.1) }, delta: Traffic(up: 1, down: 2),
+                  path: "/Applications/Safari.app/Contents/MacOS/Safari", tag: "r-us", closed: false, created: 0, own: own, site: site)
+    }
+
+    func testAMatchedConnectionCountsUnderItsWebsiteNotTheBrowser() {
+        let program: (String) -> String = { $0.hasPrefix("/Applications/Safari.app") ? "com.apple.Safari" : "?" }
+        XCTAssertEqual(StatsMath.key(of: ev("1", site: "netflix.com"), own: "app.unbraid", program: program), "site:netflix.com")
+        XCTAssertEqual(StatsMath.key(of: ev("2", site: nil), own: "app.unbraid", program: program), "com.apple.Safari")
+        // The app's own probes stay its own; a name that is no rule's address is never a website key.
+        XCTAssertEqual(StatsMath.key(of: ev("3", site: "netflix.com", own: true), own: "app.unbraid", program: program), "app.unbraid")
+        for bad in ["www.netflix.com", "Netflix.com", "", "/Applications/Evil.app", "netflix"] {
+            XCTAssertEqual(StatsMath.key(of: ev("4", site: bad), own: "app.unbraid", program: program), "com.apple.Safari", bad)
+        }
+    }
+
+    func testKeysAndAddressesRoundTrip() {
+        XCTAssertEqual(StatsMath.siteKey("example.com"), "site:example.com")
+        XCTAssertNil(StatsMath.siteKey(nil))
+        XCTAssertNil(StatsMath.siteKey("www.example.com"))
+        XCTAssertEqual(StatsMath.site("site:example.com"), "example.com")
+        for key in ["com.apple.Safari", "/usr/bin/curl", "~/bin/tool", "?", StatsMath.otherPrograms, "app.unbraid", "sites.example"] {
+            XCTAssertNil(StatsMath.site(key), key)
+        }
+    }
+
+    func testTheExtensionIsGivenTheWebsitesThatCarryTraffic() {
+        var s = Setup()
+        s.routes = [Route(id: "us")]
+        s.sites = ["netflix.com": "us", "news.example": DIRECT, "ads.example": BLOCK, "Bad Name": "us"]
+        XCTAssertEqual(StatsMath.countedSites(s), ["netflix.com", "news.example"])
+        s.sites = Dictionary(uniqueKeysWithValues: (0..<60).map { ("s\($0).example", DIRECT) })
+        let counted = StatsMath.countedSites(s)
+        XCTAssertEqual(counted.count, SiteMatch.max)
+        XCTAssertNotNil(SiteMatch.accepted(counted))
+        XCTAssertEqual(StatsMath.countedSites(Setup()), [])
+    }
+
+    func testAWebsitesExitIsItsOwnRouteWhereRoutesShareATunnel() {
+        var s = Setup()
+        s.routes = [Route(id: "nl"), Route(id: "us")]
+        s.defaultRoute = "nl"
+        s.apps = ["com.apple.Safari": "nl"]
+        s.sites = ["netflix.com": "us"]
+        let tags = ["nl": "r-shared", "us": "r-shared"]
+        XCTAssertEqual(StatsMath.exitOf(tag: "r-shared", app: "site:netflix.com", setup: s, tags: tags), "us")
+        XCTAssertEqual(StatsMath.exitOf(tag: "r-shared", app: "com.apple.Safari", setup: s, tags: tags), "nl")
+        // A rule removed since follows the default; Direct stays Direct.
+        XCTAssertEqual(StatsMath.exitOf(tag: "r-shared", app: "site:gone.example", setup: s, tags: tags), "nl")
+        XCTAssertEqual(StatsMath.exitOf(tag: "direct", app: "site:netflix.com", setup: s, tags: tags), DIRECT)
+    }
+
+    func testAProgramIsNeverTakenForAWebsite() {
+        // A bundle claiming a website's key is counted by its location instead.
+        let key = StatsMath.ownerKey(path: "/Applications/Evil.app/Contents/MacOS/evil", bundles: [("/Applications/Evil.app", "site:netflix.com")],
+                                     tools: [], home: "/Users/me") { _ in "site:netflix.com" }
+        XCTAssertEqual(key, "/Applications/Evil.app/Contents/MacOS/evil")
+        XCTAssertEqual(StatsMath.ownerKey(path: "site:netflix.com", bundles: [], tools: [], home: "/Users/me") { _ in nil }, "?")
+    }
+
+    func testWebsiteRowsRollUpAndReadBackLikeApps() {
+        var ledger = Ledger()
+        let open: (Ledger.Ev) -> Ledger.Conn = { e in
+            Ledger.Conn(app: StatsMath.key(of: e, own: "app.unbraid") { _ in "com.apple.Safari" }, exit: "us@1", server: nil)
+        }
+        let first = ledger.apply([ev("a", site: "netflix.com"), ev("b", site: nil)], reset: false, open: open)
+        XCTAssertEqual(first.counted.map(\.app), ["site:netflix.com", "com.apple.Safari"])
+        // Later updates keep the key fixed when it was first seen, even without a site on them.
+        let later = ledger.apply([ev("a", site: nil, total: nil, kind: .update)], reset: false, open: open)
+        XCTAssertEqual(later.counted, [Ledger.Counted(app: "site:netflix.com", exit: "us@1", server: nil, up: 1, down: 2, kind: .update)])
+
+        var p = Pending()
+        for c in first.counted + later.counted { p.add(now: 1_000_000, app: c.app, exit: c.exit, server: c.server, up: c.up, down: c.down) }
+        XCTAssertEqual(Set(p.daily.keys.map(\.app)), ["site:netflix.com", "com.apple.Safari"])
+        XCTAssertEqual(p.daily.first { $0.key.app == "site:netflix.com" }?.value, Pending.Sum(up: 11, down: 22))
+
+        // Read back: the website keeps its key through the tools merge, and its share of the route's lane.
+        let rows = [AppBytes(app: "site:netflix.com", exit: "us@1", bytes: 33), AppBytes(app: "~/bin/tool", exit: "us@1", bytes: 5),
+                    AppBytes(app: "/Users/me/bin/tool", exit: "us@1", bytes: 5)]
+        let merged = StatsMath.sameTools(rows, home: "/Users/me")
+        XCTAssertEqual(merged.first { $0.app.hasPrefix("site:") }, rows[0])
+        XCTAssertEqual(merged.count, 2)
+        let source = StatsSource(exits: { [:] }, perDay: { _, _ in [:] }, perHour: { _ in [:] }, apps: { _, _ in rows }, peaks: { _, _ in [] },
+                                 tests: { [] }, spans: { _, _ in [] })
+        let v = StatsMath.view(.week, now: Date(timeIntervalSince1970: 1_800_000_000), homeFolder: "/Users/me", setup: Setup(), source: source)
+        XCTAssertEqual(v.appLane("us@1").top.first, rows[0])
+    }
+
+    func testWebsiteTotalsComeFromTheSameSumsAsApps() {
+        let totals = ["site:netflix.com": 40, "site:example.org": 2, "com.apple.Safari": 900, "/usr/bin/curl": 1, "?": 3] as [String: Int64]
+        XCTAssertEqual(StatsMath.siteTotals(totals), ["netflix.com": 40, "example.org": 2])
+        XCTAssertEqual(StatsMath.siteTotals([:]), [:])
+    }
+}

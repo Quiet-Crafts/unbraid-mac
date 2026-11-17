@@ -125,7 +125,7 @@ struct StatsOff: View {
 let consentText = """
 Statistics stay on this Mac. They are never uploaded.
 Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests.
-Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as "Other programs". No browsing destinations, ever.
+Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as "Other programs". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.
 Turn off or delete everything in Settings at any time.
 """
 

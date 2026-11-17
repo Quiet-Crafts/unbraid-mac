@@ -44,7 +44,10 @@ import Foundation
     /// theirs: still owed) or "failed".
     func forgetSealed(_ expected: String, reply: @escaping ([String: String]) -> Void)
     /// Connection events and status ticks every `interval` ns (debug builds: engine logs too). False: not subscribed.
-    func subscribeStats(interval: Int64, logs: Bool, reply: @escaping (Bool) -> Void)
+    /// `sites`: the addresses of the running setup's websites that carry traffic (`SiteMatch.accepted`, else refused); a
+    /// connection to one of them names that address, and only that (`EngineWire.Connection.site`). The app subscribes
+    /// only while statistics are on.
+    func subscribeStats(interval: Int64, logs: Bool, sites: [String], reply: @escaping (Bool) -> Void)
     /// Tailscale status updates. False: not subscribed.
     func subscribeTailscale(reply: @escaping (Bool) -> Void)
     /// One STUN binding through `outboundTag`: true on the first external address or result, false on an error.
@@ -90,6 +93,9 @@ nonisolated enum EngineWire {
         var inbound: String
         var createdAt: Int64
         var closedAt: Int64
+        /// The website rule the connection belongs to: one of the addresses the subscription was given, never the name
+        /// that was looked up. Nil for every other connection.
+        var site: String? = nil
         /// Debug builds only, for the engine trace: network, destination, domain, rule and outbound.
         var trace: String?
     }

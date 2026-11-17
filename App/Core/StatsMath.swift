@@ -391,14 +391,46 @@ nonisolated enum StatsMath {
 
     // MARK: Attribution
 
-    /// The tunnel tag says which tunnel; when routes share it, the app's own route among them says which route.
+    /// The tunnel tag says which tunnel; when routes share it, the app's (or website's) own route among them says which
+    /// route.
     static func exitOf(tag: String?, app: String, setup: Setup, tags: [String: String]) -> String {
         guard let tag, tag != "direct" else { return DIRECT }
         if tag == "home-wg" { return home }
         let candidates = tags.filter { $0.value == tag }.keys.sorted()
         if candidates.isEmpty { return tag == Compiler.tsTag ? home : tag.hasPrefix("r-") ? String(tag.dropFirst(2)) : tag }
-        let own = setup.routeOf(app) // the running setup's assignment, not one still being edited
+        // The running setup's assignment, not one still being edited.
+        let own = site(app).map { setup.sites[$0] ?? setup.defaultRoute } ?? setup.routeOf(app)
         return candidates.contains(own) ? own : tag == Compiler.tsTag ? home : candidates[0]
+    }
+
+    /// A website with a route of its own is counted in an app's place under this, then its address ("site:example.com"),
+    /// as the Android app records it. Only the rule's address: the extension never sends the name that was looked up.
+    static let sitePrefix = "site:"
+
+    /// The key a website's traffic is counted under; nil for anything that isn't an address as a rule keeps it.
+    static func siteKey(_ address: String?) -> String? {
+        guard let address, Sites.isClean(address) else { return nil }
+        return sitePrefix + address
+    }
+
+    /// The website's address when `key` is a website's, else nil: an app or program key never is one.
+    static func site(_ key: String) -> String? { key.hasPrefix(sitePrefix) ? String(key.dropFirst(sitePrefix.count)) : nil }
+
+    /// The key a connection's traffic is counted under: the app's own (its speed tests and checks), else the website rule
+    /// it matched, whichever app opened it, else the program that opened it (`program`, given its path).
+    static func key(of e: Ledger.Ev, own: String, program: (String) -> String) -> String {
+        e.own ? own : siteKey(e.site) ?? program(e.path)
+    }
+
+    /// The websites whose traffic the extension counts apart for `setup` (what the engine runs): those that carry
+    /// traffic, so not Block, as rules keep them and never more than a profile holds.
+    static func countedSites(_ setup: Setup) -> [String] {
+        Array(setup.sites.filter { $0.value != BLOCK && Sites.isClean($0.key) }.keys.sorted().prefix(SiteMatch.max))
+    }
+
+    /// Bytes per website address, from totals per app key (`Stats.appTotals`).
+    static func siteTotals(_ totals: [String: Int64]) -> [String: Int64] {
+        totals.reduce(into: [:]) { out, t in if let a = site(t.key) { out[a, default: 0] += t.value } }
     }
 
     /// The row for programs that run from temporary or cache folders (a build's executable, an npx or updater helper):
@@ -410,7 +442,8 @@ nonisolated enum StatsMath {
     /// its file), with the home folder written as "~" so the account's name isn't kept, else `otherPrograms` for a
     /// program in a temporary or cache folder, else "?" when the engine didn't say.
     static func ownerKey(path: String, bundles: [(prefix: String, id: String)], tools: Set<String>, toolPatterns: [String: [String]] = [:], home: String = NSHomeDirectory(), bundleId: (String) -> String?) -> String {
-        if let k = appKey(path: path, bundles: bundles, tools: tools, toolPatterns: toolPatterns) ?? outerApp(path).flatMap(bundleId) { return k }
+        // A bundle that calls itself "site:…" is no website: it is counted by its location instead.
+        if let k = appKey(path: path, bundles: bundles, tools: tools, toolPatterns: toolPatterns) ?? outerApp(path).flatMap(bundleId), site(k) == nil { return k }
         guard path.hasPrefix("/") else { return "?" }
         let h = home.hasSuffix("/") ? String(home.dropLast()) : home
         let volatile = ["/private/var/folders/", "/var/folders/", "/private/tmp/", "/tmp/", "/private/var/tmp/", "/var/tmp/"]
@@ -586,6 +619,8 @@ nonisolated struct Ledger {
         var created: Int64
         /// Opened through the app's own probe inbound.
         var own: Bool
+        /// The website rule's address the extension matched it to (`EngineWire.Connection.site`).
+        var site: String? = nil
     }
     struct Conn { var app: String; var exit: String; var server: String?; var up: Int64 = 0; var down: Int64 = 0 }
     /// What an event adds to the sums.

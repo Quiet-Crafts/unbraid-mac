@@ -4,7 +4,7 @@ import SQLite3
 
 // Local traffic statistics. Off until the user agrees; then the engine's per-connection byte counts are
 // summed per hour, day, app and exit into ~/Library/Application Support/unbraid/stats.db. Never uploaded; no
-// destinations kept. The maths is in App/Core/StatsMath.swift; this file is the SQLite file, the engine subscription
+// destinations kept, except that a website with a route of its own is counted under its rule's address in an app's place. The maths is in App/Core/StatsMath.swift; this file is the SQLite file, the engine subscription
 // and the main-actor face the views read. Stats.kt, ported.
 
 /// What the writer needs from the main actor, read when it needs it (so it matches what the engine runs).
@@ -72,7 +72,9 @@ final class Stats {
     private(set) var epoch = 0
 
     private var tail: Task<Void, Never>?
-    private var changes: AsyncStream<(VpnState.Phase, Bool)>.Continuation?
+    /// What the writer follows, in the order it changed: the phase and the setting, and the websites the engine runs.
+    private enum Change { case state(VpnState.Phase, Bool), sites([String]) }
+    private var changes: AsyncStream<Change>.Continuation?
 
     private init() {
         Task { for await l in StatsWriter.shared.liveStream { live = l } }
@@ -91,22 +93,34 @@ final class Stats {
     /// Call once at launch.
     func follow() {
         guard changes == nil else { return }
-        let (stream, cont) = AsyncStream<(VpnState.Phase, Bool)>.makeStream()
+        let (stream, cont) = AsyncStream<Change>.makeStream()
         changes = cont
-        Task { for await (p, on) in stream { await StatsWriter.shared.apply(phase: on ? p : .off, recording: on) } }
+        Task {
+            for await c in stream {
+                switch c {
+                case .state(let p, let on): await StatsWriter.shared.apply(phase: on ? p : .off, recording: on)
+                case .sites(let s): await StatsWriter.shared.setSites(s)
+                }
+            }
+        }
         Task { await StatsWriter.shared.pruneAtLaunch() }
         track()
     }
 
     private var lastSent: (VpnState.Phase, Bool)?
+    private var lastSites: [String]?
 
     private func track() {
-        let now = withObservationTracking { (Connection.shared.state.phase, Store.shared.setup.prefs.stats) } onChange: {
+        let now = withObservationTracking {
+            (Connection.shared.state.phase, Store.shared.setup.prefs.stats, StatsMath.countedSites(Connection.shared.running ?? Store.shared.setup))
+        } onChange: {
             Task { @MainActor [weak self] in self?.track() }
         }
+        // The websites first, so a subscription the new state starts already has them.
+        if lastSites != now.2 { lastSites = now.2; changes?.yield(.sites(now.2)) }
         guard lastSent?.0 != now.0 || lastSent?.1 != now.1 else { return }
-        lastSent = now
-        changes?.yield(now)
+        lastSent = (now.0, now.1)
+        changes?.yield(.state(now.0, now.1))
     }
 
     fileprivate func context() -> StatsContext {
@@ -166,6 +180,9 @@ final class Stats {
 
     /// Small consumers avoid exits, tests and the 91-day session heatmap.
     func appTotals(_ p: Period) async -> [String: Int64] { await tail?.value; return await StatsWriter.shared.appTotals(p, now: .now) }
+    /// Bytes per website address (a website with a route of its own) over the period, from the same sums as `appTotals`:
+    /// `await Stats.shared.siteTotals(.week)["example.com"]` is that website's week, whichever route carried it.
+    func siteTotals(_ p: Period) async -> [String: Int64] { StatsMath.siteTotals(await appTotals(p)) }
     func week() async -> [Snapshot.Day] { await tail?.value; return await StatsWriter.shared.week(now: .now) }
 
     /// Spans overlapping [from, to) ms: protected and paused time. The open span counts up to now.
@@ -245,6 +262,8 @@ actor StatsWriter {
     private var heard: Int64 = 0
     private var retries = 0
     private var owners: [String: String] = [:]
+    /// The running setup's websites that carry traffic: the extension counts them apart (`StatsMath.countedSites`).
+    private var sites: [String] = []
     private var bundles: [BundleRoot] = []
     private var bundlesAt: Int64 = 0
 
@@ -309,6 +328,14 @@ actor StatsWriter {
     func close() async {
         checkpoint()
         await flush(force: true)
+    }
+
+    /// Websites added, removed or moved to or from Block in what the engine runs: a subscription under way takes the new
+    /// list by subscribing again, as for a new sampling rate.
+    func setSites(_ s: [String]) async {
+        guard sites != s else { return }
+        sites = s
+        if client != nil { await startCollector(retime: true) }
     }
 
     func setWatching(_ v: Bool) async {
@@ -587,13 +614,13 @@ actor StatsWriter {
         ledger.startedAt = now
         interval = watching ? 1_000_000_000 : 15_000_000_000
         if pump == nil { pump = Task { [self] in for await _ in self.post.wakeups { while let m = self.post.next() { await handle(m) } } } }
-        let g = gen, post = post, interval = interval
+        let g = gen, post = post, interval = interval, sites = sites
         var logs = false
         #if DEBUG
         logs = DebugHooks.engineLog
         #endif
         client = EngineLink.subscribe(Collector(gen: g, post: post), lost: { post.send(.lost(gen: g)) }) {
-            $0.subscribeStats(interval: interval, logs: logs, reply: $1)
+            $0.subscribeStats(interval: interval, logs: logs, sites: sites, reply: $1)
         }
     }
 
@@ -656,7 +683,7 @@ actor StatsWriter {
         guard g == gen else { return }
         let now = Self.wall()
         let (counted, batch) = ledger.apply(events, reset: reset) { e in
-            let app = e.own ? ctx.own : appOf(e.path, ctx)
+            let app = StatsMath.key(of: e, own: ctx.own) { appOf($0, ctx) }
             let exit = (e.own ? ctx.exitOn(e.tag) : nil) ?? StatsMath.exitOf(tag: e.tag, app: app, setup: ctx.running, tags: ctx.tags)
             return Ledger.Conn(app: app, exit: StatsMath.idOf(exit, setup: ctx.running), server: ctx.servers[exit])
         }
@@ -709,7 +736,7 @@ private nonisolated final class Collector: NSObject, EngineEventsProtocol, @unch
                 kind: Self.kind(e.kind), id: e.id, total: c.map { Traffic(up: $0.up, down: $0.down) },
                 delta: Traffic(up: e.deltaUp, down: e.deltaDown), path: c?.path ?? "",
                 tag: c.flatMap { Self.first($0.chain) }, closed: (c?.closedAt ?? 0) > 0, created: c?.createdAt ?? 0,
-                own: c?.inbound == Compiler.probeTag)
+                own: c?.inbound == Compiler.probeTag, site: c?.site)
         }
         post.send(.events(gen: gen, list, reset: events.reset))
     }

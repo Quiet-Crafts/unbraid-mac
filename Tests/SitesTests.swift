@@ -43,12 +43,12 @@ final class SitesTests: XCTestCase {
 
     func testTheMostSpecificWebsiteMatches() {
         let sites = ["example.com", "api.example.com", "bank.example"]
-        XCTAssertEqual(Sites.match("example.com", sites), "example.com")
-        XCTAssertEqual(Sites.match("WWW.Example.com.", sites), "example.com")
-        XCTAssertEqual(Sites.match("v2.api.example.com", sites), "api.example.com")
-        XCTAssertNil(Sites.match("notexample.com", sites))
-        XCTAssertNil(Sites.match("example.com.evil.org", sites))
-        XCTAssertNil(Sites.match("", sites))
+        XCTAssertEqual(SiteMatch.match("example.com", sites), "example.com")
+        XCTAssertEqual(SiteMatch.match("WWW.Example.com.", sites), "example.com")
+        XCTAssertEqual(SiteMatch.match("v2.api.example.com", sites), "api.example.com")
+        XCTAssertNil(SiteMatch.match("notexample.com", sites))
+        XCTAssertNil(SiteMatch.match("example.com.evil.org", sites))
+        XCTAssertNil(SiteMatch.match("", sites))
     }
 
     func testANameUnderAnotherComesFirstAndRunsShareARoute() {

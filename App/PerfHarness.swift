@@ -254,11 +254,15 @@ private final class Meter: NSObject {
         model.acceptDisclosureForPerf()
     }
 
-    /// A month of traffic: video and music heaviest, each app through its own route.
+    /// Two made-up websites with a route of their own, so Traffic shows website lines.
+    private static let shotSites = ["tv.example.com": "us", "news.example.org": "it"]
+
+    /// A month of traffic: video and music heaviest, each app through its own route, the websites through theirs.
     private func seedShotTraffic() {
         let heavy = ["com.apple.TV", "com.apple.Music", "com.apple.Safari", "com.apple.Photos", "com.apple.podcasts", "com.apple.Maps", "com.apple.news", "com.apple.AppStore", "com.apple.mail"]
-        let keys = appKeys.filter { !heavy.contains($0) } + heavy.reversed()
-        let exits = keys.map { Self.shotApps[$0] ?? "nl" }
+        let sites = Self.shotSites.keys.sorted().compactMap(StatsMath.siteKey)
+        let keys = appKeys.filter { !heavy.contains($0) } + sites + heavy.reversed()
+        let exits = keys.map { StatsMath.site($0).flatMap { Self.shotSites[$0] } ?? Self.shotApps[$0] ?? "nl" }
         Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id), exits: exits)
     }
 
@@ -290,6 +294,14 @@ private final class Meter: NSObject {
             for (name, target) in pages {
                 go(target); await meter.frames(90)
                 await shoot(window, "\(dir)/\(prefix)\(name)\(suffix).png")
+            }
+            // Traffic's apps list, which sits below the fold: the websites' lines among the apps.
+            go("traffic"); await meter.frames(60)
+            if !empty, let scroll = find(NSScrollView.self, in: window.contentView), let doc = scroll.documentView {
+                scroll.contentView.scroll(to: NSPoint(x: 0, y: max(0, doc.bounds.height - scroll.contentView.bounds.height) * 0.5))
+                scroll.reflectScrolledClipView(scroll.contentView)
+                await meter.frames(30)
+                await shoot(window, "\(dir)/traffic-apps\(suffix).png")
             }
             // The smallest the window goes: AppKit holds the frame at its minimum, whatever is asked.
             window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)

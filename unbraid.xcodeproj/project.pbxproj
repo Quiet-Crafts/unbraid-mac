@@ -73,6 +73,7 @@
 		36F35113152825B1E3FFA8C7 /* TailscaleStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = CBD06F9AF294932A0D3943C2 /* TailscaleStatus.swift */; };
 		38615483D0B4D2D5640A060D /* ManualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749928C45FDE90DD1FC1AF69 /* ManualTests.swift */; };
 		38C8A807F70B8F30BA36123D /* Compiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220CE28E2A1DD5D6B23E1A2A /* Compiler.swift */; };
+		3946097DF3257D9A3267B7DD /* SiteMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC387308B24098059D49CBF /* SiteMatch.swift */; };
 		39CF4982DFB1C50702CCD6F9 /* Compiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220CE28E2A1DD5D6B23E1A2A /* Compiler.swift */; };
 		3A096A84EC3EE1BF20D9E585 /* ConfigFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 945B35DC1691963CF9DDE956 /* ConfigFile.swift */; };
 		3AF0533F86E444C358E03085 /* LifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16540D9011D973EC4593EA77 /* LifecycleTests.swift */; };
@@ -125,6 +126,7 @@
 		656FA17B3B561FFEBFF144B7 /* QR.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FDDF7466E86AA480872C0D2 /* QR.swift */; };
 		6602E24E3B318667F719F522 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C8F2955A17FA21741B5E6E3 /* Theme.swift */; };
 		66D96B71C8B7FBF37A6F3A07 /* Nord.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7060A31240083816FF1665E2 /* Nord.swift */; };
+		6AD330CD9BC463FC2E042E5D /* SiteMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC387308B24098059D49CBF /* SiteMatch.swift */; };
 		6B5AF1C0893981033701E862 /* MonotoneCurve.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56ED0C7B0B2F9A4D9317A8A8 /* MonotoneCurve.swift */; };
 		6BDBEBA29B10741ED05AC6D2 /* SetupImport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 955ED297B6D9901F19F3974B /* SetupImport.swift */; };
 		6C894D55B257D117A5A9791A /* TsLoginTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D15FF07F9C8CF3617102842F /* TsLoginTests.swift */; };
@@ -196,6 +198,7 @@
 		A859AD974C47757CBC791A19 /* StatsMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9110D1C0A6F61915B2A89137 /* StatsMathTests.swift */; };
 		AB7F352BE40C8DE150EF45F0 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADBC21CC6096733D97519366 /* WidgetSnapshot.swift */; };
 		AC578E27C5283D51B0C1A889 /* Manual.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99A005A7B9ED8D631A41E22 /* Manual.swift */; };
+		AD8898F366D365A8AA226F99 /* StatsSitesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BBFB10D7CC0760276F8BBF3 /* StatsSitesTests.swift */; };
 		ADA50A55A94CD63F4DA48EEE /* AppPaths.swift in Sources */ = {isa = PBXBuildFile; fileRef = FCF569689C3CFECE875E64FA /* AppPaths.swift */; };
 		AFB64352A4D7AB8091603B0E /* LogCallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B76773E1693159198244F444 /* LogCallTests.swift */; };
 		B06D94974014D4B7C2F42831 /* AppPresence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5958A0922EFC96FE5FCD0191 /* AppPresence.swift */; };
@@ -231,6 +234,7 @@
 		C80ADEBF23F6CC8C25D47DEC /* NordApi.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E382C322FAFD326AAF63181 /* NordApi.swift */; };
 		C8C0C4E9DC9CDEDA78560D29 /* ProviderFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = CCEF33A0BE1C5BA94FD7FE22 /* ProviderFixtures.swift */; };
 		C94055860E77CF830C82FA3E /* SetupImportTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F65DB16FC16B36303194F4 /* SetupImportTests.swift */; };
+		CB9E48A20CEE72F20ECD7632 /* SiteMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC387308B24098059D49CBF /* SiteMatch.swift */; };
 		CBCA9AC7CD13024B1E70FE45 /* Ndt7.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B106CFCAC881E2F3C2C58DC /* Ndt7.swift */; };
 		CC879E131ECC9DB1CE1508ED /* CommandXPC.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1254283A3240167FE700B663 /* CommandXPC.swift */; };
 		CCF3F3C8DD2377101E5010CD /* AppScan.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1762F1899FA1CC7D0191ADFB /* AppScan.swift */; };
@@ -395,8 +399,10 @@
 		46E4AF239415C7D2899745ED /* Ndt7Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ndt7Tests.swift; sourceTree = "<group>"; };
 		4785607FED79AD809FBF193E /* SpeedTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedTestView.swift; sourceTree = "<group>"; };
 		4B66ABBBB806D5A530447170 /* Widgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widgets.entitlements; sourceTree = "<group>"; };
+		4BBFB10D7CC0760276F8BBF3 /* StatsSitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsSitesTests.swift; sourceTree = "<group>"; };
 		4BC7FF123A44A862101F8D71 /* UnbraidWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnbraidWidgets.swift; sourceTree = "<group>"; };
 		4CA8F77D0A34F2AB987A2BCC /* ChangeObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangeObserver.swift; sourceTree = "<group>"; };
+		4DC387308B24098059D49CBF /* SiteMatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteMatch.swift; sourceTree = "<group>"; };
 		4E53942020FC006F068397D6 /* StagingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StagingTests.swift; sourceTree = "<group>"; };
 		4EC733C20C0B81072D2C80BC /* ExitAddressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitAddressTests.swift; sourceTree = "<group>"; };
 		4FBF9D44B32EBAF555ADB997 /* StatsMath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsMath.swift; sourceTree = "<group>"; };
@@ -653,6 +659,7 @@
 				4E53942020FC006F068397D6 /* StagingTests.swift */,
 				E8602961C76A7B318535AA4E /* StatsInboxTests.swift */,
 				9110D1C0A6F61915B2A89137 /* StatsMathTests.swift */,
+				4BBFB10D7CC0760276F8BBF3 /* StatsSitesTests.swift */,
 				457FF10ADD046971C3162821 /* StoreTests.swift */,
 				D15FF07F9C8CF3617102842F /* TsLoginTests.swift */,
 				88CB31C841DA6E9DB1EB7680 /* UiStateTests.swift */,
@@ -732,6 +739,7 @@
 				C885B6A78F36934F52AA1EE3 /* Palette.swift */,
 				0B58E47DC1EFE502199E6107 /* Redact.swift */,
 				62175C4168FC887F55A0FC1C /* Sealed.swift */,
+				4DC387308B24098059D49CBF /* SiteMatch.swift */,
 				86FCBC41DE6FF7A18B90D287 /* Slash.swift */,
 				E3DB22B20CCC8A1A75D50ABF /* Snapshot.swift */,
 				07BEB2D4512BAE306EDAE7D6 /* Staging.swift */,
@@ -1156,6 +1164,7 @@
 				00F25EB0FDC3FF481E7CC543 /* SetupSignOut.swift in Sources */,
 				DFA907EE26C1B6C7C2A36EB6 /* SignInView.swift in Sources */,
 				177650ADC173F15553AE9C8E /* SiteEdits.swift in Sources */,
+				CB9E48A20CEE72F20ECD7632 /* SiteMatch.swift in Sources */,
 				167675AEA7550FD694F2D9FE /* Sites.swift in Sources */,
 				D882C3D64E870EDB2146E6FA /* Slash.swift in Sources */,
 				89F808B183715EF9310A8652 /* Snapshot.swift in Sources */,
@@ -1298,6 +1307,7 @@
 				6E551F7EA3DBA2FF7276B306 /* SetupSignOutTests.swift in Sources */,
 				5F646CF9D53D367E2CD88397 /* SiteEdits.swift in Sources */,
 				C0AFBD9340C8C57BEAF4EB85 /* SiteEditsTests.swift in Sources */,
+				6AD330CD9BC463FC2E042E5D /* SiteMatch.swift in Sources */,
 				DFD6A716240DA75F3884A8B7 /* Sites.swift in Sources */,
 				0C589CCC94B65B2CB5837985 /* SitesTests.swift in Sources */,
 				A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */,
@@ -1308,6 +1318,7 @@
 				11DCF9F745E4C799CD859E3F /* StatsInboxTests.swift in Sources */,
 				24E249ACFBA833B00E58252F /* StatsMath.swift in Sources */,
 				A859AD974C47757CBC791A19 /* StatsMathTests.swift in Sources */,
+				AD8898F366D365A8AA226F99 /* StatsSitesTests.swift in Sources */,
 				B74C40F09803EAAD388CDD52 /* Store.swift in Sources */,
 				7552DC8DB04DC1E1BE7CA1DC /* StoreTests.swift in Sources */,
 				F865B8CDD9DD55180A776DC3 /* Surfshark.swift in Sources */,
@@ -1354,6 +1365,7 @@
 				2E2E70DDCB0C26272CDE35C4 /* Platform.swift in Sources */,
 				94583FAA75C21D0370DAB0E6 /* Redact.swift in Sources */,
 				A2CA7154DEDCFA5103E345E4 /* Sealed.swift in Sources */,
+				3946097DF3257D9A3267B7DD /* SiteMatch.swift in Sources */,
 				8765C22384E1A2DA41861414 /* Staging.swift in Sources */,
 				F9B1CE35D0D5EE107CEC484B /* main.swift in Sources */,
 			);

@@ -13,6 +13,12 @@ private func programName(_ key: String) -> String {
     return AppModel.shared.appName(key)
 }
 
+/// A row as VoiceOver reads it: "example.com, website, 412 MB" for a website counted in an app's place, so it is never
+/// taken for an app.
+private func spoken(_ key: String, _ bytes: Int64) -> String {
+    "\(programName(key)), \(StatsMath.site(key) != nil ? "website, " : "")\(Units.bytes(bytes))"
+}
+
 /// A location key (a program outside any app): an absolute path or one under the home folder.
 private func isLocation(_ key: String) -> Bool { key.hasPrefix("/") || key.hasPrefix("~/") }
 
@@ -233,6 +239,7 @@ struct TrafficView: View {
                             }
                         }
                         .accessibilityElement(children: .combine)
+                        .accessibilityLabel(override: StatsMath.site(a.app) != nil ? spoken(a.app, a.bytes) : nil)
                         .accessibilityValue(isLocation(a.app) ? shownLocation(a.app) : "")
                         .help(isLocation(a.app) ? shownLocation(a.app) : "")
                         .frame(maxWidth: .infinity, minHeight: Measure.tableRow, alignment: .leading).layoutPriority(-1)
@@ -244,6 +251,7 @@ struct TrafficView: View {
                         }.buttonStyle(.plain).help("Show only this route")
                         Text(Units.bytes(a.bytes)).font(.system(size: 12, design: .monospaced))
                             .frame(width: 108, alignment: .trailing)
+                            .accessibilityHidden(StatsMath.site(a.app) != nil) // already read with the website's name
                     }
                 }
             }
@@ -280,9 +288,16 @@ private struct ExitRow: View {
     let tap: () -> Void
     let info: () -> Void
     private func laneLabel(_ name: String?, _ top: [AppBytes], _ rest: Int, _ restBytes: Int64) -> String {
-        let apps = top.map { "\(programName($0.app)), \(Units.bytes($0.bytes))" }.joined(separator: ", ")
+        let apps = top.map { spoken($0.app, $0.bytes) }.joined(separator: ", ")
         let more = rest == 0 ? "" : ", \(rest) other apps, \(Units.bytes(restBytes))"
         return "Filter by \(name ?? "Route"), \(Units.bytes(bytes)). " + apps + more
+    }
+
+    /// "3 apps", or "3 apps and 1 website" when websites with a route of their own sent data too.
+    private func senders(_ rows: [AppBytes]) -> String {
+        let sites = rows.filter { StatsMath.site($0.app) != nil }.count, apps = rows.count - sites
+        let a = "\(apps) app\(apps == 1 ? "" : "s")"
+        return sites == 0 ? a : apps == 0 ? "\(sites) website\(sites == 1 ? "" : "s")" : "\(a) and \(sites) website\(sites == 1 ? "" : "s")"
     }
 
     var body: some View {
@@ -299,8 +314,7 @@ private struct ExitRow: View {
                             // The filter in use shows by a mark, not by a shade alone.
                             if selected { Image(systemName: "checkmark").font(.system(size: 11, weight: .bold)).foregroundStyle(Ink.accentText) }
                         }
-                        let senders = v.apps.filter { $0.exit == exit }.count
-                        Text("\(ex?.via ?? "") · \(senders) app\(senders == 1 ? "" : "s") sent data").font(.system(size: 12)).foregroundStyle(Ink.dim)
+                        Text("\(ex?.via ?? "") · \(senders(v.apps.filter { $0.exit == exit })) sent data").font(.system(size: 12)).foregroundStyle(Ink.dim)
                         LaneBar(top: lane.top, rest: lane.rest, bytes: bytes, biggest: biggest, color: ex?.color ?? Ink.dim)
                     }
                     Spacer(minLength: 0)
@@ -444,5 +458,12 @@ private struct RouteSplit: View {
                     .font(.system(size: 12, design: .monospaced)).foregroundStyle(Ink.dim)
             }
         }
+    }
+}
+
+private extension View {
+    /// `label` in place of the one made from the view's children, only when there is one.
+    @ViewBuilder func accessibilityLabel(override label: String?) -> some View {
+        if let label { accessibilityLabel(label) } else { self }
     }
 }

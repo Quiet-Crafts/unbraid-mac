@@ -1000,7 +1000,7 @@ private struct StatisticsTab: View {
                 SettingsRow(title: "Saved history", caption: "Hourly for a week, daily for about a year", symbol: "clock") {
                     Text(amount).monospacedDigit().foregroundStyle(.secondary)
                 }
-            } header: { Text("Recording") } footer: { Text("Apps and programs (by their location on this Mac, home folder as ~; temporary and cache folders grouped as \"Other programs\"), routes, bytes, times, speeds and speed-test exit IPs. No browsing destinations, ever.") }
+            } header: { Text("Recording") } footer: { Text("Apps and programs (by their location on this Mac, home folder as ~; temporary and cache folders grouped as \"Other programs\"), routes, bytes, times, speeds and speed-test exit IPs. unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.") }
             Section {
                 SubToggle("Test all routes at once", "Adds \u{201C}All\u{201D} to the Speed Test page: test 2 to 10 routes together.", symbol: "speedometer",
                           isOn: Binding(get: { model.setup.prefs.testAllRoutes }, set: { value in model.setPrefs { $0.testAllRoutes = value } }))
@@ -1020,7 +1020,7 @@ private struct StatisticsTab: View {
             ConsentSheet(title: Text("Keep statistics?").font(.title2.bold()), rows: [
                 ("desktopcomputer", "Statistics stay on this Mac. They are never uploaded."),
                 ("clock", "Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests."),
-                ("nosign", "Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as \"Other programs\". No browsing destinations, ever."),
+                ("nosign", "Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as \"Other programs\". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded."),
                 ("trash", "Turn off or delete everything in Settings at any time."),
             ], action: "Turn On", accept: { model.setStats(true) }) {}
         }

@@ -2,7 +2,7 @@ import Foundation
 
 /// Websites with a route of their own (`Setup.sites`): how an address is written, and how many a profile holds.
 nonisolated enum Sites {
-    static let max = 50
+    static let max = SiteMatch.max
     /// How many a saved setup may hold when read (see `Setup.readable`).
     static let readMax = 4 * max
 
@@ -30,13 +30,6 @@ nonisolated enum Sites {
 
     /// Whether `name` is an address exactly as `clean` writes one: what a saved rule must be.
     static func isClean(_ name: String) -> Bool { clean(name) == name }
-
-    /// The website among `sites` that `host` belongs to (the name itself or one under it), the most specific one.
-    static func match(_ host: String, _ sites: some Collection<String>) -> String? {
-        var h = host.lowercased()[...]
-        while h.hasSuffix(".") { h = h.dropLast() }
-        return sites.filter { h == $0 || h.hasSuffix("." + $0) }.max { $0.count < $1.count }
-    }
 
     /// `sites`, most specific first (a name under another comes before it), as runs that share a route: the route's id
     /// and its addresses. The engine takes the first rule that matches, so a longer name must come before a shorter one

@@ -304,7 +304,8 @@ struct StatusDot: View {
     var body: some View { Circle().fill(color).frame(width: Measure.dot, height: Measure.dot).accessibilityHidden(true) }
 }
 
-/// An app's icon from its bundle, or a terminal glyph for a command-line tool.
+/// An app's icon from its bundle, a globe for a website counted in an app's place, or a terminal glyph for a command-line
+/// tool.
 struct AppIconView: View {
     let app: AppInfo?
     var size: CGFloat = 22
@@ -312,7 +313,7 @@ struct AppIconView: View {
         if let app, app.path.hasSuffix(".app") {
             Image(nsImage: AppCatalog.shared.icon(app)).resizable().frame(width: size, height: size).accessibilityHidden(true)
         } else {
-            Image(systemName: "terminal").font(.system(size: size * 0.5)).frame(width: size, height: size)
+            Image(systemName: app.flatMap { StatsMath.site($0.id) } != nil ? "globe" : "terminal").font(.system(size: size * 0.5)).frame(width: size, height: size)
                 .background(.quaternary, in: .rect(cornerRadius: size * 0.22)).accessibilityHidden(true)
         }
     }
