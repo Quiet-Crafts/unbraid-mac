@@ -32,11 +32,20 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
 
     /// The remembered network read as `mark`: one whose routers include every router seen now. A home with two routers
     /// stays itself while one is away; a network with a router of its own beside one that looks like home's is never
-    /// taken for home.
-    func network(_ mark: String) -> Known? {
+    /// taken for home. Where several remembered networks hold every router seen: `preferring` (the network the Mac was
+    /// already taken to be on, so routers coming and going never move it to another), else the one read exactly so,
+    /// else none: which was remembered first never decides.
+    func network(_ mark: String, preferring id: String? = nil) -> Known? {
         let now = Self.members(mark)
-        return now.isEmpty ? nil : known.first { now.isSubset(of: Self.members($0.id)) }
+        guard !now.isEmpty else { return nil }
+        let all = known.filter { now.isSubset(of: Self.members($0.id)) }
+        if let id, let kept = all.first(where: { $0.id == id }) { return kept }
+        if let exact = all.first(where: { $0.id == mark }) { return exact }
+        return all.count == 1 ? all[0] : nil
     }
+
+    /// What decisions go by for a reading: the remembered network's own name, else the reading itself.
+    func identity(_ mark: String, preferring id: String? = nil) -> String { network(mark, preferring: id)?.id ?? mark }
 
     /// A name as it is kept: trimmed, without control or direction characters, not longer than the limit, not one
     /// already used. Nil when nothing usable is left.
@@ -54,7 +63,7 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
     /// can't be used, or no more fit.
     @discardableResult
     mutating func remember(_ mark: String, name raw: String, profile: String?, now: Date = .now) -> Bool {
-        guard mark != AutoSwitch.unrecognised, !Self.members(mark).isEmpty, known.count < Self.max, network(mark) == nil, let name = name(raw) else { return false }
+        guard !AutoSwitch.isUnrecognised(mark), !Self.members(mark).isEmpty, known.count < Self.max, network(mark) == nil, let name = name(raw) else { return false }
         known.append(Known(id: mark, name: name, profile: profile, added: now))
         return true
     }
@@ -92,6 +101,10 @@ nonisolated enum AutoSwitch {
     /// What a network that gives no fingerprint goes by: never a fingerprint (those are hex), so it is never remembered
     /// and its profile is the one for any other network. All such networks look the same.
     static let unrecognised = "unrecognised"
+    /// How long the Mac may be offline and still come back to the same attachment (a wake, a roam): a remembered network
+    /// whose router answers late then stays itself.
+    static let sameAttachment: Duration = .seconds(120)
+    static func isUnrecognised(_ mark: String) -> Bool { mark == unrecognised }
 
     /// What was last decided on: the network (a remembered one by its own name, so a router coming or going doesn't
     /// make it another) and the profile its rule named. Nothing more happens until either changes, so a profile picked
@@ -99,7 +112,7 @@ nonisolated enum AutoSwitch {
     struct Acted: Equatable, Sendable {
         var mark: String
         var profile: String?
-        init(mark: String, rules: NetworkRules) { self.mark = rules.network(mark)?.id ?? mark; profile = rules.profile(on: mark) }
+        init(mark: String, rules: NetworkRules) { self.mark = rules.identity(mark); profile = rules.profile(on: self.mark) }
     }
 
     enum Step: Equatable, Sendable {
@@ -118,9 +131,9 @@ nonisolated enum AutoSwitch {
         // A profile whose default route is gone can't be used; the Profiles page says so on its row.
         guard target.defaultRoute == DIRECT || s.route(target.defaultRoute) != nil else { return .none }
         // A setup that is no profile yet would be replaced without a way back: it is the user's to save first.
-        guard s.profile != nil else { return .blocked("Not switched to \(name): your current setup isn't saved as a profile. Save it as a profile, or switch in unbraid.") }
+        guard s.profile != nil else { return .blocked("Not switched to \(name): your current setup isn't saved as a profile. Save it as a profile, or choose a profile yourself.") }
         var next = s
         next.use(name)
-        return over(next) ? .blocked("Not switched to \(name): it needs more connections than a provider allows. Switch in unbraid to choose what to do.") : .to(name)
+        return over(next) ? .blocked("Not switched to \(name): it needs more connections than a provider allows. Choose it yourself to decide what to do.") : .to(name)
     }
 }

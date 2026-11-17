@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // Profiles in the window and the menu bar: the menu that switches between saved setups, and the sheets that save a
@@ -66,6 +67,12 @@ struct ManageProfilesSheet: View {
     @State private var name = ""
     @State private var deleting: String?
 
+    /// As tall as its content wants where the window has room, else what fits under the window's toolbar (the
+    /// smallest window included); the rest scrolls.
+    private static func height() -> CGFloat {
+        min(680, max(400, ((NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.height ?? 530) - 30))
+    }
+
     var body: some View {
         SheetFrame(title: "Manage Profiles", subtitle: "\(model.setup.profiles.count) of 20", width: SheetWidth.form) {
             ScrollView {
@@ -75,7 +82,7 @@ struct ManageProfilesSheet: View {
                             HStack {
                                 VStack(alignment: .leading) {
                                     HStack { Text(p.name); if p.name == model.setup.profile { Text("In use").font(.caption).foregroundStyle(.secondary) } }
-                                    Text("\(model.setup.label(p.defaultRoute)) · " + (p.sites.isEmpty ? "\(p.apps.count)" : Snapshot.count(apps: p.apps.count, sites: p.sites.count)) + " with their own route").font(.caption).foregroundStyle(.secondary)
+                                    Text("\(model.setup.label(p.defaultRoute)) · own route: " + Snapshot.count(apps: p.apps.count, sites: p.sites.count).replacingOccurrences(of: " · ", with: ", ")).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 Button { model.store.update { $0.move(p.name, by: -1) } } label: { Image(systemName: "arrow.up") }
@@ -103,8 +110,7 @@ struct ManageProfilesSheet: View {
         } actions: {
             Button("Done") { dismiss() }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
         }
-        // Fits under the toolbar of the smallest window (564 tall); the rest scrolls.
-        .frame(height: 500)
+        .frame(height: Self.height())
         .onExitCommand { dismiss() }
         .alert("Rename Profile", isPresented: Binding(get: { rename != nil }, set: { if !$0 { rename = nil } })) {
             TextField("Name", text: $name)
@@ -134,7 +140,7 @@ private struct SwitchByItself: View {
     @State private var name = ""
 
     private var rules: NetworkRules { model.store.networks }
-    private static let footer = "While unbraid is connected, it switches a few seconds after your Mac joins another network; apps reconnect for a moment. A network it can't recognise counts as any other network after about 20 seconds. A profile you pick by hand stays until the network changes or unbraid starts again. unbraid recognises a network by its router, without reading your location or the Wi-Fi's name. Another network can pretend to be one you remembered, so don't give a remembered network a profile that protects less than you'd accept anywhere."
+    private static let footer = "While unbraid is connected, it switches a few seconds after your Mac joins another network; apps reconnect for a moment. unbraid recognises a network by its router, without reading your location or the Wi-Fi's name. Some networks can't be recognised, homes without IPv6 among them: they can't be remembered, and after about 20 seconds they get the profile for any other network. A profile you pick by hand stays until the network changes or unbraid starts again; on a network unbraid can't recognise, going offline counts as a change. Another network can pretend to be one you remembered, so don't give a remembered network a profile that protects less than you'd accept anywhere."
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -153,7 +159,7 @@ private struct SwitchByItself: View {
                         }
                         Hairline().padding(.leading, Layout.inset + Measure.rowIcon + 12)
                     }
-                    row("globe", "Any other network", unusable(rules.elsewhere) ?? "Cafés, hotels, and networks unbraid can't recognise", profile: rules.elsewhere,
+                    row("globe", "Any other network", unusable(rules.elsewhere) ?? "Cafés, hotels, and networks unbraid can't recognise" + (onElsewhere ? " · this is the network you're on" : ""), profile: rules.elsewhere,
                         set: { p in model.store.updateNetworks { $0.elsewhere = p } }) {
                         // Its menu in line with the ones above, which have Forget beside them.
                         if !rules.known.isEmpty { Color.clear.frame(width: 24, height: 24) }
@@ -177,6 +183,9 @@ private struct SwitchByItself: View {
         } message: { Text("A name for the network your Mac is on now.") }
     }
 
+    /// The Mac is on a network that isn't one remembered here (one unbraid can't recognise included).
+    private var onElsewhere: Bool { model.autoSwitch.here.map { h in !rules.known.contains { $0.id == h } } ?? false }
+
     /// Why this network can't be remembered now; nil when it can.
     private var why: String? {
         // A network whose router has nothing of its own that unbraid may read (no IPv6, or a router that calls itself
@@ -184,12 +193,12 @@ private struct SwitchByItself: View {
         guard let mark = model.autoSwitch.mark else {
             return model.autoSwitch.online ? "unbraid can't tell this network apart from others, so it can't be remembered" : "No network to remember right now"
         }
-        if let known = rules.network(mark) { return "Already remembered as \(known.name)" }
+        if let known = rules.known.first(where: { $0.id == model.autoSwitch.here }) ?? rules.network(mark) { return "Already remembered as \(known.name)" }
         return rules.known.count >= NetworkRules.max ? "\(NetworkRules.max) networks is the most. Forget one to remember another." : nil
     }
 
     private func caption(_ n: NetworkRules.Known) -> String {
-        unusable(n.profile) ?? "Remembered \(n.added.formatted(.dateTime.day().month(.abbreviated)))" + (model.autoSwitch.mark.flatMap(rules.network)?.id == n.id ? " · this is the network you're on" : "")
+        unusable(n.profile) ?? "Remembered \(n.added.formatted(.dateTime.day().month(.abbreviated)))" + (model.autoSwitch.here == n.id ? " · this is the network you're on" : "")
     }
 
     /// A profile whose default route is gone can't be switched to: said where the caption is.

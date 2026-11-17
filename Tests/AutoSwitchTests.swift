@@ -167,8 +167,20 @@ final class AutoSwitchTests: XCTestCase {
         XCTAssertTrue(r.remember(NetworkMark.reading(["b", "x"]), name: "Next door", profile: nil))
         XCTAssertNil(r.profile(on: NetworkMark.reading(["x", "b"])))
         // Decided on home stays decided while its routers come and go.
-        XCTAssertEqual(AutoSwitch.Acted(mark: "b", rules: r), AutoSwitch.Acted(mark: NetworkMark.reading(["b", "c"]), rules: r))
-        XCTAssertNotEqual(AutoSwitch.Acted(mark: "b", rules: r), AutoSwitch.Acted(mark: "a", rules: r))
+        XCTAssertEqual(AutoSwitch.Acted(mark: "c", rules: r), AutoSwitch.Acted(mark: NetworkMark.reading(["b", "c"]), rules: r))
+        XCTAssertNotEqual(AutoSwitch.Acted(mark: "c", rules: r), AutoSwitch.Acted(mark: "a", rules: r))
+        // A router two remembered networks share: neither by itself, whichever was remembered first; the one the Mac was
+        // already on when it is one of them; the one read exactly so first of all.
+        XCTAssertNil(r.network("b"))
+        XCTAssertEqual(r.profile(on: "b"), "Travel")
+        XCTAssertEqual(r.network("b", preferring: NetworkMark.reading(["b", "x"]))?.name, "Next door")
+        XCTAssertEqual(r.network("b", preferring: NetworkMark.reading(["b", "c"]))?.name, "Home network")
+        XCTAssertNil(r.network("b", preferring: "a"), "a network the reading can't be is no preference")
+        XCTAssertEqual(r.identity("b", preferring: NetworkMark.reading(["b", "c"])), "b,c")
+        XCTAssertEqual(r.identity("b"), "b")
+        XCTAssertTrue(r.remember("b", name: "Shared", profile: "Flat"), "remembered as read, it is a network of its own")
+        XCTAssertEqual(r.network("b")?.name, "Shared")
+        XCTAssertEqual(r.network("b", preferring: NetworkMark.reading(["b", "c"]))?.name, "Home network", "but the Mac stays where it was")
     }
 
     func testRulesFollowTheirProfilesAndNetworks() {

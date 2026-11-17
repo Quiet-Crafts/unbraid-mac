@@ -11,6 +11,9 @@ final class AutoSwitchWatch {
     /// The fingerprint of the network the Mac is on now, for the Profiles page; nil with none, while its router hasn't
     /// answered, or on a network unbraid can't recognise.
     private(set) var mark: String?
+    /// The network switching goes by now (`AutoSwitchRun.here`): a remembered network's own name, a reading, or
+    /// `AutoSwitch.unrecognised`; nil while offline or still reading.
+    private(set) var here: String?
     /// The Mac is on a network (Wi-Fi or a cable, with a usable path), whether or not it can be told apart from others.
     private(set) var online = false
 
@@ -109,19 +112,24 @@ final class AutoSwitchWatch {
                 guard !Task.isCancelled else { return }
                 let m = await NetworkMark.current(salt: salt, interface: interface)
                 guard !Task.isCancelled, let self else { return }
-                self.seen(m.map { .mark($0) } ?? .reading)
+                // Where the network is reached (never kept): two networks without a fingerprint differ only by it, and it
+                // tells a remembered network's late router from a new network.
+                let place = interface + "|" + (NetworkMark.gateway(on: interface, routes: NetworkMark.routes()) ?? "")
+                self.seen(m.map { .mark($0, place: place) } ?? .reading(place: place))
                 if m != nil { return }
             }
         }
     }
 
     private func seen(_ reading: AutoSwitchRun.Reading) {
-        let m: String? = if case .mark(let m) = reading { m } else { nil }
+        let m: String? = if case .mark(let m, _) = reading { m } else { nil }
         if mark != m { mark = m }
         apply(run.handle(.network(reading)))
     }
 
     private func apply(_ action: AutoSwitchRun.Action) {
+        let h = run.here(at: .now)
+        if here != h { here = h }
         timer?.cancel(); timer = nil
         switch action {
         case .nothing: break
@@ -149,7 +157,7 @@ final class AutoSwitchWatch {
             // Still what the rules say for this network, still connected, still the user's own setup, when it is made.
             m.switchProfile(name) { [weak self, weak m] in
                 guard let self, let m else { return false }
-                return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.network(at: .now) == mark && m.store.networks.profile(on: mark) == name
+                return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.here(at: .now) == mark && m.store.networks.profile(on: mark) == name
             }
             switching = false
         case .blocked(let why): tell(why, inWindow: true)
@@ -179,6 +187,6 @@ final class AutoSwitchWatch {
 
     #if DEBUG
     /// The test copy's pictures: a made-up network to be on.
-    func perfShow(_ mark: String?) { self.mark = mark }
+    func perfShow(_ mark: String?) { self.mark = mark; here = mark }
     #endif
 }
