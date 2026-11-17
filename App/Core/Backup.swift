@@ -383,9 +383,7 @@ nonisolated enum Backup {
         if blocked > 0 { out.append(blocked == 1 ? "1 app that is blocked now won't be." : "\(blocked) apps that are blocked now won't be.") }
         // By what each name gets: a website under one blocked here, with a route of its own in the backup, opens that
         // part of the block (the most specific website wins).
-        func site(_ name: String, _ sites: [String: String]) -> String? { sites.filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
-        let unblocked = Set(current.sites.filter { $0.value == BLOCK && site($0.key, next.sites) != BLOCK }.map(\.key)
-                            + next.sites.filter { $0.value != BLOCK && site($0.key, current.sites) == BLOCK }.map(\.key)).count
+        let unblocked = Sites.opened(current.sites, next.sites).count
         if unblocked > 0 { out.append(unblocked == 1 ? "1 website that is blocked now won't be." : "\(unblocked) websites that are blocked now won't be.") }
         return out
     }

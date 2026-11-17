@@ -52,6 +52,13 @@ nonisolated enum Sites {
         isClean(name) && (route == BLOCK || ownNetwork(name, tailnet: tailnet) == nil)
     }
 
+    /// The websites blocked in `before` that `after` opens, whole or in part: no longer blocked itself, or a name under
+    /// it given a route or Direct of its own there (the most specific rule wins, Block included).
+    static func opened(_ before: [String: String], _ after: [String: String]) -> [String] {
+        let open = applied(after).filter { $0.value != BLOCK }.keys
+        return before.filter { b in b.value == BLOCK && (after[b.key] != BLOCK || open.contains { under($0, b.key) }) }.keys.sorted()
+    }
+
     /// Whether `name` is `suffix` or a name under it.
     static func under(_ name: String, _ suffix: String) -> Bool { name == suffix || name.hasSuffix("." + suffix) }
 

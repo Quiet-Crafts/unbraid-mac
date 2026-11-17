@@ -103,6 +103,17 @@ final class SiteEditsTests: XCTestCase {
         for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw) }
     }
 
+    /// A website blocked now is opened by a setup that unblocks it, or that gives a name under it a route of its own.
+    func testABlockIsOpenedWholeOrInPart() {
+        let here = ["tracker.example": BLOCK, "ads.example": BLOCK, "x.example": "nl"]
+        XCTAssertEqual(Sites.opened(here, here), [])
+        XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "cdn.tracker.example": DIRECT, "ads.example": BLOCK]), ["tracker.example"])
+        XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "a.b.tracker.example": "nl", "ads.example": "nl"]), ["ads.example", "tracker.example"])
+        XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "sub.tracker.example": BLOCK, "ads.example": BLOCK]), [])
+        XCTAssertEqual(Sites.opened(here, ["tracker.example": BLOCK, "nottracker.example": DIRECT, "ads.example": BLOCK]), [])
+        XCTAssertEqual(Sites.opened(here, ["ads.example": BLOCK]), ["tracker.example"])
+    }
+
     func testAChangeAppliesAtCommit() {
         var s = Setup(routes: [nl, us], defaultRoute: "nl")
         SiteEdits.apply(["netflix.com": "us", "bank.example": DIRECT, "tracker.example": BLOCK], to: &s)
