@@ -572,6 +572,12 @@ private final class Meter: NSObject {
         if w.frame.height > 1400 {
             report("[Perf] window grew to \(Int(w.frame.height)) points for \((path as NSString).lastPathComponent)"); shotsMissing += 1
         }
+        // Every column of an apps or websites table is in view: one made in a narrow window used to keep its widths
+        // and push This Week out of sight.
+        for table in appTables(in: w) {
+            guard let clip = table.enclosingScrollView?.contentView, table.frame.width > clip.bounds.width + 1 else { continue }
+            report("[Perf] table \(Int(table.frame.width)) wide in \(Int(clip.bounds.width)) for \((path as NSString).lastPathComponent)"); shotsMissing += 1
+        }
         capture(w, path)
     }
 
@@ -1108,6 +1114,17 @@ private final class Meter: NSObject {
         }
         if let root { return walk(root) }
         return (window.contentView?.superview).flatMap(walk)
+    }
+
+    /// Every apps or websites table in `w`.
+    private func appTables(in w: NSWindow) -> [NSTableView] {
+        var all: [NSTableView] = []
+        func walk(_ v: NSView) {
+            if let t = v as? NSTableView, t.delegate is AppsTable.Coordinator { all.append(t) }
+            v.subviews.forEach(walk)
+        }
+        w.contentView?.superview.map(walk)
+        return all
     }
 
     /// The app list, not the sidebar (also a table).

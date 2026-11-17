@@ -107,6 +107,9 @@ struct AppsTable: NSViewRepresentable {
             super.layout()
             header.frame = NSRect(x: 0, y: 0, width: bounds.width, height: Self.headerHeight)
             scroll.frame = NSRect(x: 0, y: Self.headerHeight, width: bounds.width, height: max(0, bounds.height - Self.headerHeight))
+            // A table made in a narrow window, or one the window narrowed around while it was off screen, keeps the
+            // widths it had and stays wider than its view, with This Week out of sight: fit the columns again.
+            if let table = scroll.documentView as? NSTableView, table.frame.width > scroll.contentSize.width + 0.5 { table.sizeToFit() }
         }
     }
 
