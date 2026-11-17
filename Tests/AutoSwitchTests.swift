@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 
 /// Switching profile by network: which network this is, what is remembered, and when a switch is made.
@@ -47,6 +48,35 @@ final class AutoSwitchTests: XCTestCase {
         XCTAssertEqual(NetworkMark.gateway(on: "en0", routes: routes), "192.0.2.1")
         XCTAssertEqual(NetworkMark.gateway(on: "en7", routes: routes), "198.51.100.1")
         XCTAssertNil(NetworkMark.gateway(on: "utun6", routes: routes))
+        // A message as the kernel writes it: header, destination (cut short, as the default route's is), gateway, mask.
+        var h = rt_msghdr()
+        h.rtm_version = UInt8(RTM_VERSION); h.rtm_type = UInt8(RTM_GET); h.rtm_flags = RTF_UP | RTF_GATEWAY
+        h.rtm_addrs = RTA_DST | RTA_GATEWAY | RTA_NETMASK; h.rtm_index = UInt16(if_nametoindex("lo0"))
+        let gateway: [UInt8] = [16, UInt8(AF_INET), 0, 0, 192, 0, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0]
+        let message = { (dst: [UInt8], mask: [UInt8]) -> [UInt8] in
+            var m = h
+            m.rtm_msglen = UInt16(MemoryLayout<rt_msghdr>.size + dst.count + gateway.count + mask.count)
+            return withUnsafeBytes(of: m) { Array($0) } + dst + gateway + mask
+        }
+        let full = message([16, UInt8(AF_INET), 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0])
+        let short = message([0, 0, 0, 0], [0, 0, 0, 0])
+        let host = message([16, UInt8(AF_INET), 0, 0, 10, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], [7, 0, 0, 0, 255, 255, 255, 0])
+        for (buffer, to) in [(full, "0.0.0.0"), (short, "0.0.0.0"), (host, "10.8.0.0")] {
+            let read = NetworkMark.parse(buffer)
+            XCTAssertEqual(read.count, 1)
+            XCTAssertEqual(read.first?.interface, "lo0")
+            XCTAssertEqual(read.first?.destination, to)
+            XCTAssertEqual(read.first?.gateway, "192.0.2.1")
+        }
+        // Two in a row, then one cut anywhere: what is whole is read, the rest dropped, never past the end.
+        XCTAssertEqual(NetworkMark.parse(full + host).map(\.destination), ["0.0.0.0", "10.8.0.0"])
+        for cut in 0..<host.count { XCTAssertEqual(NetworkMark.parse(full + Array(host.prefix(cut))).count, 1, "\(cut)") }
+        var lying = full
+        lying.withUnsafeMutableBytes { $0.storeBytes(of: UInt16(full.count + 40), toByteOffset: 0, as: UInt16.self) }
+        XCTAssertTrue(NetworkMark.parse(lying).isEmpty)
+        var huge = full
+        huge[MemoryLayout<rt_msghdr>.size] = 255
+        XCTAssertTrue(NetworkMark.parse(huge).isEmpty || NetworkMark.parse(huge).first?.gateway != "192.0.2.1")
         // Whatever the kernel hands back is read within its own lengths, and garbage reads as nothing.
         XCTAssertTrue(NetworkMark.parse([]).isEmpty)
         XCTAssertTrue(NetworkMark.parse([UInt8](repeating: 0xff, count: 300)).isEmpty)
@@ -116,6 +146,11 @@ final class AutoSwitchTests: XCTestCase {
         var broken = setup
         broken.profiles[broken.profiles.firstIndex { $0.name == "Travel" }!].defaultRoute = "missing"
         XCTAssertEqual(AutoSwitch.decide(broken, rules: r, mark: "cafe-mark", acted: nil, over: never), .none)
+        // Its route removed the usual way: the profile is repaired to a route that exists, and is switched to.
+        var removed = setup
+        removed.routes.removeAll { $0.id == "us" }
+        XCTAssertEqual(removed.profiles.first { $0.name == "Travel" }?.defaultRoute, "nl")
+        XCTAssertEqual(AutoSwitch.decide(removed, rules: r, mark: "cafe-mark", acted: nil, over: never), .to("Travel"))
         // A setup that is no profile is never replaced by itself.
         var loose = setup
         loose.profile = nil

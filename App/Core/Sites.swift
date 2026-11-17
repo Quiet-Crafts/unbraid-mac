@@ -3,6 +3,8 @@ import Foundation
 /// Websites with a route of their own (`Setup.sites`): how an address is written, and how many a profile holds.
 nonisolated enum Sites {
     static let max = 50
+    /// How many a saved setup may hold when read (see `Setup.readable`).
+    static let readMax = 4 * max
 
     /// The address in `raw` as a rule keeps it, from what people type or paste ("https://www.Example.com/page" →
     /// "example.com"): the name alone, lower case, without "www.", international names in their ASCII form. A rule

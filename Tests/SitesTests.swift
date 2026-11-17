@@ -118,8 +118,15 @@ final class SitesTests: XCTestCase {
         let s = try JSONDecoder().decode(Setup.self, from: Data(json.utf8))
         XCTAssertEqual(s.sites, ["example.com": "nl"])
         XCTAssertEqual(s.profiles.first?.sites, ["ok.example": DIRECT])
+        // More than the app lets a profile hold is read (a pause's record may hold what ran and the blocks made since),
+        // up to a bound; past it the blocks are what stays.
         let many = Dictionary(uniqueKeysWithValues: (0..<80).map { ("site\($0).example", "nl") })
-        XCTAssertEqual(Setup.readable(many).count, Sites.max)
+        XCTAssertEqual(Setup.readable(many).count, 80)
+        var huge = Dictionary(uniqueKeysWithValues: (0..<300).map { ("site\($0).example", "nl") })
+        for i in 250..<300 { huge["site\(i).example"] = BLOCK }
+        let kept = Setup.readable(huge)
+        XCTAssertEqual(kept.count, Sites.readMax)
+        XCTAssertEqual(kept.values.filter { $0 == BLOCK }.count, 50)
     }
 
     func testAWebsiteOnARouteThatIsGoneIsBlockedNotLeftToItsApp() throws {

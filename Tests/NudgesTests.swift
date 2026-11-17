@@ -52,6 +52,13 @@ final class NudgesTests: XCTestCase {
         // Shown "in the future" (the clock was set back since): counts as just shown.
         let shown = Nudges.shown(ready(), now: days(200))
         XCTAssertFalse(Nudges.due(shown, now: days(100), calm: true))
+        // Connected "in the future" the same: those days don't count until they have come.
+        var ahead = Nudges.installed(NudgeState(), now: t0)
+        for d in [100.0, 101, 102] { ahead = Nudges.connectedDay(ahead, now: days(d)) }
+        XCTAssertFalse(Nudges.due(ahead, now: days(10), calm: true))
+        XCTAssertTrue(Nudges.due(ahead, now: days(102), calm: true))
+        // "Never again" survives other fields that can't be read.
+        XCTAssertEqual(try JSONDecoder().decode(NudgeState.self, from: Data(#"{"disabled":true,"shownAt":"x","connectedDays":7}"#.utf8)).disabled, true)
         // Saved and read back the same; a file from before any of it reads as nothing recorded.
         XCTAssertEqual(try JSONDecoder().decode(NudgeState.self, from: JSONEncoder().encode(off)).disabled, true)
         XCTAssertEqual(try JSONDecoder().decode(NudgeState.self, from: Data("{}".utf8)), NudgeState())

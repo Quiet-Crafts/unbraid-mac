@@ -45,8 +45,10 @@ nonisolated enum Nudges {
 
     /// Whether to ask now; `calm` says the window is quiet enough (nothing else is asking, nothing is going wrong).
     static func due(_ s: NudgeState, now: Date, calm: Bool) -> Bool {
+        // Days later than today (the clock was set back since) don't count yet.
+        let today = epochDay(now)
         guard !s.disabled, calm, let installed = s.installedAt, now.timeIntervalSince(installed) >= 7 * day,
-              s.snoozeUntil.map({ now >= $0 }) ?? true, s.connectedDays.count >= minDays else { return false }
+              s.snoozeUntil.map({ now >= $0 }) ?? true, Set(s.connectedDays.filter { $0 <= today }).count >= minDays else { return false }
         // A date in the future (the clock was set back) counts as just shown.
         let since = s.shownAt.map { max(0, now.timeIntervalSince($0)) }
         return !since.contains { $0 < 90 * day } && since.filter { $0 < 365 * day }.count < kept

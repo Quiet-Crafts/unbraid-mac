@@ -112,7 +112,21 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
         if let checkInternet { return checkInternet }
         if ss != nil { return true }
         if let wg { return wg.allowedIps.contains { ["0.0.0.0/0", "::/0"].contains($0.trimmingCharacters(in: .whitespaces)) } }
-        return ovpn?.config.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("redirect-gateway") } ?? false
+        return ovpn.map { Self.redirectsGateway($0.config) } ?? false
+    }
+    /// Whether an OpenVPN config asks for all traffic: a `redirect-gateway` directive (with or without the leading
+    /// dashes), not one inside an inline block (a key, or a login whose name happens to read so) or a comment.
+    static func redirectsGateway(_ config: String) -> Bool {
+        var block: String?
+        for raw in config.split(whereSeparator: \.isNewline) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if let open = block { if line.lowercased() == "</\(open)>" { block = nil }; continue }
+            if line.hasPrefix("<"), line.hasSuffix(">"), !line.hasPrefix("</") { block = String(line.dropFirst().dropLast()).lowercased(); continue }
+            var word = line.prefix { !$0.isWhitespace }[...]
+            if word.hasPrefix("--") { word = word.dropFirst(2) }
+            if word.lowercased() == "redirect-gateway" { return true }
+        }
+        return false
     }
     /// A route whose failing tunnel unbraid can replace with another server of the same place.
     var movable: Bool { !imported && loc.pinned == nil && loc.group != Nord.dedicatedIp }
@@ -537,12 +551,15 @@ nonisolated extension Setup {
         requireKillSwitchForBlocks()
     }
 
-    /// Websites as a saved setup may hold them: addresses written as `Sites.clean` writes them, no more than a profile
-    /// holds. Anything else (a file edited by hand, or damaged) is left out: the compiler writes these names into rules.
+    /// Websites as a saved setup may hold them: addresses written as `Sites.clean` writes them. Anything else (a file
+    /// edited by hand, or damaged) is left out: the compiler writes these names into rules. The app lets a profile hold
+    /// `Sites.max`; what is read may hold more (a pause's record keeps what ran and adds the blocks made since), up to a
+    /// bound that keeps the rules small. Past it blocks are kept first: a rule left out sends its website on with its app.
     static func readable(_ saved: [String: String]) -> [String: String] {
         let clean = saved.filter { Sites.isClean($0.key) }
-        guard clean.count > Sites.max else { return clean }
-        return Dictionary(uniqueKeysWithValues: clean.sorted { $0.key < $1.key }.prefix(Sites.max).map { ($0.key, $0.value) })
+        guard clean.count > Sites.readMax else { return clean }
+        let kept = clean.sorted { ($0.value == BLOCK ? 0 : 1, $0.key) < ($1.value == BLOCK ? 0 : 1, $1.key) }.prefix(Sites.readMax)
+        return Dictionary(uniqueKeysWithValues: kept.map { ($0.key, $0.value) })
     }
 
     /// The home network bypasses the tunnel: as the prefs say, and never while an app is blocked, whatever they say (the

@@ -2593,7 +2593,9 @@ final class Connection {
                       let engine, !engine.foreign, engine.running != nil else { continue }
             }
             let deadTags = plan.finish(answers, regular: regular, now: .now, draw: Double.random(in: HealthSchedule.every), networkUp: networkUp)
-            failing = Set(plan.streaks.keys.flatMap { exits[$0]?.values.map { $0 } ?? [] })
+            // Servers to avoid when picking again: providers' only. An own server is no provider's, and its name could
+            // read like one of theirs.
+            failing = Set(plan.streaks.keys.flatMap { tag in (exits[tag] ?? [:]).filter { setup.route($0.key)?.imported == false }.values })
             let dropping = exits.filter { plan.dropping($0.key) }.values.flatMap { $0.keys }.sorted()
             if dropping != state.dropping { state.dropping = dropping }
             let silent = exits.filter { plan.silent($0.key, now: .now) }.values.flatMap { $0.keys }.filter { setup.route($0)?.movable == false }.sorted()

@@ -429,7 +429,12 @@ final class ProtectedTests: XCTestCase {
         XCTAssertTrue(on.checksInternet)
         XCTAssertTrue(Route(id: "s", ss: SsProfile(name: "s", server: "h.example", port: 1, method: "aes-256-gcm", password: "x")).checksInternet)
         XCTAssertTrue(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\n  Redirect-Gateway def1\nremote h.example 1194")).checksInternet)
+        XCTAssertTrue(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\r\n--redirect-gateway def1\r\nremote h.example 1194")).checksInternet)
         XCTAssertFalse(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\nremote h.example 1194")).checksInternet)
+        // A login whose name reads like the directive, a comment, and a longer word are not the directive.
+        XCTAssertFalse(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\n<auth-user-pass>\nredirect-gateway\nsecret\n</auth-user-pass>\nremote h.example 1194")).checksInternet)
+        XCTAssertFalse(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\n# redirect-gateway def1\n;redirect-gateway\nredirect-gateway-x\nremote h.example 1194")).checksInternet)
+        XCTAssertTrue(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "<ca>\nredirect-gateway\n</ca>\nredirect-gateway def1")).checksInternet)
         var exit = Route(id: "t", tsExit: "100.64.0.9"); exit.checkInternet = true
         XCTAssertFalse(exit.checksInternet)
         XCTAssertFalse(nl.checksInternet)
@@ -469,6 +474,21 @@ final class ProtectedTests: XCTestCase {
         // a and f newly blocked; b back on its route (it ran); c's route didn't run and d's rule is gone: their apps'
         // routes again; e as it ran; g not added.
         XCTAssertEqual(p.sites, ["a.example": BLOCK, "b.example": "us", "e.example": DIRECT, "f.example": BLOCK])
+    }
+
+    /// What ran plus a profile's worth of new blocks is more than a profile holds: all of it survives being saved and
+    /// read back, so no route the record runs loses its last website (and with it its place among the routes in use).
+    func testARecordWithMoreWebsitesThanAProfileHoldsReadsBackWhole() throws {
+        var ran = record
+        ran.sites = ["z.example": "us"]
+        ran.apps = [:]
+        var store = ran
+        store.sites = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("a\($0).example", BLOCK) })
+        let p = try XCTUnwrap(Lifecycle.protected(record: ran, linked: ["nl", "us"], store: store))
+        XCTAssertEqual(p.sites.count, Sites.max + 1)
+        let back = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(p))
+        XCTAssertEqual(back.sites, p.sites)
+        XCTAssertTrue(back.activeRoutes.contains { $0.id == "us" })
     }
 
     /// The pause's baseline is compared with the record read back: the same setup gives the same digest after a round trip.
