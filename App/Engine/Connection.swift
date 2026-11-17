@@ -21,6 +21,9 @@ nonisolated struct VpnState: Equatable, Sendable {
     var blocked: [String: String] = [:]
     var retryAt: [String: Date] = [:]
     var dropping: [String] = []
+    /// Routes whose tunnel stopped answering and that unbraid can't move to another server: the user's own servers,
+    /// pinned servers and dedicated addresses. Their apps time out until the server answers again.
+    var silent: [String] = []
     var error: String?
     var tsLoginUrl: String?
     var tsState: String?
@@ -55,6 +58,7 @@ final class Connection {
             if state.phase != .on {
                 routeWake?.cancel(); routeWake = nil
                 if !state.dropping.isEmpty { state.dropping = [] }
+                if !state.silent.isEmpty { state.silent = [] }
             }
             if state.phase == .off || state.phase == .paused {
                 routeRetry.clear(); blockedReasons = [:]
@@ -200,6 +204,7 @@ final class Connection {
             self.portStep.removeAll()
             self.failing.removeAll()
             if !self.state.dropping.isEmpty { self.state.dropping = [] }
+            if !self.state.silent.isEmpty { self.state.silent = [] }
             self.onNetworkChange?()
             guard self.state.phase == .on else { return }
             if resetPorts { await self.reload(checked: self.commits, healthAction: true) }
@@ -327,6 +332,7 @@ final class Connection {
             Task { @MainActor in
                 self?.healthReset += 1
                 if self?.state.dropping.isEmpty == false { self?.state.dropping = [] }
+                if self?.state.silent.isEmpty == false { self?.state.silent = [] }
             }
         }
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -2540,6 +2546,7 @@ final class Connection {
                 basis = current
                 plan.restart(now: .now)
                 if !state.dropping.isEmpty { state.dropping = [] }
+                if !state.silent.isEmpty { state.silent = [] }
                 failing.removeAll()
             }
             guard state.phase == .on, !SpeedTest.shared.testing, let setup = running else { continue }
@@ -2547,7 +2554,9 @@ final class Connection {
             let eligible = Set(exits.keys.filter { id in
                 guard let exit = exits[id] else { return false }
                 return exit.keys.allSatisfy { route in
-                    guard let p = setup.route(route)?.loc.provider, let provider = Providers.get(p) else { return true }
+                    // An own server has no provider still setting its key up.
+                    guard let r = setup.route(route), !r.imported, let provider = Providers.get(r.loc.provider) else { return true }
+                    let p = r.loc.provider
                     return !ProviderStatus.settingUp(signedIn: AppModel.shared.signedInAt[p], seconds: provider.keySetup)
                 }
             })
@@ -2587,12 +2596,15 @@ final class Connection {
             failing = Set(plan.streaks.keys.flatMap { exits[$0]?.values.map { $0 } ?? [] })
             let dropping = exits.filter { plan.dropping($0.key) }.values.flatMap { $0.keys }.sorted()
             if dropping != state.dropping { state.dropping = dropping }
+            let silent = exits.filter { plan.silent($0.key, now: .now) }.values.flatMap { $0.keys }.filter { setup.route($0)?.movable == false }.sorted()
+            if silent != state.silent { state.silent = silent }
             guard !deadTags.isEmpty else { continue }
             let dead = deadTags.compactMap { exits[$0] }
             let routeIds = Set(dead.flatMap { $0.keys })
             let accounts = store.accounts
             var revoked: [String: String] = [:]
-            for p in Set(routeIds.compactMap { setup.route($0)?.loc.provider }) {
+            // Own servers have no provider to ask, no other port and no other server: they are only shown as silent.
+            for p in Set(routeIds.compactMap { id in setup.route(id).flatMap { $0.imported ? nil : $0.loc.provider } }) {
                 guard let account = accounts[p], let provider = Providers.get(p) else { continue }
                 let removed = await withTaskGroup(of: Bool.self, returning: Bool.self) { group in
                     group.addTask { (try? await provider.revoked(account)) == true }
@@ -2612,10 +2624,10 @@ final class Connection {
             var moved: [String: String] = [:]
             var stepped: Set<String> = []
             for id in routeIds {
-                guard let route = setup.route(id), let link = links[id] else { continue }
+                guard let route = setup.route(id), !route.imported, let link = links[id] else { continue }
                 let p = route.loc.provider
                 if case .wg(_, _, let ports, _) = link, ports.count > 1, Int(setup.opt(p, "port") ?? "") == nil { stepped.insert(p) }
-                if route.loc.pinned == nil && route.loc.group != Nord.dedicatedIp { moved[id] = LinkPicker.serverKey(route, link) }
+                if route.movable { moved[id] = LinkPicker.serverKey(route, link) }
             }
             for p in stepped { portStep[p, default: 0] += 1 }
             if !moved.isEmpty || !stepped.isEmpty || !revoked.isEmpty {
@@ -2624,12 +2636,13 @@ final class Connection {
         }
     }
 
-    /// Provider tunnels, including pins and dedicated IPs, grouped by their current engine tag.
+    /// The tunnels that are checked, grouped by their current engine tag: provider tunnels, pins and dedicated IPs
+    /// included, and the user's own servers that carry internet traffic (`Route.checksInternet`).
     private func healthExits() -> [String: [String: String]] {
         guard let s = running else { return [:] }
         var byTag: [String: [String: String]] = [:]
         for (id, link) in links {
-            guard let route = s.route(id), !route.imported, let tag = tags[id], !tag.isEmpty, tag != Compiler.tsTag else { continue }
+            guard let route = s.route(id), !route.imported || route.checksInternet, let tag = tags[id], !tag.isEmpty, tag != Compiler.tsTag else { continue }
             byTag[tag, default: [:]][id] = LinkPicker.serverKey(route, link)
         }
         return byTag

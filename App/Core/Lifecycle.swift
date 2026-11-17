@@ -942,6 +942,9 @@ nonisolated struct HealthSchedule {
         }
         return dead
     }
+    /// A tunnel that has stopped answering: its run of failed checks is long enough to count as dead, cooldown or not.
+    /// It stays so until a check is answered again.
+    func silent(_ id: String, now: ContinuousClock.Instant) -> Bool { streaks[id]?.dead(now: now) ?? false }
     func dropping(_ id: String) -> Bool {
         let h = history[id] ?? []
         return h.filter { !$0 }.count >= 3 && !(h.count >= 3 && h.suffix(3).allSatisfy { $0 })

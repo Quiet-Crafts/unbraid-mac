@@ -414,6 +414,51 @@ final class ProtectedTests: XCTestCase {
         XCTAssertTrue(p.prefs.threatProtection)
     }
 
+    /// An own server is checked when the user says so, else when its config carries all traffic; never a Tailscale exit,
+    /// and a provider route is checked whatever this says.
+    func testWhichOwnServersAreChecked() {
+        func wg(_ allowed: [String]) -> Route {
+            Route(id: "w", wg: WgPeer(name: "w", privateKey: "k", address: ["10.0.0.2/32"], publicKey: "p", endpoint: "h.example:1", allowedIps: allowed))
+        }
+        XCTAssertTrue(wg(["0.0.0.0/0"]).checksInternet)
+        XCTAssertTrue(wg(["192.168.1.0/24", "::/0"]).checksInternet)
+        XCTAssertFalse(wg(["192.168.1.0/24"]).checksInternet)
+        var off = wg(["0.0.0.0/0"]); off.checkInternet = false
+        XCTAssertFalse(off.checksInternet)
+        var on = wg(["192.168.1.0/24"]); on.checkInternet = true
+        XCTAssertTrue(on.checksInternet)
+        XCTAssertTrue(Route(id: "s", ss: SsProfile(name: "s", server: "h.example", port: 1, method: "aes-256-gcm", password: "x")).checksInternet)
+        XCTAssertTrue(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\n  Redirect-Gateway def1\nremote h.example 1194")).checksInternet)
+        XCTAssertFalse(Route(id: "o", ovpn: OvpnProfile(name: "o", config: "client\nremote h.example 1194")).checksInternet)
+        var exit = Route(id: "t", tsExit: "100.64.0.9"); exit.checkInternet = true
+        XCTAssertFalse(exit.checksInternet)
+        XCTAssertFalse(nl.checksInternet)
+        // Only a provider route on no pinned server and no dedicated address can be moved to another server.
+        XCTAssertTrue(nl.movable)
+        XCTAssertFalse(wg(["0.0.0.0/0"]).movable)
+        var pinned = nl; pinned.loc.pinned = Server(name: "nl1", host: "", ip: "", publicKey: "", load: -1)
+        XCTAssertFalse(pinned.movable)
+        // The choice is saved only when made: a route without one is written as before.
+        XCTAssertFalse(String(decoding: try! JSONEncoder().encode(wg(["0.0.0.0/0"])), as: UTF8.self).contains("checkInternet"))
+        XCTAssertEqual(try? JSONDecoder().decode(Route.self, from: JSONEncoder().encode(off)), off)
+    }
+
+    /// A tunnel is silent from the moment its failed checks count as dead until one is answered, cooldown or not.
+    func testATunnelIsSilentUntilItAnswers() {
+        let t0 = ContinuousClock.now
+        var plan = HealthSchedule(now: t0)
+        var now = t0 + .seconds(40)
+        for _ in 0..<3 { _ = plan.finish(["own": false, "other": true], regular: false, now: now, draw: 60, networkUp: true); now += .seconds(10) }
+        XCTAssertFalse(plan.silent("own", now: now))
+        now = t0 + .seconds(120)
+        XCTAssertEqual(plan.finish(["own": false, "other": true], regular: false, now: now, draw: 60, networkUp: true), ["own"])
+        XCTAssertTrue(plan.silent("own", now: now))
+        XCTAssertTrue(plan.silent("own", now: now + .seconds(30)), "still silent during the cooldown")
+        XCTAssertFalse(plan.silent("other", now: now))
+        _ = plan.finish(["own": true, "other": true], regular: false, now: now + .seconds(40), draw: 60, networkUp: true)
+        XCTAssertFalse(plan.silent("own", now: now + .seconds(40)))
+    }
+
     /// Website blocks added and removed during the pause reach the protected setup the same way; no other website change does.
     func testOnlyWebsiteBlocksChange() throws {
         var ran = record

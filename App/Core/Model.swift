@@ -97,11 +97,25 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     var filter: Bool? = nil
     /// The saved OwnServer whose config this route copies, so renaming or removing it reaches the route.
     var own: String?
+    /// Whether unbraid checks that this own server still reaches the internet; nil follows the config (`checksInternet`).
+    var checkInternet: Bool? = nil
 
     var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? tsName ?? tsExit ?? loc.country ?? "Fastest" }
     var code: String { wg != nil ? "WG" : ovpn != nil ? "OV" : ss != nil ? "SS" : tsExit != nil ? "TS" : loc.code }
     /// Not tied to a provider account.
     var imported: Bool { wg != nil || ovpn != nil || ss != nil || tsExit != nil }
+    /// An own server whose tunnel is checked like a provider's: as the user chose, else when its config carries all
+    /// traffic (a server that only reaches a home network would fail a check of the internet by design). Never moved
+    /// to another server: there is none. Tailscale exits aren't checked.
+    var checksInternet: Bool {
+        guard imported, tsExit == nil else { return false }
+        if let checkInternet { return checkInternet }
+        if ss != nil { return true }
+        if let wg { return wg.allowedIps.contains { ["0.0.0.0/0", "::/0"].contains($0.trimmingCharacters(in: .whitespaces)) } }
+        return ovpn?.config.split(whereSeparator: \.isNewline).contains { $0.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("redirect-gateway") } ?? false
+    }
+    /// A route whose failing tunnel unbraid can replace with another server of the same place.
+    var movable: Bool { !imported && loc.pinned == nil && loc.group != Nord.dedicatedIp }
     /// Who carries this route: the provider, or the kind of own server.
     var source: String {
         wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : tsExit != nil ? "Tailscale" : Providers.short(loc.provider)
@@ -613,6 +627,7 @@ nonisolated extension Route {
         // the provider route that `loc` defaults to. The setup then leaves this route out (see `Unreadable`).
         loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); tsExit = try c.source(.tsExit)
         tsName = try c.saved(.tsName, nil); hue = try c.saved(.hue, 0); filter = try c.saved(.filter, nil); own = try c.saved(.own, nil)
+        checkInternet = try c.saved(.checkInternet, nil)
     }
 }
 
