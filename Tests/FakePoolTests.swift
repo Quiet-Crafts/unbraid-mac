@@ -28,4 +28,11 @@ final class FakePoolTests: XCTestCase {
         XCTAssertEqual(FakePool.step(remaining: 1, since: .zero), .wait(exhausted: false))
         XCTAssertEqual(FakePool.step(remaining: 0, since: .seconds(30)), .wait(exhausted: true))
     }
+
+    func testOnlyAFailedMoveWithTheEngineDownIsRetried() {
+        XCTAssertTrue(FakePool.retries(failedRotation: true, engineRunning: false))
+        XCTAssertFalse(FakePool.retries(failedRotation: true, engineRunning: true))
+        XCTAssertFalse(FakePool.retries(failedRotation: false, engineRunning: false), "an app reload that failed is the app's")
+        XCTAssertFalse(FakePool.retries(failedRotation: false, engineRunning: true))
+    }
 }

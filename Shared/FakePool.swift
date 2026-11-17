@@ -32,4 +32,8 @@ nonisolated enum FakePool {
         if let since, since < spacing { return .wait(exhausted: remaining == 0) }
         return .rotate
     }
+
+    /// Whether a check tries a failed move's reload again: only while the engine is down because of it. A running
+    /// engine (a reload succeeded since) or a failure the app's own reload left is not the extension's to repair.
+    static func retries(failedRotation: Bool, engineRunning: Bool) -> Bool { failedRotation && !engineRunning }
 }

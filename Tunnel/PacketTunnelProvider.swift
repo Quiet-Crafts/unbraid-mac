@@ -19,6 +19,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var pool: DispatchSourceTimer?
     /// Logged once a block: it ran out before the next move was due.
     private var exhausted = false
+    /// A move to the next block whose reload failed, by the count of the engine it replaced: the engine is down and
+    /// nobody else brings it back, so `checkPool` tries again. Cleared by any successful reload, by a reload the app
+    /// asks for (a failed one is the app's to handle), and by a stop.
+    private var failedRotation: Int?
     /// When the engine last took a new block of stand-in addresses (a start or a move), on `work` only.
     nonisolated(unsafe) private static var blockChanged: ContinuousClock.Instant?
     static let vault = Sealed(dir: home.appending(path: "Sealed"), account: "tunnel")
@@ -194,6 +198,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 guard let block = fakeBlock else { throw Fail("Not running") }
                 let run = try ConfigVet.owned(ConfigVet.fakeBlock(config, block), by: owner)
                 if staged.persist { try Self.invalidateConfig() }
+                // On the block a failed move already advanced to; from here this reload is the app's to see through.
+                failedRotation = nil
                 try swap(run, config: config, search: staged.search, owner: owner, server: server)
                 // Running but not sealed is its own answer: Connect on Demand can't start this configuration.
                 let sealed = !staged.persist || Self.persistOrStayInvalid(config, owner: owner, search: staged.search)
@@ -215,6 +221,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         try server.startOrReloadService(run, options: LibboxOverrideOptions())
         Self.running.withLock { $0.engine = (Staging.revision(config, search: search), owner) }
         current = (config, search)
+        failedRotation = nil
         TailscaleWatch.refresh()
         return count
     }
@@ -233,8 +240,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// replaced by the next (`FakePool`). Before the move is due, nothing is handed out twice: lookups of new names fail
     /// until then, so a flood of lookups can make new lookups fail for a while, never move anyone's traffic.
     private func checkPool() {
-        guard Self.live === self, let server, let current, let block = fakeBlock, let owner = Self.owner,
-              let engine = Self.runningEngine else { return }
+        guard Self.live === self, let server, let current, let block = fakeBlock, let owner = Self.owner else { return }
+        let engine = Self.runningEngine
+        if let replaced = failedRotation, FakePool.retries(failedRotation: true, engineRunning: engine != nil) {
+            return retryRotation(on: block, current, owner: owner, replaced: replaced, server: server)
+        }
+        guard let engine else { return }
         switch FakePool.step(remaining: Int(LibboxFakeIPRemaining()), since: Self.blockChanged.map { .now - $0 }) {
         case .nothing: break
         case .wait(let out):
@@ -259,14 +270,36 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             // From here the engine may have handed out the next block's addresses, and dropped the old block's names: a
             // later reload must never go back to the old block, whose addresses programs still hold.
             fakeBlock = next
-            let count = try swap(run, config: current.config, search: current.search, owner: owner, server: server)
-            // The same configuration: still the fallback if it was.
-            Self.fallbackRun.withLock { if $0 == engine { $0 = count } }
+            do {
+                let count = try swap(run, config: current.config, search: current.search, owner: owner, server: server)
+                // The same configuration: still the fallback if it was.
+                Self.fallbackRun.withLock { if $0 == engine { $0 = count } }
+            } catch {
+                // Down now, traffic held by the tunnel: tried again at every check, on this same block.
+                failedRotation = engine
+                throw error
+            }
             Log.info("fake addresses: moved to the next block")
-            // As a start: a failure here leaves the pending block, which the next start then skips.
-            try Data(String(next).utf8).write(to: Self.fakeCounter, options: .atomic)
-            try Self.remove(Self.fakePending)
+            recordBlock(next)
         } catch { Log.error("fake addresses: move failed", error: error) }
+    }
+
+    /// The reload of a failed move, again: the same checked configuration on the same (already advanced) block. Its
+    /// failures were logged once, with the move.
+    private func retryRotation(on block: Int, _ current: (config: String, search: String?), owner: uid_t, replaced: Int, server: LibboxCommandServer) {
+        guard let run = try? ConfigVet.owned(ConfigVet.fakeBlock(current.config, block), by: owner),
+              let count = try? swap(run, config: current.config, search: current.search, owner: owner, server: server) else { return }
+        Self.fallbackRun.withLock { if $0 == replaced { $0 = count } }
+        Log.info("fake addresses: the move to the next block succeeded on a retry")
+        recordBlock(block)
+    }
+
+    /// As a start: a failure here leaves the pending block, which the next start then skips.
+    private func recordBlock(_ block: Int) {
+        do {
+            try Data(String(block).utf8).write(to: Self.fakeCounter, options: .atomic)
+            try Self.remove(Self.fakePending)
+        } catch { Log.error("fake addresses: block not recorded", error: error) }
     }
 
     /// The search domain older versions of the app put into the VPN profile, for a configuration staged or sealed without
@@ -293,6 +326,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         platform = nil
         fakeBlock = nil
         current = nil
+        failedRotation = nil
         pool?.cancel()
         pool = nil
         // A newer provider's engine runs (see `live`): its owner, cache and files stay.
