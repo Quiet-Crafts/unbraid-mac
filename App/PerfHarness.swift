@@ -218,7 +218,9 @@ private final class Meter: NSObject {
     /// The user's own WireGuard server, the one shown not answering (`route-silent`, `panel-silent`, the widgets).
     private static let shotHome: Route = {
         var r = Route(id: "home", hue: 5)
-        r.wg = WgPeer(name: "Home server", privateKey: "a", address: ["10.0.0.2/32"], publicKey: "b", endpoint: "192.0.2.10:51820", allowedIps: ["0.0.0.0/0"])
+        // Made-up keys of the right shape, so the made-up backup of this setup passes the same checks as a real one.
+        r.wg = WgPeer(name: "Home server", privateKey: String(repeating: "A", count: 42) + "E=", address: ["10.0.0.2/32"],
+                      publicKey: String(repeating: "B", count: 42) + "E=", endpoint: "192.0.2.10:51820", allowedIps: ["0.0.0.0/0"])
         return r
     }()
     private static let shotCountries: [(code: String, name: String, cities: [String])] = [

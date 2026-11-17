@@ -67,7 +67,8 @@ nonisolated enum BackupTexts {
 
     /// Why a backup couldn't be saved. Never the system's own message: it may name paths.
     static func saveFailure(_ error: Error) -> String {
-        switch error as? BackupFile.Failure {
+        if let e = error as? BackupFile.Unrestorable { return "Nothing was saved: a backup of this setup couldn't be restored later. \(e.why)" }
+        return switch error as? BackupFile.Failure {
         case .tooLarge: "This setup is too large for a backup file"
         case .memory: "There isn't enough memory to lock the backup. Quit some apps and try again."
         default: "The backup couldn't be saved there. Choose another folder and try again."
@@ -148,8 +149,14 @@ nonisolated extension BackupFile {
     static func save(_ setup: Setup, app: String, keys: Bool, passphrase: String, to url: URL, now: Date = .now) throws {
         var plain = Backup.export(setup, app: app, created: now, keys: keys)
         defer { plain.withUnsafeMutableBytes { if let p = $0.baseAddress { _ = memset_s(p, $0.count, 0, $0.count) } } }
+        // Read back before anything is written: a backup that couldn't be restored is said now, while the setup is
+        // still here to mend, not on the day it is needed.
+        do { _ = try Backup.read(plain) } catch { throw Unrestorable(why: (error as? Backup.Failure)?.message ?? "") }
         try write(try seal(plain, passphrase: passphrase), to: url)
     }
+
+    /// A setup whose backup could not be restored (see `save`), with what the restore would say.
+    struct Unrestorable: Error, Equatable { var why: String }
 
     /// Writes `data` to `url` in one step: a file only the user can read, made beside it and moved into place, so a
     /// failure never leaves half a backup or replaces a good one with nothing.

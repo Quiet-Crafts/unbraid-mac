@@ -254,6 +254,11 @@ nonisolated enum Backup {
         }
         // A route copied from an own server that is gone keeps its config, no longer tied to it.
         var out = s
+        // WireGuard configs as the import reads them today: one saved by an older build in a way the import no longer
+        // writes (an MTU out of range, say) is taken as read instead of refusing a backup the user can't mend.
+        for i in out.servers.indices where !out.servers[i].keyless { out.servers[i].wg = out.servers[i].wg.flatMap(asRead) }
+        for i in out.routes.indices where !out.routes[i].keyless { out.routes[i].wg = out.routes[i].wg.flatMap(asRead) }
+        out.home.wg = out.home.wg.flatMap(asRead)
         for i in out.routes.indices where out.routes[i].own.map({ id in !s.servers.contains { $0.id == id } }) == true { out.routes[i].own = nil }
         return out
     }
@@ -274,7 +279,8 @@ nonisolated enum Backup {
                     && (1...65535).contains(p.port) && plain(p.plugin ?? "", max: 64)
             } else { ok = false }
         } else if let w = wg {
-            ok = (try? WgConf.parse(WgConf.text(w), name: w.name)) == w
+            // As the import would read it; what it reads differently (an older build's value) is taken as read (`asRead`).
+            ok = asRead(w) != nil
         } else if let o = ovpn {
             ok = o.config.utf8.count <= maxConfig && o.username.utf8.count <= 1024 && o.password.utf8.count <= 1024
                 && (try? Manual.parseOvpn(o.config, name: o.name, username: o.username, password: o.password)) != nil
@@ -283,6 +289,9 @@ nonisolated enum Backup {
         } else { ok = false }
         try need(ok && plainName(name), "own server \(String(name.prefix(40))) is damaged")
     }
+
+    /// A WireGuard config written out and read back by the import's own parser; nil when the import refuses it.
+    private static func asRead(_ w: WgPeer) -> WgPeer? { try? WgConf.parse(WgConf.text(w), name: w.name) }
 
     /// Whether the engine's config for `v` builds and is one the tunnel extension accepts.
     private static func runs(_ v: Setup) -> Bool {

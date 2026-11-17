@@ -227,7 +227,8 @@ final class BackupTests: XCTestCase {
         XCTAssertFalse(refused(f.with { $0.servers[1].ovpn?.config += "\nbogus-directive \(self.ovpnKeyLine)" }).contains(ovpnKeyLine))
         _ = refused(f.with { $0.servers[2].ss?.pluginOpts = "cert=/etc/passwd" })
         _ = refused(f.with { $0.servers[0].wg?.endpoint = "nowhere" })
-        _ = refused(f.with { $0.servers[0].wg?.mtu = 9000 })
+        // An MTU out of range is no damage: it is read as the import reads it.
+        XCTAssertEqual(try Backup.valid(f.with { $0.servers[0].wg?.mtu = 9000 }).servers[0].wg?.mtu, 1500)
         _ = refused(f.with { $0.servers[0].wg = nil })
         _ = refused(f.with { $0.servers.append(OwnServer(id: "s1", wg: self.wg)) })
         _ = refused(f.with { $0.home.wg?.endpoint = "nowhere" })
@@ -311,6 +312,28 @@ final class BackupTests: XCTestCase {
         XCTAssertNoThrow(try read(full().with { $0.favorites.append(Location(country: String(repeating: "x", count: 1000))) }))
         XCTAssertEqual(Backup.Failure.damaged.message, "This backup is damaged or incomplete. Use another copy of it.")
         XCTAssertEqual(Backup.Failure.invalid("a route has more than one exit").message, "This backup can't be restored: a route has more than one exit.")
+    }
+
+    /// What the import no longer writes the same way is taken as the import reads it, and a setup whose backup
+    /// couldn't be restored is refused when it is saved, not when it is needed.
+    func testABackupThatSavesCanBeRestored() throws {
+        var old = full()
+        old.servers[0].wg?.mtu = 9000
+        old.routes[1].wg?.mtu = 9000
+        let back = try read(old).setup
+        XCTAssertEqual(back.servers[0].wg?.mtu, 1500)
+        XCTAssertEqual(back.routes[1].wg?.mtu, 1500)
+        XCTAssertEqual(back.routes[1].wg, back.servers[0].wg)
+        // A setup the check refuses: nothing is written, and the reason is the restore's own.
+        var broken = full()
+        broken.routes.append(Route(id: "__filtered_direct", tsExit: "100.64.0.9", tsName: "exit"))
+        let url = FileManager.default.temporaryDirectory.appending(path: "unbraid-\(UUID().uuidString).unbraidbackup")
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertThrowsError(try BackupFile.save(broken, app: "1.2.0", keys: true, passphrase: "x", to: url)) { error in
+            XCTAssertNotNil(error as? BackupFile.Unrestorable)
+            XCTAssertTrue(BackupTexts.saveFailure(error).hasPrefix("Nothing was saved: a backup of this setup couldn't be restored later."))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
     }
 
     // MARK: What a file from elsewhere can't do
