@@ -1,8 +1,8 @@
 Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-11-17:
 a stand-in (fake) address is never handed to a second name while the range is unchanged: once the range is used
 up, lookups of new names are answered with a server failure instead, an address that still names a domain is
-skipped even when the saved position is older, and libbox tells how many addresses are left (FakeIPRemaining), so
-the app can move to a fresh range in time.
+skipped even when the saved position is older (a start moves past such addresses), and libbox tells how many
+addresses can still be handed out (FakeIPRemaining), so the app can move to a fresh range in time.
 Applied by tools/build-libbox.sh; git apply skips these lines.
 
 diff --git a/dns/transport/fakeip/fakeip.go b/dns/transport/fakeip/fakeip.go
@@ -30,7 +30,7 @@ index 03daeff..eecb92b 100644
  		return nil, err
  	}
 diff --git a/dns/transport/fakeip/store.go b/dns/transport/fakeip/store.go
-index b7c51df..4f99d6d 100644
+index b7c51df..95d4b31 100644
 --- a/dns/transport/fakeip/store.go
 +++ b/dns/transport/fakeip/store.go
 @@ -2,8 +2,11 @@ package fakeip
@@ -93,15 +93,38 @@ index b7c51df..4f99d6d 100644
  type Store struct {
  	ctx        context.Context
  	logger     logger.Logger
-@@ -82,6 +126,7 @@ func (s *Store) Start() error {
+@@ -82,14 +126,38 @@ func (s *Store) Start() error {
  		_ = storage.FakeIPReset()
  	}
  	s.storage = storage
++	s.reconcile()
 +	running.Store(s)
  	return nil
  }
  
-@@ -90,6 +135,7 @@ func (s *Store) Contains(address netip.Addr) bool {
++// reconcile moves each position past the addresses storage still maps: a restored position can be older than what was
++// handed out (the cache saves it in the background, and a late save can land after the final one), and Remaining
++// must count only what Create can still hand out. Allocation is in order, so they follow the position.
++func (s *Store) reconcile() {
++	pastMapped := func(current netip.Addr, last netip.Addr, prefix netip.Prefix) netip.Addr {
++		for current.IsValid() {
++			next := current.Next()
++			if next == last || !prefix.Contains(next) {
++				break
++			}
++			if _, used := s.storage.FakeIPLoad(next); !used {
++				break
++			}
++			current = next
++		}
++		return current
++	}
++	s.inet4Current = pastMapped(s.inet4Current, s.inet4Last, s.inet4Range)
++	s.inet6Current = pastMapped(s.inet6Current, s.inet6Last, s.inet6Range)
++}
++
+ func (s *Store) Contains(address netip.Addr) bool {
+ 	return s.inet4Range.Contains(address) || s.inet6Range.Contains(address)
  }
  
  func (s *Store) Close() error {
@@ -109,7 +132,7 @@ index b7c51df..4f99d6d 100644
  	if s.storage == nil {
  		return nil
  	}
-@@ -117,31 +163,34 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
+@@ -117,31 +185,34 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
  		return address, nil
  	}
  
@@ -165,10 +188,10 @@ index b7c51df..4f99d6d 100644
  		Inet4Range:   s.inet4Range,
 diff --git a/dns/transport/fakeip/store_test.go b/dns/transport/fakeip/store_test.go
 new file mode 100644
-index 0000000..f648f8b
+index 0000000..4f004ef
 --- /dev/null
 +++ b/dns/transport/fakeip/store_test.go
-@@ -0,0 +1,79 @@
+@@ -0,0 +1,107 @@
 +package fakeip
 +
 +import (
@@ -246,6 +269,34 @@ index 0000000..f648f8b
 +	}
 +	if left := Remaining(); left != 10 {
 +		t.Fatalf("remaining %d, want 10", left)
++	}
++}
++
++func TestStartCountsOnlyWhatCanStillBeHandedOut(t *testing.T) {
++	store := NewStore(context.Background(), logger.NOP(), netip.MustParsePrefix("198.18.0.0/28"), netip.Prefix{})
++	if err := store.Start(); err != nil {
++		t.Fatal(err)
++	}
++	defer store.Close()
++	for i := 0; i < 3; i++ {
++		store.Create(fmt.Sprint("n", i, ".example"), false)
++	}
++	// A position saved before those three, as a start restores it.
++	store.inet4Current = netip.MustParseAddr("198.18.0.1")
++	store.reconcile()
++	if left := Remaining(); left != 10 {
++		t.Fatalf("remaining %d with three mapped, want 10", left)
++	}
++	for i := 3; i < 13; i++ {
++		store.Create(fmt.Sprint("n", i, ".example"), false)
++	}
++	store.inet4Current = netip.MustParseAddr("198.18.0.1")
++	store.reconcile()
++	if left := Remaining(); left != 0 {
++		t.Fatalf("remaining %d with the block mapped, want 0", left)
++	}
++	if address, err := store.Create("n0.example", false); err != nil || address != netip.MustParseAddr("198.18.0.2") {
++		t.Fatalf("n0.example now %s (%v), want 198.18.0.2", address, err)
 +	}
 +}
 diff --git a/experimental/libbox/fakeip.go b/experimental/libbox/fakeip.go
