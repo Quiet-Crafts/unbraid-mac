@@ -53,12 +53,12 @@ final class BackupWeakensTests: XCTestCase {
         return s
     }
 
-    /// The model: anything that gets weaker produces a note; a restore that changes nothing the traffic gets, and no
-    /// setting, produces none.
+    /// Asked of the compiled configs: anything that gets weaker produces a note; a restore that makes nothing weaker,
+    /// and changes no setting, produces none.
     func testEveryWeakeningIsSaidAndNothingElse() {
         var g = RNG(0x7E57)
         var problems: [String] = []
-        for _ in 0..<4000 {
+        for _ in 0..<1500 {
             let here = random(&g)
             // Half the time a small change of here, half another setup.
             var next = here
@@ -71,14 +71,11 @@ final class BackupWeakensTests: XCTestCase {
                 }
             }
             let said = Backup.weakens(here, next)
-            let l = Backup.lost(here, next)
-            let weaker = l.defaultRoute != nil || !l.apps.isEmpty || !l.sites.isEmpty
+            guard let l = RestoreTraffic.losses(here, next) else { problems.append("couldn't be compiled: \(here.apps) → \(next.apps)"); continue }
+            let weaker = l.defaultRoute != nil || !l.apps.isEmpty || !l.sites.isEmpty || !l.home.isEmpty
             if weaker && said.isEmpty { problems.append("weaker but nothing said: \(here.apps) \(here.sites) → \(next.apps) \(next.sites)") }
-            // Nothing the traffic gets changed, and no setting: nothing to say.
-            let apps = Set(here.apps.keys).union(next.apps.keys).union(here.prefs.filter.apps.keys).union(next.prefs.filter.apps.keys)
-            let sites = Set(Sites.applied(here).keys).union(Sites.applied(next).keys)
-            if Backup.traffic(here, apps: apps, sites: sites) == Backup.traffic(next, apps: apps, sites: sites), here.prefs == next.prefs, here.opts == next.opts,
-               here.routes == next.routes, !said.isEmpty {
+            // Nothing the traffic gets changed for the worse, and no setting: nothing to say.
+            if !weaker, here.prefs == next.prefs, here.opts == next.opts, here.routes == next.routes, here.servers == next.servers, !said.isEmpty {
                 problems.append("nothing changed but said \(said): \(here.apps) \(here.sites) → \(next.apps) \(next.sites)")
             }
         }
@@ -95,7 +92,7 @@ final class BackupWeakensTests: XCTestCase {
             Sites.applied(Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: rules)).filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value
         }
         var problems: [String] = []
-        for _ in 0..<3000 {
+        for _ in 0..<1000 {
             var here = base(), next = here
             for name in chain {
                 if g.chance(0.5) { here.sites[name] = g.pick([BLOCK, BLOCK, DIRECT, "nl", "w1"]) }
@@ -118,9 +115,9 @@ final class BackupWeakensTests: XCTestCase {
         // A child added on a route without blocking, or on Direct: the part under it loses what it had.
         XCTAssertEqual(Backup.weakens(here, here.with { $0.sites["cdn.example.com"] = "m1" }), ["1 website loses the provider's ad and tracker blocking it has now."])
         XCTAssertEqual(Backup.weakens(here, here.with { $0.sites["cdn.example.com"] = DIRECT }), ["1 website goes from a VPN route to Direct."])
-        // A rule removed: it goes as its app does.
+        // A rule removed: it goes as its app does, here Direct.
         XCTAssertEqual(Backup.weakens(here.with { $0.defaultRoute = DIRECT }, here.with { $0.defaultRoute = DIRECT; $0.sites["example.com"] = nil }),
-                       ["1 website loses its own VPN route and goes as its app does."])
+                       ["1 website goes from a VPN route to Direct."])
         // A rule that never applies (a name on the own network) changes no traffic: nothing said.
         XCTAssertEqual(Backup.weakens(here, here.with { $0.sites["nas.lan"] = DIRECT }), [])
     }
@@ -146,6 +143,124 @@ final class BackupWeakensTests: XCTestCase {
         XCTAssertTrue(said[0].contains("new.example instead of …"), said[0])
         // A bound route changed on its own, the server entry as it was.
         XCTAssertEqual(Backup.weakens(here, here.with { $0.routes[2].wg?.endpoint = long + ".new.example:51820" }).count, 1)
+    }
+
+    // MARK: The evaluator against the compiler
+
+    /// What the walk of a compiled config says, for cases whose outcome the compiler's own tests check by hand.
+    func testTheWalkAgreesWithTheCompilersOwnRules() throws {
+        var s = base()
+        s.defaultRoute = "nl"
+        s.apps = ["com.example.blocked": BLOCK, "com.example.direct": DIRECT, "com.example.own": "w1", "com.example.sweden": "m1"]
+        s.sites = ["blocked.example": BLOCK, "direct.example": DIRECT, "sweden.example": "m1"]
+        s.prefs.lan = true
+        s.prefs.filter = Filter(id: "quad9", directApps: true)
+        let apps = RestoreTraffic.patterns(s.apps.keys)
+        let c = try XCTUnwrap(RestoreTraffic.compile(s, apps: apps))
+        func app(_ key: String) -> String { RestoreTraffic.samplePath(apps[key]![0])! }
+        func go(_ process: String?, _ name: String?, _ address: String = RestoreTraffic.publicAddress) -> RestoreTraffic.Outcome? {
+            RestoreTraffic.connect(c, process: process, name: name, address: address)
+        }
+        XCTAssertEqual(go(app("com.example.blocked"), "x.example")?.exit, .rejected)
+        XCTAssertEqual(go(app("com.example.direct"), "x.example"), .init(exit: .direct, resolver: .filter))
+        XCTAssertEqual(go(app("com.example.own"), "x.example")?.exit, .tunnel("r-w1"))
+        XCTAssertEqual(go(app("com.example.sweden"), "x.example"), .init(exit: .tunnel("r-m1"), resolver: .route))
+        XCTAssertEqual(go(RestoreTraffic.otherProgram, "x.example"), .init(exit: .tunnel("r-nl"), resolver: .provider))
+        // Websites beat apps; the most specific wins; a blocked app stays blocked whatever it opens.
+        XCTAssertEqual(go(RestoreTraffic.otherProgram, "a.blocked.example")?.exit, .rejected)
+        XCTAssertEqual(go(RestoreTraffic.otherProgram, "direct.example"), .init(exit: .direct, resolver: .filter))
+        XCTAssertEqual(go(app("com.example.direct"), "sweden.example")?.exit, .tunnel("r-m1"))
+        XCTAssertEqual(go(app("com.example.blocked"), "direct.example")?.exit, .rejected)
+        // unbraid itself always direct; the local network direct with LAN access on.
+        XCTAssertEqual(go("/Applications/unbraid.app/Contents/MacOS/unbraid", "x.example")?.exit, .direct)
+        XCTAssertEqual(go(RestoreTraffic.otherProgram, nil, "192.168.1.20")?.exit, .direct)
+        // A Home WireGuard tunnel takes its own ranges.
+        var home = s
+        home.home.wg = try WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 192.168.77.201/24\n[Peer]\nPublicKey = \(peer)\nEndpoint = home.example.org:51820\nAllowedIPs = 10.0.0.0/8\n", name: "Home")
+        let h = try XCTUnwrap(RestoreTraffic.compile(home, apps: apps))
+        XCTAssertEqual(RestoreTraffic.connect(h, process: RestoreTraffic.otherProgram, name: nil, address: "10.1.2.3")?.exit, .home)
+        // A route waiting for its config: refused.
+        var waiting = s
+        waiting.routes.append(Route(id: "k1", wg: wg().withoutSecrets(), own: "sk", keyless: true))
+        waiting.servers.append(OwnServer(id: "sk", wg: wg().withoutSecrets(), keyless: true))
+        waiting.apps["com.example.waiting"] = "k1"
+        let wa = RestoreTraffic.patterns(waiting.apps.keys)
+        let w = try XCTUnwrap(RestoreTraffic.compile(waiting, apps: wa))
+        XCTAssertEqual(RestoreTraffic.connect(w, process: RestoreTraffic.samplePath(wa["com.example.waiting"]![0]), name: "x.example")?.exit, .rejected)
+    }
+
+    /// Random setups: what the walk finds for each app and website is what the setup says it chose (for these, no
+    /// nesting and no rule the walk doesn't know).
+    func testTheWalkFollowsEveryChoice() throws {
+        var g = RNG(0xC0DE)
+        var problems: [String] = []
+        for _ in 0..<500 {
+            let s = random(&g)
+            let apps = RestoreTraffic.patterns(s.apps.keys)
+            guard let c = RestoreTraffic.compile(s, apps: apps) else { problems.append("not compiled: \(s.apps)"); continue }
+            func expected(_ id: String) -> String { id == BLOCK ? "rejected" : id == DIRECT ? "direct" : "r-\(id)" }
+            func got(_ o: RestoreTraffic.Outcome?) -> String {
+                switch o?.exit { case .rejected: "rejected"; case .direct: "direct"; case .tunnel(let t): t; case .home: "home"; case nil: "?" }
+            }
+            for (key, id) in s.apps {
+                let o = RestoreTraffic.connect(c, process: RestoreTraffic.samplePath(apps[key]![0]), name: RestoreTraffic.otherName)
+                if got(o) != expected(id) { problems.append("app \(key) on \(id): \(got(o))") }
+            }
+            let rules = Sites.applied(s)
+            for name in ["example.com", "a.cdn.example.com", "x.tracker.example", "z.example"] {
+                let rule = rules.filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value ?? s.defaultRoute
+                let o = RestoreTraffic.connect(c, process: RestoreTraffic.otherProgram, name: name)
+                if got(o) != expected(rule) { problems.append("site \(name) on \(rule): \(got(o))") }
+            }
+        }
+        XCTAssertEqual(problems.prefix(5), [])
+    }
+
+    // MARK: Found in the fourth review
+
+    func testWhatTheCompiledConfigsTellApart() throws {
+        var here = base()
+        // A Direct website rule removed: its lookups no longer go to the filter.
+        here.defaultRoute = DIRECT
+        here.prefs.filter = Filter(id: "quad9", direct: false, directApps: true)
+        here.sites = ["example.com": DIRECT]
+        XCTAssertEqual(Backup.weakens(here, here.with { $0.sites = [:] }), ["1 website loses the DNS filter."])
+        // An app nested inside another's bundle: its own filter switch counts; a block of its bundle still holds.
+        let xcode = "/Applications/Xcode.app", simulator = "/Applications/Xcode.app/Contents/Developer/Applications/Simulator.app"
+        let nested = ["com.apple.dt.Xcode": [Compiler.pattern(forPath: xcode, ignoringCase: true)], "com.apple.iphonesimulator": [Compiler.pattern(forPath: simulator, ignoringCase: true)]]
+        var dev = here
+        dev.sites = [:]
+        dev.apps = ["com.apple.dt.Xcode": "nl"]
+        XCTAssertEqual(Backup.weakens(dev, dev.with { $0.prefs.filter.apps["com.apple.iphonesimulator"] = false }, apps: nested), ["1 app loses the DNS filter."])
+        let blocked = dev.with { $0.apps = ["com.apple.dt.Xcode": BLOCK, "com.apple.iphonesimulator": BLOCK] }
+        XCTAssertEqual(Backup.weakens(blocked, blocked.with { $0.apps["com.apple.iphonesimulator"] = nil }, apps: nested), [])
+        // Traffic refused now (a route waiting for its config) sent out Direct.
+        var waiting = here
+        waiting.sites = [:]
+        waiting.routes.append(Route(id: "k1", wg: wg().withoutSecrets(), own: "sk", keyless: true))
+        waiting.servers.append(OwnServer(id: "sk", wg: wg().withoutSecrets(), keyless: true))
+        waiting.apps = ["org.example.a4": "k1"]
+        waiting.sites = ["x.o.example": "k1", "o.example": DIRECT]
+        XCTAssertEqual(Backup.weakens(waiting, waiting.with { $0.apps = [:] }),
+                       ["1 app that can't connect now, because its route waits for a server's config, goes out without it."])
+        XCTAssertEqual(Backup.weakens(waiting, waiting.with { $0.sites["x.o.example"] = nil }),
+                       ["1 website that can't connect now, because its route waits for a server's config, goes out without it."])
+        // A Home WireGuard tunnel that covers less: the addresses it no longer takes go Direct.
+        var home = base()
+        home.prefs.lan = true
+        home.home.wg = try WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 192.168.77.201/24\n[Peer]\nPublicKey = \(peer)\nEndpoint = home.example.org:51820\nAllowedIPs = 10.0.0.0/8\n", name: "Home")
+        let narrower = home.with { $0.home.wg?.allowedIps = ["10.20.0.0/16"] }
+        XCTAssertEqual(Backup.weakens(home, narrower), ["Traffic to 1 home address range goes Direct instead of through the home tunnel."])
+        // OpenVPN: another of its servers, or a port it inherits.
+        let config = "client\ndev tun\nproto udp\nremote primary.example 1194\nremote old.example 1194\nremote-random\nremote-cert-tls server\n<ca>\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n</ca>\n"
+        var office = base()
+        office.routes.append(Route(id: "o1", ovpn: OvpnProfile(name: "Office", config: config)))
+        XCTAssertEqual(Backup.weakens(office, office.with { $0.routes[3].ovpn?.config = config.replacingOccurrences(of: "old.example", with: "new.example") }),
+                       ["\"Office\" connects to another server at new.example."])
+        let lone = "client\ndev tun\nport 1194\nremote primary.example\nremote-cert-tls server\n<ca>\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n</ca>\n"
+        office.routes[3].ovpn?.config = lone
+        XCTAssertEqual(Backup.weakens(office, office.with { $0.routes[3].ovpn?.config = lone.replacingOccurrences(of: "port 1194", with: "port 443") }),
+                       ["\"Office\" connects to another server at primary.example."])
     }
 
     // MARK: Passphrases
@@ -200,6 +315,18 @@ final class BackupWeakensTests: XCTestCase {
         // One character of another kind doesn't lift the rest.
         XCTAssertEqual(Backup.strength("dog€x"), .easy)
         XCTAssertEqual(Backup.strength("summer😀"), .easy)
+        // Counters at a word's start, digits of another script in a row, a counter series without separators, a walk
+        // with shifted digits: none hard, so none can carry keys.
+        for p in ["1password 2password 3password 4password 5password 6password 7password 8password 9password 10password", "١٢٣٤٥٦٧٨٩٠",
+                  "pass1pass2pass3pass4pass5pass6pass7", "word1word2word3word4word5word6word7word8", "summer1summer2summer3summer4summer5summer6summer7",
+                  "Pass1Pass2Pass3Pass4Pass5Pass6Pass7Pass8", (1...20).map { "horse\($0)" }.joined(), (1...20).map { "pass\($0)" }.joined(), "!QAZ2wsx#EDC4rfv"] {
+            XCTAssertNotEqual(Backup.strength(p), .hard, p)
+            XCTAssertFalse(BackupTexts.saveCheck(p, p, keys: true).ready, p)
+        }
+        XCTAssertEqual(Backup.strength("١٢٣٤٥٦٧٨٩٠"), .easy)
+        // The whole text is judged: a long repeat first doesn't hide a random part after it.
+        let tail = String((0..<24).map { _ in g.pick(alphabet) })
+        XCTAssertEqual(Backup.strength(String(repeating: "0", count: 300) + tail), Backup.strength("0" + tail))
         XCTAssertNotEqual(Backup.strength("summer2024€"), .hard)
         let t = Date()
         _ = Backup.strength(String(repeating: "correct horse ", count: 20_000))

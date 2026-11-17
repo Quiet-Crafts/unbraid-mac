@@ -372,14 +372,16 @@ private struct RestoreSheet: View {
     @State private var keep = true
     /// Weak servers in the backup were accepted, as the import asks for them.
     @State private var weakAccepted = false
+    /// The patterns of the apps either setup names (nested ones included), as the engine gets them: read once.
+    @State private var patterns: [String: [String]]?
 
     var body: some View {
         let current = model.setup
         let here = Backup.setUp(current)
         // Worked out again for every change, of the switch or of this Mac's setup meanwhile.
-        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now)
+        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now, apps: patterns)
         let canKeep = here && !keeping.unkept
-        let plan = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now)
+        let plan = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, apps: patterns)
         let phase = model.vpn.state.phase
         let notes = BackupTexts.restoreNotes(plan, accounts: model.accounts, tunnelUp: phase == .on || phase == .paused)
         SheetFrame(title: "Restore Settings", subtitle: BackupTexts.restoreFacts(file: flow.fileName, content)) {
@@ -394,6 +396,11 @@ private struct RestoreSheet: View {
                 model.restoreBackup(content, keepPrevious: canKeep && keep)
                 flow.close()
             }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(!plan.weak.isEmpty && !weakAccepted)
+        }
+        .onAppear {
+            let catalog = AppCatalog.shared, mine = model.setup, theirs = content.setup
+            let filtered = mine.prefs.effectiveFilter.apps.keys.map { $0 } + theirs.prefs.effectiveFilter.apps.keys.map { $0 }
+            patterns = catalog.patterns(for: Array(Set(catalog.routingKeys(mine) + catalog.routingKeys(theirs) + filtered)))
         }
     }
 

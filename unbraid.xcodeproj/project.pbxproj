@@ -300,6 +300,7 @@
 		E8CEE97113EF537EE5D99721 /* NetworkMark.swift in Sources */ = {isa = PBXBuildFile; fileRef = E625BAAB28DA0B80DA03BCAF /* NetworkMark.swift */; };
 		E95B62319A4D0BC184267971 /* Sealed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62175C4168FC887F55A0FC1C /* Sealed.swift */; };
 		EB25C29CC3A2134D6D14F209 /* ExpressVpn.swift in Sources */ = {isa = PBXBuildFile; fileRef = A5BF3A1EE122CA583DD4C91C /* ExpressVpn.swift */; };
+		EB731EE82F87DECF988BAF8F /* RestoreTraffic.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66DDEAD2DF877F8BEBB1763 /* RestoreTraffic.swift */; };
 		EC1F8AE3FE68DCB38B0698D8 /* LinkPickerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 516BD53CBEFC31F6DF3D524B /* LinkPickerTests.swift */; };
 		ECBC82BAFDA0178A0A0DE34E /* ConfigVet.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8D82318930587017455D7D9 /* ConfigVet.swift */; };
 		EE86164FFAF2657B31C90E0A /* RouteHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA284FDEB5E739F44E2711E /* RouteHealth.swift */; };
@@ -310,6 +311,7 @@
 		F247C7BA908AA901E1487566 /* Http.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0CE2DD4C1A0B8176CA79E19 /* Http.swift */; };
 		F24D049719E2350D1BD317BC /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98821B9E3C4EA8B23F047FA7 /* AppGroup.swift */; };
 		F25D54193F71690595B4100E /* NordTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D63F9C14312A652787F6AF8F /* NordTests.swift */; };
+		F39BCBD09DF5157E41D6498C /* RestoreTraffic.swift in Sources */ = {isa = PBXBuildFile; fileRef = B66DDEAD2DF877F8BEBB1763 /* RestoreTraffic.swift */; };
 		F51F92C41A843A35D32B22AA /* AppPresence.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5958A0922EFC96FE5FCD0191 /* AppPresence.swift */; };
 		F6568F40817F46204B11682E /* RouteHealth.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9BA284FDEB5E739F44E2711E /* RouteHealth.swift */; };
 		F6AC94F82C928197EBB3709E /* Manual.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99A005A7B9ED8D631A41E22 /* Manual.swift */; };
@@ -524,6 +526,7 @@
 		B10CDF892D2E0475652CD4A6 /* ProviderFixesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderFixesTests.swift; sourceTree = "<group>"; };
 		B22DA31F6CBC5B95C2FB25F2 /* BackupFileTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupFileTests.swift; sourceTree = "<group>"; };
 		B449B9E3CA07552AF08BCD21 /* KeyProvidersTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyProvidersTests.swift; sourceTree = "<group>"; };
+		B66DDEAD2DF877F8BEBB1763 /* RestoreTraffic.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoreTraffic.swift; sourceTree = "<group>"; };
 		B6944A8F14196C3770A1140F /* Profiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Profiles.swift; sourceTree = "<group>"; };
 		B6CED99CF32DBDBD57D169F7 /* IvpnTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IvpnTests.swift; sourceTree = "<group>"; };
 		B6EF40FAB7814AE98735D76C /* InstallPlace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallPlace.swift; sourceTree = "<group>"; };
@@ -854,6 +857,7 @@
 				8591ED5655491897B5E01B38 /* ProviderStatus.swift */,
 				0FDDF7466E86AA480872C0D2 /* QR.swift */,
 				7E8A8C13C5A5F8C5BF3B8421 /* Rescans.swift */,
+				B66DDEAD2DF877F8BEBB1763 /* RestoreTraffic.swift */,
 				9BA284FDEB5E739F44E2711E /* RouteHealth.swift */,
 				A6C4B7D37890D26B33115A06 /* RouteRetry.swift */,
 				92714F48400E30DF67609D5F /* Running.swift */,
@@ -1231,6 +1235,7 @@
 				42603CBC8BE857EB2A96FAF6 /* QR.swift in Sources */,
 				719C70AC9B92D9FBF3E21D04 /* Redact.swift in Sources */,
 				1C5C8D514DD31FD25753996A /* Rescans.swift in Sources */,
+				EB731EE82F87DECF988BAF8F /* RestoreTraffic.swift in Sources */,
 				1265B0E4E42B6B226F5F3E9F /* RootView.swift in Sources */,
 				EE86164FFAF2657B31C90E0A /* RouteHealth.swift in Sources */,
 				6442C5E432B5B79DB8A8AF57 /* RouteRetry.swift in Sources */,
@@ -1388,6 +1393,7 @@
 				07CAB75F748920FAEC89DEFD /* RedactTests.swift in Sources */,
 				5303BF47C8A04055D366EC58 /* Rescans.swift in Sources */,
 				109738A8F355C8CB6A08ED2E /* RescansTests.swift in Sources */,
+				F39BCBD09DF5157E41D6498C /* RestoreTraffic.swift in Sources */,
 				F6568F40817F46204B11682E /* RouteHealth.swift in Sources */,
 				9E07F7F82F24AAA4A832CE23 /* RouteHealthTests.swift in Sources */,
 				E6D0C4C570CC6948CAECC599 /* RouteRetry.swift in Sources */,
