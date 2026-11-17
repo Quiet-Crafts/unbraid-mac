@@ -493,7 +493,9 @@ final class AppModel {
 
     /// `wanted`: for a switch nobody clicked (by network): asked again right before the change is made, after any
     /// check it waited on, so one whose reason is gone (the rule, the network, the connection) isn't made.
-    func switchProfile(_ name: String, connectIfOff: Bool = false, offeredGeneration: String? = nil, wanted: (@MainActor () -> Bool)? = nil) {
+    /// `finished`: whether the switch was made, for the switch by network.
+    func switchProfile(_ name: String, connectIfOff: Bool = false, offeredGeneration: String? = nil, wanted: (@MainActor () -> Bool)? = nil,
+                       finished: ((Bool) -> Void)? = nil) {
         guard setup.profiles.contains(where: { $0.name == name }) else { return }
         autoSwitch.pickedByHand()
         if setup.profile == name { if connectIfOff && vpn.state.phase != .on { connect() }; return }
@@ -511,7 +513,7 @@ final class AppModel {
         }, valid: { [weak self] in
             guard let self, self.profileSwitchID == id, wanted?() ?? true else { return false }
             return offeredGeneration == nil || self.profileGeneration == offeredGeneration
-        })
+        }, finished: finished ?? { _ in })
     }
 
     /// Edit › Undo and Redo of app and website moves name the profile they were made in: once another is in use (a

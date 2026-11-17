@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Network
 import Observation
@@ -24,6 +25,7 @@ final class AutoSwitchWatch {
     @ObservationIgnored private var probe: Task<Void, Never>?
     @ObservationIgnored private var timer: Task<Void, Never>?
     @ObservationIgnored private var observer: ChangeObserver?
+    @ObservationIgnored private var sleepers: [NSObjectProtocol] = []
     /// Provider limits, read ahead for the accounts they were read for: deciding never waits.
     @ObservationIgnored private var limits: [String: Limit] = [:]
     @ObservationIgnored private var limitsFor: [String: String]?
@@ -54,6 +56,17 @@ final class AutoSwitchWatch {
             Task { @MainActor in self?.pathChanged(interface, key) }
         }
         monitor.start(queue: DispatchQueue(label: "app.unbraid.autoswitch"))
+        // Sleep is no network change by itself: the network is read again after a wake and compared.
+        let center = NSWorkspace.shared.notificationCenter
+        sleepers = [(NSWorkspace.willSleepNotification, true), (NSWorkspace.didWakeNotification, false)].map { name, asleep in
+            center.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    self.apply(self.run.handle(.sleep(asleep)))
+                    if !asleep { self.read() }
+                }
+            }
+        }
         // The connection's own network watch: one more reason to read the router again (a same-looking path).
         let previous = model.vpn.onNetworkChange
         model.vpn.onNetworkChange = { [weak self] in previous?(); self?.read() }
@@ -98,10 +111,11 @@ final class AutoSwitchWatch {
         read()
     }
 
-    /// When the fingerprint is read again while the router hasn't answered: each second through the settle time, then
-    /// every few seconds until the network counts as unrecognised, and twice more for a router that answers later still,
-    /// so a remembered network taken for an unrecognised one gets its own profile back; then nothing until the next change.
-    private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 30].map { .seconds($0) }
+    /// When the fingerprint is read again while the router hasn't answered: each second through the settle time, every
+    /// few seconds until a network just reached counts as unrecognised (20 s), then every 15 s until 75 s and once at 80 s, the last read
+    /// before the network the Mac was already on counts as unrecognised (`AutoSwitch.lateRouter`); then nothing until the
+    /// next change or wake.
+    private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 15, 15, 15, 5].map { .seconds($0) }
 
     private func read() {
         probe?.cancel()
@@ -155,10 +169,16 @@ final class AutoSwitchWatch {
             own = name
             switching = true
             // Still what the rules say for this network, still connected, still the user's own setup, when it is made.
-            m.switchProfile(name) { [weak self, weak m] in
+            let decided = run.acted
+            m.switchProfile(name, wanted: { [weak self, weak m] in
                 guard let self, let m else { return false }
                 return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.here(at: .now) == mark && m.store.networks.profile(on: mark) == name
-            }
+            }, finished: { [weak self] made in
+                // Not made (the connection or the network changed while it waited): owed again once they settle.
+                guard !made, let self, let decided else { return }
+                if self.own == name { self.own = nil }
+                self.apply(self.run.handle(.unapplied(decided)))
+            })
             switching = false
         case .blocked(let why): tell(why, inWindow: true)
         }

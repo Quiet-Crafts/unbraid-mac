@@ -1,32 +1,50 @@
 import Foundation
 
-/// When the profile for the network the Mac is on is decided, as a plain state machine the watcher feeds: only while
-/// connected, once a network has stayed the same for `AutoSwitch.settle`, and once per network and the profile its rule
-/// names. What was decided on is kept in memory only, so after a restart the first connect decides again. Times are on
-/// the continuous clock: setting the Mac's clock never stretches or skips a wait.
+/// When the profile for the network the Mac is on is decided, as a plain state machine the watcher feeds. What it
+/// follows:
+///
+/// - The Mac stays on one network until it has been offline for more than a moment while awake, or reaches a network
+///   through another interface or IPv4 router (an arrival). Sleep is not a change by itself: after a wake the network
+///   is read again and compared.
+/// - On the same network nothing switches, except for a new rule for it or a profile picked by hand. Its routers
+///   coming and going within what a remembered network holds keep it that network.
+/// - A network that gives no acceptable reading counts as one unbraid can't recognise (the profile for any other
+///   network) 20 s after an arrival, or `AutoSwitch.lateRouter` after the network the Mac was already on was read again:
+///   never later, so no network keeps another's profile for good.
+/// - A decision is made once per network and the profile its rule names, only while connected and not busy, once the
+///   network has lasted `AutoSwitch.settle`; one the app couldn't make (`unapplied`) is owed again.
+/// - A profile picked by hand counts as decided for the network it was picked on, or, while that network is still being
+///   read, for the network the reading gives; going offline has no network to pick for.
+///
+/// Kept in memory only: after a restart the first connect decides again. Times are on the continuous clock.
 nonisolated struct AutoSwitchRun: Equatable, Sendable {
     typealias Instant = ContinuousClock.Instant
 
-    /// What is known of the network the Mac is on.
+    /// What the watcher knows of the network: offline (no usable Wi-Fi or cable), or reached through `place` (the
+    /// interface and its IPv4 router, the only thing that tells networks without a fingerprint apart), with its
+    /// routers' fingerprints or still without.
     enum Reading: Equatable, Sendable {
-        /// No Wi-Fi or cable.
         case offline
-        /// On a network whose fingerprint isn't read: its router hasn't answered yet, or it has nothing unbraid may tell
-        /// it by. After `AutoSwitch.unrecognisedAfter` it counts as a network unbraid can't recognise. `place`: the
-        /// interface and IPv4 router it is reached through, the only thing that tells two such networks apart.
         case reading(place: String = "")
-        /// On the network with this fingerprint, reached through `place`.
         case mark(String, place: String = "")
+
+        var place: String? {
+            switch self { case .offline: nil; case .reading(let p), .mark(_, let p): p }
+        }
     }
 
     enum Event: Equatable, Sendable {
         case network(Reading)
+        /// The Mac is going to sleep (true) or woke (false).
+        case sleep(Bool)
         case connected(Bool)
         case rules(NetworkRules)
         /// The names of the saved profiles, sent before the rules: they tell a rename from a rule set to another profile.
         case profiles([String])
         /// A profile was chosen by hand (the menu bar, the window, Control Center, Shortcuts).
         case pickedByHand
+        /// The switch asked for this decision wasn't made (the connection or the network changed meanwhile).
+        case unapplied(AutoSwitch.Acted)
         /// Nothing may be decided now: a profile switch is still pending, or the setup is a stand-in.
         case busy(Bool)
         /// The time asked for has passed.
@@ -49,44 +67,35 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     private(set) var profiles: [String] = []
     /// Since when the network, the connection and the profile for this network have been as they are.
     private(set) var since: Instant
-    /// Since when the network has read as it does.
-    private(set) var heard: Instant
-    private(set) var acted: AutoSwitch.Acted? {
-        didSet { if acted?.mark == AutoSwitch.unrecognised, case .reading(let p) = reading { place = p } }
-    }
-    /// Where the network unbraid couldn't recognise that was last decided on was reached.
-    private(set) var place: String?
-    /// Where the last fingerprint was read, and how long the Mac was offline before the reading that followed (nil: not
-    /// offline since): what tells the same attachment from a new one while a router hasn't answered.
-    private(set) var markPlace: String?
-    private(set) var offlineAt: Instant?
-    private(set) var gap: Duration?
-    /// When a profile was picked by hand while no network was known: the network known next counts as decided, if it
-    /// is known within `AutoSwitch.unrecognisedAfter` of the pick.
-    private(set) var byHand: Instant?
+    /// Since when this network has been read without an acceptable reading, and how long it may last.
+    private(set) var waiting: Instant
+    private(set) var grace = AutoSwitch.unrecognisedAfter
+    /// Where the Mac last was, while offline: when it went, and whether it slept since.
+    struct Left: Equatable, Sendable { var place: String, at: Instant, slept: Bool }
+    private(set) var left: Left?
+    /// This network has given an acceptable reading since it was reached.
+    private(set) var read = false
+    /// The remembered network the last reading on this network named on its own: a reading that two remembered
+    /// networks would fit (a shared router, the other away) stays this one. Forgotten on an arrival.
+    private(set) var resolved: String?
+    /// The Mac went to sleep while online: the next reading is compared, not taken as an arrival.
+    private(set) var asleep = false
+    /// What was last decided on for this network (nil after an arrival: nothing yet).
+    private(set) var acted: AutoSwitch.Acted?
+    /// A profile was picked by hand while this network was still being read.
+    private(set) var byHand = false
 
-    init(rules: NetworkRules, now: Instant = .now) { self.rules = rules; since = now; heard = now }
+    init(rules: NetworkRules, now: Instant = .now) { self.rules = rules; since = now; waiting = now }
 
-    /// The network decisions are about: a remembered network by its own name (the one the Mac was taken to be on, while
-    /// its routers come and go), else its reading, `AutoSwitch.unrecognised` for one that gave none in time; nil while
-    /// offline or still reading.
-    func here(at now: Instant) -> String? { network(at: now).map { rules.identity($0, preferring: acted?.mark) } }
-
-    private func network(at now: Instant) -> String? {
+    /// The network decisions are about: a remembered network by its own name (the one already decided on here, while its
+    /// routers come and go), else the reading, `AutoSwitch.unrecognised` once a reading has waited too long; nil while
+    /// offline or still waiting.
+    func here(at now: Instant) -> String? {
         switch reading {
         case .offline: nil
-        case .mark(let m, _): m
-        case .reading(let p): !holding(p) && now >= heard + AutoSwitch.unrecognisedAfter ? AutoSwitch.unrecognised : nil
+        case .mark(let m, _): rules.identity(m, preferring: resolved)
+        case .reading: now >= waiting + grace ? AutoSwitch.unrecognised : nil
         }
-    }
-
-    /// A reading still waiting for its router on what looks like the remembered network the Mac was last decided on:
-    /// reached the same way, and not offline in between for more than a moment (a wake, a roam, a reconnect). It never
-    /// turns into a network unbraid can't recognise by waiting: only a router that answers for another network, or a new
-    /// attachment, moves the Mac on.
-    private func holding(_ p: String) -> Bool {
-        guard let a = acted, rules.known.contains(where: { $0.id == a.mark }), p == markPlace else { return false }
-        return gap.map { $0 < AutoSwitch.sameAttachment } ?? true
     }
 
     mutating func handle(_ event: Event, now: Instant = .now) -> Action { handle([event], now: now) }
@@ -95,43 +104,31 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     /// half taken in (connected, but not yet seen as busy).
     mutating func handle(_ events: [Event], now: Instant = .now) -> Action {
         for event in events {
-            // A network that became one unbraid can't recognise before this event did so at that moment.
             take(now)
             switch event {
-            case .network(let r):
-                guard r != reading else { break }
-                // Networks unbraid can't recognise all look the same: one is left once the Mac goes offline, or reaches
-                // the network through another interface or router.
-                if acted?.mark == AutoSwitch.unrecognised {
-                    if r == .offline { acted = nil } else if case .reading(let p) = r, p != place { acted = nil }
-                }
-                switch r {
-                case .offline: if offlineAt == nil { offlineAt = now }
-                case .reading: if let off = offlineAt { gap = now - off; offlineAt = nil }
-                case .mark(_, let p): markPlace = p; offlineAt = nil; gap = nil
-                }
-                reading = r; heard = now; since = now
-                // The network a pick was waiting for is gone.
-                if r == .offline { byHand = nil }
+            case .network(let r): network(r, now)
+            case .sleep(let s):
+                asleep = s
+                if s { left?.slept = true }
             case .connected(let c): if c != connected { connected = c; since = now }
             case .rules(let r):
                 guard r != rules else { break }
-                // A rename of the profile what was decided names: the decision follows the new name, whether or not the
-                // network reads now (a reconnect).
+                // A rename of the profile what was decided names: the decision follows the new name.
                 if let a = acted, let old = a.profile, let new = r.profile(on: a.mark), old != new,
                    !profiles.contains(old), profiles.contains(new) {
                     var renamed = rules
                     renamed.renamed(old, to: new)
                     if renamed == r { acted?.profile = new }
                 }
-                // Otherwise only a new profile for this network is a change here: a hand pick stays through edits
-                // about others.
+                // Otherwise only a new profile for this network is a change here.
                 if let here = here(at: now), r.profile(on: here) != rules.profile(on: here) { since = now }
                 rules = r
-                byHand = nil
-            // Counts as decided for the network it was picked on: nothing changes it until the network or its rule does.
+                byHand = false
             case .pickedByHand:
-                if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = now }
+                if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = reading != .offline }
+            case .unapplied(let a):
+                // Owed again, after the settle time, unless something newer was decided or picked meanwhile.
+                if acted == a { acted = nil; since = now }
             case .busy(let b): busy = b
             case .profiles(let p): profiles = p
             case .timer: break
@@ -141,14 +138,55 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         return next(now)
     }
 
-    /// A pick waiting for the network: it counts as decided for the network once that is known, if soon enough.
+    /// A reading. Online throughout, the same place is the same network. Back from offline at the same place, it is the
+    /// same network after a moment or a sleep, or when the last decision was on routers' fingerprints (read again and
+    /// compared, waiting at most `AutoSwitch.lateRouter`): a network without a fingerprint has nothing else to tell it
+    /// by, so going offline otherwise leaves it. Anything else is an arrival, which forgets what was decided.
+    private mutating func network(_ r: Reading, _ now: Instant) {
+        guard r != reading else { return }
+        let before = reading
+        reading = r
+        since = now
+        guard let place = r.place else {
+            if let p = before.place { left = Left(place: p, at: now, slept: asleep) }
+            return
+        }
+        // A network decided on by its routers is compared by them after any time offline; one without is left by it.
+        let identified = acted.map { $0.mark != AutoSwitch.unrecognised } ?? false
+        let same = if let was = before.place { Self.same(was, place) }
+            else if let l = left { Self.same(l.place, place) && (l.slept || asleep || now - l.at <= AutoSwitch.blip || identified) }
+            else { false }
+        left = nil
+        if !same { acted = nil; byHand = false; read = false; resolved = nil }
+        switch r {
+        case .mark(let m, _):
+            read = true
+            if let n = rules.network(m) { resolved = n.id }
+            // Taken for a network unbraid couldn't recognise, and its routers answer at last for none remembered: the
+            // same network still, by its own reading now.
+            let id = rules.identity(m, preferring: resolved)
+            if same, case .reading = before, acted?.mark == AutoSwitch.unrecognised, !rules.known.contains(where: { $0.id == id }) { acted?.mark = id }
+        // A wait for an acceptable reading: the short one for a network just reached, the long one for this network
+        // read again.
+        case .reading: waiting = now; grace = same && (read || acted != nil) ? AutoSwitch.lateRouter : AutoSwitch.unrecognisedAfter
+        case .offline: break
+        }
+    }
+
+    /// Two places are one: the same interface, and the same IPv4 router where both have one (right after joining, the
+    /// router may not be known yet).
+    static func same(_ a: String, _ b: String) -> Bool {
+        let x = a.split(separator: "|", omittingEmptySubsequences: false), y = b.split(separator: "|", omittingEmptySubsequences: false)
+        guard x.first == y.first else { return false }
+        let g = x.count > 1 ? x[1] : "", h = y.count > 1 ? y[1] : ""
+        return g == h || g.isEmpty || h.isEmpty
+    }
+
+    /// A pick made while the network was being read counts as decided for the network the reading gives.
     private mutating func take(_ now: Instant) {
-        guard let picked = byHand, let here = here(at: now) else { return }
-        byHand = nil
-        // Known at the moment it read as unrecognised, or now for a fingerprint (taken as it comes in).
-        var known = now
-        if case .reading = reading { known = heard + AutoSwitch.unrecognisedAfter }
-        if known <= picked + AutoSwitch.unrecognisedAfter { acted = AutoSwitch.Acted(mark: here, rules: rules) }
+        guard byHand, let here = here(at: now) else { return }
+        byHand = false
+        acted = AutoSwitch.Acted(mark: here, rules: rules)
     }
 
     private mutating func next(_ now: Instant) -> Action {
@@ -157,9 +195,7 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         switch reading {
         case .offline: return .nothing
         case .mark: due = since + AutoSwitch.settle
-        // Waiting for the router of the network the Mac is still taken to be on: nothing to look at until it answers.
-        case .reading(let p) where holding(p): return .nothing
-        case .reading: due = max(since + AutoSwitch.settle, heard + AutoSwitch.unrecognisedAfter)
+        case .reading: due = max(since + AutoSwitch.settle, waiting + grace)
         }
         if now < due { return .wait(due) }
         // Decided once it settles (`busy(false)` comes back here).

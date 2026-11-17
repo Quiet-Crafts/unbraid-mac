@@ -1,453 +1,355 @@
 import XCTest
 
-/// When a profile is switched by itself: only while connected, once a network has settled, once per network and the
-/// profile its rule names, never against a profile picked by hand. Times come from the continuous clock the tests hand
-/// in, never the wall clock.
+/// Switching by network, as the state machine's own principles say (`AutoSwitchRun`): named cases from every review
+/// round, then properties over random event sequences. Times come from the continuous clock the tests hand in.
 final class AutoSwitchRunTests: XCTestCase {
     private typealias Run = AutoSwitchRun
+    private typealias Acted = AutoSwitch.Acted
     private let t0 = ContinuousClock.now
     private func at(_ s: Double) -> ContinuousClock.Instant { t0 + .seconds(s) }
-    private func on(_ mark: String) -> Run.Event { .network(.mark(mark)) }
     private let unrecognised = AutoSwitch.unrecognised
+    private static let home = "en0|192.168.1.1", cafe = "en0|10.0.0.1", office = "en0|10.1.0.1"
+    private func on(_ mark: String, _ place: String = home) -> Run.Event { .network(.mark(mark, place: place)) }
+    private func pending(_ place: String = home) -> Run.Event { .network(.reading(place: place)) }
+    private let offline = Run.Event.network(.offline)
 
+    /// Home has routers a and b (rule Home), the office b and c (rule Work), the flat d (no rule); any other: Travel.
     private var rules: NetworkRules {
         var r = NetworkRules(salt: "salt")
-        r.remember("home", name: "Home network", profile: "Home", now: Date(timeIntervalSince1970: 1_800_000_000))
-        r.elsewhere = "Travel"
-        return r
-    }
-
-    /// Connected on `mark` since t0, settled and decided once.
-    private func settled(on mark: String = "home") -> Run {
-        var run = Run(rules: rules, now: t0)
-        XCTAssertEqual(run.handle([.connected(true), on(mark)], now: t0), .wait(at(5)))
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: mark, acted: nil))
-        return run
-    }
-
-    func testANetworkMustStayTheSameForTheSettleTime() {
-        var run = Run(rules: rules, now: t0)
-        XCTAssertEqual(run.handle(.connected(true), now: t0), .nothing, "no network yet")
-        XCTAssertEqual(run.handle(on("home"), now: at(1)), .wait(at(6)))
-        XCTAssertEqual(run.handle(.timer, now: at(2)), .wait(at(6)), "a timer early waits on")
-        // A handover in between starts over, back on the first network too.
-        XCTAssertEqual(run.handle(on("cafe"), now: at(3)), .wait(at(8)))
-        XCTAssertEqual(run.handle(on("home"), now: at(4)), .wait(at(9)))
-        XCTAssertEqual(run.handle(.network(.offline), now: at(5)), .nothing, "no network")
-        XCTAssertEqual(run.handle(.network(.reading()), now: at(5.5)), .wait(at(25.5)), "a router that hasn't answered")
-        XCTAssertEqual(run.handle(on("home"), now: at(6)), .wait(at(11)))
-        XCTAssertEqual(run.handle(.timer, now: at(11)), .decide(mark: "home", acted: nil))
-        // Decided: nothing more on this network with this rule, whatever else comes by.
-        XCTAssertEqual(run.handle(.timer, now: at(20)), .nothing)
-        XCTAssertEqual(run.handle(on("home"), now: at(21)), .nothing)
-        XCTAssertEqual(run.handle([.busy(true), .busy(false)], now: at(22)), .nothing)
-        XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "home", rules: rules))
-    }
-
-    /// A network the Mac is on that gives no fingerprint (no IPv6, a router called "1") gets the profile for any other
-    /// network, once its router has had time enough to answer; while offline nothing is decided.
-    func testANetworkWithoutAFingerprintCountsAsAnyOtherNetwork() {
-        XCTAssertEqual(rules.profile(on: unrecognised), "Travel")
-        var run = settled(on: "home")
-        XCTAssertEqual(run.handle(.network(.offline), now: at(10)), .nothing)
-        XCTAssertEqual(run.handle(.timer, now: at(100)), .nothing, "offline decides nothing, however long")
-        XCTAssertNil(run.here(at: at(100)))
-        // Joined a café whose router gives nothing: about 20 seconds of reading first.
-        XCTAssertEqual(run.handle(.network(.reading()), now: at(200)), .wait(at(220)))
-        XCTAssertNil(run.here(at: at(219)))
-        XCTAssertEqual(run.handle(.timer, now: at(212)), .wait(at(220)))
-        XCTAssertEqual(run.handle(.timer, now: at(220)), .decide(mark: unrecognised, acted: AutoSwitch.Acted(mark: "home", rules: rules)))
-        XCTAssertEqual(run.here(at: at(220)), unrecognised)
-        XCTAssertEqual(run.handle(.timer, now: at(300)), .nothing, "decided once")
-        // A router that answers late after all: its own network decides again.
-        XCTAssertEqual(run.handle(on("home"), now: at(330)), .wait(at(335)))
-        XCTAssertEqual(run.handle(.timer, now: at(335)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: unrecognised, rules: rules)))
-        // Connecting on such a network waits the settle time too, never less than the reading time.
-        var later = Run(rules: rules, now: t0)
-        XCTAssertEqual(later.handle(.network(.reading()), now: t0), .nothing, "not connected")
-        XCTAssertEqual(later.handle(.connected(true), now: at(3)), .wait(at(20)))
-        XCTAssertEqual(later.handle(.connected(true), now: at(19)), .wait(at(20)))
-        XCTAssertEqual(later.handle(.timer, now: at(20)), .decide(mark: unrecognised, acted: nil))
-        var late = Run(rules: rules, now: t0)
-        _ = late.handle(.network(.reading()), now: t0)
-        XCTAssertEqual(late.handle(.connected(true), now: at(60)), .wait(at(65)))
-        XCTAssertEqual(late.handle(.timer, now: at(65)), .decide(mark: unrecognised, acted: nil))
-    }
-
-    /// Waking from sleep and the tunnel reconnecting read the network again: on a remembered network whose router
-    /// answers within the reading time, nothing is switched, there and back.
-    func testAWakeOrAReconnectOnARememberedNetworkSwitchesNothing() {
-        var run = settled(on: "home")
-        // Wake: the Wi-Fi goes, comes back, the router answers after a while.
-        XCTAssertEqual(run.handle(.network(.offline), now: at(100)), .nothing)
-        // Reached the same way after a moment offline: waiting for home's router, never a network to switch for.
-        XCTAssertEqual(run.handle(.network(.reading()), now: at(103)), .nothing)
-        XCTAssertEqual(run.handle(.timer, now: at(110)), .nothing)
-        XCTAssertEqual(run.handle(on("home"), now: at(118)), .wait(at(123)))
-        XCTAssertEqual(run.handle(.timer, now: at(123)), .nothing)
-        // The tunnel reconnecting, the path changing under it and the router read again in between.
-        XCTAssertEqual(run.handle(.connected(false), now: at(200)), .nothing)
-        XCTAssertEqual(run.handle(.network(.reading()), now: at(201)), .nothing)
-        XCTAssertEqual(run.handle([.connected(true), on("home")], now: at(204)), .wait(at(209)))
-        XCTAssertEqual(run.handle(.timer, now: at(209)), .nothing)
-        // A profile picked by hand at home stays through both.
-        _ = run.handle(.pickedByHand, now: at(300))
-        for (i, step) in [Run.Event.network(.offline), .network(.reading()), .connected(false), .connected(true), on("home")].enumerated() {
-            if case .decide = run.handle(step, now: at(301 + Double(i))) { XCTFail("switched at step \(i)") }
-        }
-        XCTAssertEqual(run.handle(.timer, now: at(320)), .nothing)
-        XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "home", rules: rules))
-    }
-
-    /// A home with two routers, one of them away for a while, then back: still home, so a hand pick stays.
-    func testARouterComingAndGoingIsTheSameNetwork() {
-        var r = NetworkRules(salt: "salt")
-        r.remember("h1,h2", name: "Home network", profile: "Home")
-        r.elsewhere = "Travel"
-        var run = Run(rules: r, now: t0)
-        XCTAssertEqual(run.handle([.connected(true), on("h1,h2")], now: t0), .wait(at(5)))
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "h1,h2", acted: nil))
-        _ = run.handle(.pickedByHand, now: at(10))
-        XCTAssertEqual(run.handle(on("h2"), now: at(20)), .wait(at(25)))
-        XCTAssertEqual(run.handle(.timer, now: at(25)), .nothing)
-        XCTAssertEqual(run.handle(on("h1,h2"), now: at(30)), .wait(at(35)))
-        XCTAssertEqual(run.handle(.timer, now: at(35)), .nothing)
-        // A router home doesn't have: another network.
-        XCTAssertEqual(run.handle(on("h2,x"), now: at(40)), .wait(at(45)))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .decide(mark: "h2,x", acted: AutoSwitch.Acted(mark: "h1", rules: r)))
-    }
-
-    /// Two remembered networks sharing a router: while the Mac is on one, its routers coming and going never move it to
-    /// the other (a pending switch checks the same name); joined fresh on the shared router alone, it is neither.
-    func testOverlappingNetworksNeverTakeTurns() {
-        var r = NetworkRules(salt: "salt")
-        r.remember("b,c", name: "Home network", profile: "Home")
-        r.remember("b,x", name: "Office", profile: nil)
-        r.elsewhere = "Travel"
-        var run = Run(rules: r, now: t0)
-        XCTAssertEqual(run.handle([.connected(true), on("b,x")], now: t0), .wait(at(5)))
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "b,x", acted: nil))
-        _ = run.handle(.pickedByHand, now: at(10))
-        // The office's own router goes away: still the office, nothing decided.
-        XCTAssertEqual(run.handle(on("b"), now: at(20)), .wait(at(25)))
-        XCTAssertEqual(run.here(at: at(20)), "b,x")
-        XCTAssertEqual(run.handle(.timer, now: at(25)), .nothing)
-        XCTAssertEqual(run.handle(on("b,x"), now: at(30)), .wait(at(35)))
-        XCTAssertEqual(run.handle(.timer, now: at(35)), .nothing)
-        // Home the same way: a router away while a switch to Home is pending leaves it the same network.
-        XCTAssertEqual(run.handle(on("b,c"), now: at(40)), .wait(at(45)))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .decide(mark: "b,c", acted: AutoSwitch.Acted(mark: "b,x", rules: r)))
-        _ = run.handle(on("c"), now: at(46))
-        XCTAssertEqual(run.here(at: at(46)), "b,c", "what the pending switch compares with")
-        _ = run.handle(on("b"), now: at(47))
-        XCTAssertEqual(run.here(at: at(47)), "b,c")
-        // Joined fresh with only the shared router: neither network, so any other network's profile.
-        var fresh = Run(rules: r, now: t0)
-        XCTAssertEqual(fresh.handle([.connected(true), on("b")], now: t0), .wait(at(5)))
-        XCTAssertEqual(fresh.handle(.timer, now: at(5)), .decide(mark: "b", acted: nil))
-        XCTAssertEqual(r.profile(on: "b"), "Travel")
-    }
-
-    /// A rename made while the network reads nothing (a reconnect) follows the hand pick all the same.
-    func testARenameWhileTheNetworkIsUnreadKeepsAHandPick() {
-        var run = pickedOnHome()
-        _ = run.handle(.network(.reading()), now: at(20))
-        var r = run.rules
-        r.renamed("Home", to: "House")
-        _ = run.handle([.profiles(["House", "Travel"]), .rules(r)], now: at(21))
-        XCTAssertEqual(run.handle(on("home"), now: at(24)), .wait(at(29)))
-        XCTAssertEqual(run.handle(.timer, now: at(29)), .nothing)
-        // While offline too.
-        _ = run.handle(.network(.offline), now: at(30))
-        r.renamed("House", to: "Casa")
-        _ = run.handle([.profiles(["Casa", "Travel"]), .rules(r)], now: at(31))
-        XCTAssertEqual(run.handle(on("home"), now: at(32)), .wait(at(37)))
-        XCTAssertEqual(run.handle(.timer, now: at(37)), .nothing)
-    }
-
-    /// Networks unbraid can't recognise all look alike: a hand pick on one stays through a reconnect there, but going
-    /// offline, or another interface or router, makes the next one another network.
-    func testAHandPickOnAnUnrecognisedNetworkEndsWhenTheMacMoves() {
-        var run = Run(rules: rules, now: t0)
-        _ = run.handle([.connected(true), .network(.reading(place: "en0|10.0.0.1"))], now: t0)
-        XCTAssertEqual(run.handle(.timer, now: at(20)), .decide(mark: unrecognised, acted: nil))
-        _ = run.handle(.pickedByHand, now: at(30))
-        // A tunnel reconnect, the router read again: the same place, the pick stays.
-        _ = run.handle([.connected(false), .connected(true)], now: at(40))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .nothing)
-        // A fingerprint that shows for a moment and goes again doesn't end it either.
-        _ = run.handle(on("cafe"), now: at(50))
-        _ = run.handle(.network(.reading(place: "en0|10.0.0.1")), now: at(51))
-        XCTAssertEqual(run.handle(.timer, now: at(71)), .nothing)
-        // A recognised network in between does.
-        XCTAssertEqual(run.handle(on("cafe"), now: at(72)), .wait(at(77)))
-        XCTAssertEqual(run.handle(.timer, now: at(77)), .decide(mark: "cafe", acted: AutoSwitch.Acted(mark: unrecognised, rules: rules)))
-        _ = run.handle(.network(.reading(place: "en0|10.0.0.1")), now: at(78))
-        XCTAssertEqual(run.handle(.timer, now: at(98)), .decide(mark: unrecognised, acted: AutoSwitch.Acted(mark: "cafe", rules: rules)))
-        _ = run.handle(.pickedByHand, now: at(99))
-        XCTAssertEqual(run.handle(.network(.reading(place: "en0|10.0.0.1")), now: at(100)), .nothing, "no change")
-        // Another router: another network.
-        XCTAssertEqual(run.handle(.network(.reading(place: "en0|192.168.1.1")), now: at(110)), .wait(at(130)))
-        XCTAssertEqual(run.handle(.timer, now: at(130)), .decide(mark: unrecognised, acted: nil))
-        _ = run.handle(.pickedByHand, now: at(131))
-        // Offline (a sleep, a move), then a network that again gives nothing: decided again.
-        _ = run.handle(.network(.offline), now: at(140))
-        _ = run.handle(.network(.reading(place: "en0|192.168.1.1")), now: at(150))
-        XCTAssertEqual(run.handle(.timer, now: at(170)), .decide(mark: unrecognised, acted: nil))
-        // Another interface (a cable): another network too.
-        _ = run.handle(.pickedByHand, now: at(171))
-        _ = run.handle(.network(.reading(place: "en5|192.168.1.1")), now: at(180))
-        XCTAssertEqual(run.handle(.timer, now: at(200)), .decide(mark: unrecognised, acted: nil))
-    }
-
-    // The case found by an adversarial run, kept here, with its mirrors. Home has two routers.
-    private var twoRouters: NetworkRules {
-        var r = NetworkRules(salt: "salt")
         r.remember("a,b", name: "Home network", profile: "Home")
-        r.remember("c", name: "Office", profile: nil)
+        r.remember("b,c", name: "Office", profile: "Work")
+        r.remember("d", name: "Flat", profile: nil)
         r.elsewhere = "Travel"
         return r
     }
-    private func atHome(_ place: String = "en0|192.168.1.1") -> Run {
-        var run = Run(rules: twoRouters, now: t0)
-        _ = run.handle([.profiles(["Home", "Travel", "Work"]), .connected(true), .network(.mark("a,b", place: place))], now: t0)
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "a,b", acted: nil))
+    private let names = ["Home", "Work", "Travel"]
+
+    /// Connected at `place` with reading `mark` since t0, decided once at 5 s.
+    private func settled(_ mark: String = "a,b", _ place: String = home) -> Run {
+        var run = Run(rules: rules, now: t0)
+        XCTAssertEqual(run.handle([.profiles(names), .connected(true), on(mark, place)], now: t0), .wait(at(5)))
+        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: rules.identity(mark), acted: nil))
         return run
     }
-    /// Feeds `steps` (seconds, events), firing the timer whenever a wait falls due before the next step, as the
-    /// watcher does; returns the decisions.
+
+    /// Feeds `steps` (seconds, events), firing the timer whenever a wait falls due before the next step, as the watcher
+    /// does; returns the networks decided on.
     private func drive(_ run: inout Run, _ steps: [(Double, [Run.Event])], until end: Double) -> [String] {
-        var out: [String] = [], pending: ContinuousClock.Instant?
+        var out: [String] = [], due: ContinuousClock.Instant?
         func record(_ a: Run.Action) {
             if case .decide(let m, _) = a { out.append(m) }
-            if case .wait(let w) = a { pending = w } else { pending = nil }
+            if case .wait(let w) = a { due = w } else { due = nil }
         }
         for (t, events) in steps + [(end, [Run.Event.timer])] {
-            while let w = pending, w <= at(t) { pending = nil; record(run.handle(.timer, now: w)) }
+            while let w = due, w <= at(t) { due = nil; record(run.handle(.timer, now: w)) }
             record(run.handle(events, now: at(t)))
         }
         return out
     }
 
-    /// A wake or a roam at home: the Wi-Fi back after a moment, the routers answering however late. Never a switch away
-    /// and back, and a hand pick stays.
-    func testAWakeAtHomeNeverSwitchesAwayAndBack() {
-        for answer in [0.5, 3, 10, 19, 19.9, 21, 25, 30, 60, 300] {
-            for heard in ["a", "b", "a,b"] {
-                var run = atHome()
-                _ = run.handle(.pickedByHand, now: at(50))
-                let got = drive(&run, [(100, [.network(.offline)]), (102, [.network(.reading(place: "en0|192.168.1.1"))]),
-                                       (102 + answer, [.network(.mark(heard, place: "en0|192.168.1.1"))])], until: 600)
-                XCTAssertEqual(got, [], "router \(heard) answering \(answer) s after the Wi-Fi")
-                XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "a,b", rules: twoRouters))
-            }
-        }
-        // A roam with no offline at all, and a reading with no gateway known (IPv6 only) the same way.
-        var roam = atHome("en0|")
-        XCTAssertEqual(drive(&roam, [(100, [.network(.reading(place: "en0|"))]), (160, [.network(.mark("a", place: "en0|"))])], until: 300), [])
-    }
+    // MARK: Settling, connecting, busy
 
-    /// The mirrors: a new attachment, a long time offline, a router for another network, or a last decision that wasn't
-    /// a remembered network all still give the profile for any other network after about 20 seconds.
-    func testALateRouterIsWaitedForOnlyOnTheSameAttachment() {
-        // Another router (a café that gives no fingerprint): about 20 s.
-        var cafe = atHome()
-        XCTAssertEqual(drive(&cafe, [(100, [.network(.offline)]), (102, [.network(.reading(place: "en0|10.0.0.1"))])], until: 200), [unrecognised])
-        // Another interface.
-        var cable = atHome()
-        XCTAssertEqual(drive(&cable, [(100, [.network(.reading(place: "en5|192.168.1.1"))])], until: 200), [unrecognised])
-        // Offline for longer than a moment (a night's sleep, a journey), then a router that looks like home's.
-        var night = atHome()
-        XCTAssertEqual(drive(&night, [(100, [.network(.offline)]), (100 + 3600, [.network(.reading(place: "en0|192.168.1.1"))])], until: 3800), [unrecognised])
-        // The reading completes with routers home doesn't have: that network, at once.
-        var other = atHome()
-        XCTAssertEqual(drive(&other, [(100, [.network(.offline)]), (102, [.network(.reading(place: "en0|192.168.1.1"))]),
-                                      (140, [.network(.mark("a,x", place: "en0|192.168.1.1"))])], until: 200), ["a,x"])
-        // Last decided on a network unbraid can't recognise: nothing to wait for (and going offline there counts as
-        // leaving it, so it is decided again).
-        var away = Run(rules: twoRouters, now: t0)
-        XCTAssertEqual(drive(&away, [(0, [.connected(true), .network(.reading(place: "en0|10.0.0.1"))]), (30, [.network(.offline)]),
-                                     (32, [.network(.reading(place: "en0|10.0.0.1"))])], until: 200), [unrecognised, unrecognised])
-    }
-
-    func testOnlyWhileConnectedAndOnceAtEachConnect() {
+    func testANetworkMustStayTheSameForTheSettleTime() {
         var run = Run(rules: rules, now: t0)
-        XCTAssertEqual(run.handle(on("cafe"), now: t0), .nothing, "not connected")
-        XCTAssertEqual(run.handle(.timer, now: at(60)), .nothing)
-        // Connecting (or resuming) starts the settle time: the switch comes a few seconds after it.
+        XCTAssertEqual(run.handle(.connected(true), now: t0), .nothing, "no network yet")
+        XCTAssertEqual(run.handle(on("a,b"), now: at(1)), .wait(at(6)))
+        XCTAssertEqual(run.handle(.timer, now: at(2)), .wait(at(6)), "a timer early waits on")
+        XCTAssertEqual(run.handle(on("a"), now: at(3)), .wait(at(8)), "a router away starts the settle time over")
+        XCTAssertEqual(run.handle(.timer, now: at(8)), .decide(mark: "a,b", acted: nil))
+        XCTAssertEqual(run.handle(.timer, now: at(20)), .nothing, "decided once")
+        XCTAssertEqual(run.handle([.busy(true), .busy(false)], now: at(22)), .nothing)
+    }
+
+    func testOnlyWhileConnectedAndNotBusy() {
+        var run = Run(rules: rules, now: t0)
+        XCTAssertEqual(run.handle(on("x", Self.cafe), now: t0), .nothing, "not connected")
         XCTAssertEqual(run.handle(.connected(true), now: at(100)), .wait(at(105)))
-        XCTAssertEqual(run.handle(.connected(false), now: at(102)), .nothing, "disconnected or paused before it settled")
-        XCTAssertEqual(run.handle(.timer, now: at(105)), .nothing)
+        XCTAssertEqual(run.handle(.connected(false), now: at(102)), .nothing)
         XCTAssertEqual(run.handle(.connected(true), now: at(200)), .wait(at(205)))
-        XCTAssertEqual(run.handle(.timer, now: at(205)), .decide(mark: "cafe", acted: nil))
-        // Off and on again on the same network with the same rules: decided already, so a hand-picked profile stays.
+        XCTAssertEqual(run.handle(.busy(true), now: at(201)), .wait(at(205)))
+        XCTAssertEqual(run.handle(.timer, now: at(205)), .nothing)
+        XCTAssertEqual(run.handle(.busy(false), now: at(230)), .decide(mark: "x", acted: nil))
+        // Off and on again on the same network: decided already.
         _ = run.handle(.connected(false), now: at(300))
         XCTAssertEqual(run.handle(.connected(true), now: at(400)), .wait(at(405)))
         XCTAssertEqual(run.handle(.timer, now: at(405)), .nothing)
-        // On another network it decides again, and says what was decided before.
-        XCTAssertEqual(run.handle(on("home"), now: at(500)), .wait(at(505)))
-        XCTAssertEqual(run.handle(.timer, now: at(505)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: "cafe", rules: rules)))
     }
 
-    func testAProfilePickedByHandStaysUntilTheNetworkChanges() {
-        var run = settled(on: "home")
-        // Picked while the network settles: that network counts as decided.
-        XCTAssertEqual(run.handle(on("cafe"), now: at(10)), .wait(at(15)))
-        XCTAssertEqual(run.handle(.pickedByHand, now: at(12)), .wait(at(15)))
-        XCTAssertEqual(run.handle(.timer, now: at(15)), .nothing)
-        // Another network afterwards decides again.
-        XCTAssertEqual(run.handle(on("hotel"), now: at(20)), .wait(at(25)))
-        XCTAssertEqual(run.handle(.timer, now: at(25)), .decide(mark: "hotel", acted: AutoSwitch.Acted(mark: "cafe", rules: rules)))
-        // Picked while the router hasn't answered: the network it answers for counts as decided, and only that one.
-        _ = run.handle(.network(.reading()), now: at(30))
-        XCTAssertEqual(run.handle(.pickedByHand, now: at(31)), .wait(at(50)))
-        XCTAssertNotNil(run.byHand)
-        XCTAssertEqual(run.handle(on("home"), now: at(32)), .wait(at(37)))
-        XCTAssertNil(run.byHand)
-        XCTAssertEqual(run.handle(.timer, now: at(37)), .nothing)
-        XCTAssertEqual(run.handle(on("cafe"), now: at(40)), .wait(at(45)))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .decide(mark: "cafe", acted: AutoSwitch.Acted(mark: "home", rules: rules)))
-        // Picked on a network unbraid can't recognise: it stays there, and a remembered network decides again.
-        _ = run.handle(.network(.reading()), now: at(50))
-        XCTAssertEqual(run.handle(.timer, now: at(70)), .decide(mark: unrecognised, acted: AutoSwitch.Acted(mark: "cafe", rules: rules)))
-        _ = run.handle(.pickedByHand, now: at(80))
-        XCTAssertEqual(run.handle([.connected(false), .connected(true)], now: at(90)), .wait(at(95)))
-        XCTAssertEqual(run.handle(.timer, now: at(95)), .nothing)
-        XCTAssertEqual(run.handle(on("home"), now: at(100)), .wait(at(105)))
-        XCTAssertEqual(run.handle(.timer, now: at(105)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: unrecognised, rules: rules)))
-        // Picked by hand while disconnected, on a known network: still decided for it at the next connect.
-        _ = run.handle(.connected(false), now: at(110))
-        XCTAssertEqual(run.handle(on("cafe"), now: at(111)), .nothing)
-        _ = run.handle(.pickedByHand, now: at(112))
-        XCTAssertEqual(run.handle(.connected(true), now: at(120)), .wait(at(125)))
-        XCTAssertEqual(run.handle(.timer, now: at(125)), .nothing)
+    // MARK: Networks without a fingerprint (P-1, X-1, O-1)
+
+    /// P-1: a network reached afresh with no acceptable reading gets the profile for any other network after 20 s.
+    func testANetworkReachedAfreshWithoutAFingerprintIsUnrecognisedAfter20s() {
+        var run = settled()
+        XCTAssertEqual(drive(&run, [(100, [offline]), (300, [pending(Self.cafe)])], until: 400), [unrecognised])
+        XCTAssertEqual(run.acted, Acted(mark: unrecognised, rules: rules))
+        XCTAssertEqual(rules.profile(on: unrecognised), "Travel")
+        // Offline decides nothing, however long.
+        var off = settled()
+        XCTAssertEqual(drive(&off, [(10, [offline])], until: 10_000), [])
     }
 
-    /// A pick made before any network was known only counts for a network known soon after; going offline drops it.
-    func testAHandPickWithoutANetworkExpires() {
-        var run = settled(on: "home")
-        _ = run.handle(.network(.offline), now: at(10))
-        _ = run.handle(.pickedByHand, now: at(11))
-        XCTAssertNotNil(run.byHand)
-        // An hour later, a remembered network: its rule applies.
-        XCTAssertEqual(run.handle(on("cafe"), now: at(3600)), .wait(at(3605)))
-        XCTAssertNil(run.byHand)
-        XCTAssertEqual(run.handle(.timer, now: at(3605)), .decide(mark: "cafe", acted: AutoSwitch.Acted(mark: "home", rules: rules)))
-        // Picked while reading, then offline before an answer: dropped.
-        _ = run.handle(.network(.reading()), now: at(4000))
-        _ = run.handle(.pickedByHand, now: at(4001))
-        _ = run.handle(.network(.offline), now: at(4002))
-        XCTAssertNil(run.byHand)
-        XCTAssertEqual(run.handle(on("home"), now: at(4003)), .wait(at(4008)))
-        XCTAssertEqual(run.handle(.timer, now: at(4008)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: "cafe", rules: rules)))
-        // Picked offline, then a new network that never gives a fingerprint: it counts as unrecognised too late for the
-        // pick.
-        _ = run.handle(.network(.offline), now: at(5000))
-        _ = run.handle(.pickedByHand, now: at(5001))
-        _ = run.handle(.network(.reading(place: "en0|10.0.0.1")), now: at(5010))
-        XCTAssertEqual(run.handle(.timer, now: at(5030)), .decide(mark: unrecognised, acted: AutoSwitch.Acted(mark: "home", rules: rules)))
-        // Picked while reading, the network then unrecognised: decided, even when nothing looked at it on time.
-        _ = run.handle(.connected(false), now: at(6000))
-        _ = run.handle(on("cafe"), now: at(6001))
-        _ = run.handle(.network(.reading(place: "en0|10.0.0.1")), now: at(6002))
-        _ = run.handle(.pickedByHand, now: at(6010))
-        XCTAssertEqual(run.handle(.connected(true), now: at(6100)), .wait(at(6105)))
-        XCTAssertEqual(run.handle(.timer, now: at(6105)), .nothing)
-        XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: unrecognised, rules: rules))
+    /// X-1: another network reached the same way as home (same interface and IPv4 router address) with no fingerprint
+    /// is waited on longer, never for good: unrecognised after `lateRouter`.
+    func testAnotherNetworkLookingLikeHomeIsUnrecognisedInTheEnd() {
+        for gap: Double in [2, 60, 600, 28_800] {
+            var run = settled()
+            XCTAssertEqual(drive(&run, [(10, [offline]), (10 + gap, [pending()])], until: 10 + gap + 200), [unrecognised], "\(gap)")
+            XCTAssertEqual(run.here(at: at(10 + gap + 85)), unrecognised)
+        }
     }
 
-    func testAChangeToTheRulesAppliesToTheNetworkTheMacIsOn() {
-        var run = settled(on: "home")
-        _ = run.handle(.pickedByHand, now: at(10))
-        // A change about another network, or a new name, keeps the profile picked by hand here.
-        var other = rules
-        other.remember("office", name: "Office", profile: "Travel")
-        other.known[0].name = "House"
-        XCTAssertEqual(run.handle(.rules(other), now: at(15)), .nothing)
-        XCTAssertEqual(run.handle(.timer, now: at(30)), .nothing)
-        // A new profile for this network applies, even over a profile picked by hand, a few seconds after the change.
-        var changed = other
-        changed.known[0].profile = "Travel"
-        XCTAssertEqual(run.handle(.rules(changed), now: at(40)), .wait(at(45)))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: "home", rules: rules)))
-        // The same rules again are no change.
-        XCTAssertEqual(run.handle(.rules(changed), now: at(50)), .nothing)
-        // A hand-pick waiting for a network is dropped by new rules.
-        _ = run.handle(.network(.reading()), now: at(60))
-        _ = run.handle(.pickedByHand, now: at(61))
-        _ = run.handle(.rules(rules), now: at(62))
-        XCTAssertNil(run.byHand)
-        XCTAssertEqual(run.handle(on("home"), now: at(63)), .wait(at(68)))
-        XCTAssertEqual(run.handle(.timer, now: at(68)), .decide(mark: "home", acted: AutoSwitch.Acted(mark: "home", rules: changed)))
-        // Rules that switch nowhere: nothing to decide, nothing to wait for.
-        var none = rules
-        none.known[0].profile = nil; none.elsewhere = nil
-        XCTAssertEqual(run.handle(.rules(none), now: at(70)), .nothing)
-        XCTAssertEqual(run.handle(.timer, now: at(80)), .nothing)
+    /// O-1: networks without a fingerprint look alike; one is left by going offline while awake, another interface or
+    /// router. A sleep, a moment offline or a reconnect there keep a hand pick.
+    func testAHandPickOnAnUnrecognisedNetworkEndsWhenTheMacLeavesIt() {
+        func there() -> Run {
+            var run = Run(rules: rules, now: t0)
+            XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending(Self.cafe)])], until: 25), [unrecognised])
+            _ = run.handle(.pickedByHand, now: at(30))
+            return run
+        }
+        var stay = there()
+        XCTAssertEqual(drive(&stay, [(40, [.connected(false)]), (42, [.connected(true)]), (50, [offline]), (53, [pending(Self.cafe)]),
+                                     (100, [.sleep(true), offline]), (5000, [.sleep(false)]), (5002, [pending(Self.cafe)])], until: 5200), [])
+        var away = there()
+        XCTAssertEqual(drive(&away, [(40, [offline]), (100, [pending(Self.cafe)])], until: 200), [unrecognised], "offline while awake")
+        var other = there()
+        XCTAssertEqual(drive(&other, [(40, [pending("en0|10.9.9.1")])], until: 200), [unrecognised], "another router")
+        var cable = there()
+        XCTAssertEqual(drive(&cable, [(40, [pending("en5|10.0.0.1")])], until: 200), [unrecognised], "another interface")
     }
 
-    // Cases found by an adversarial run, kept here: settled and decided on home, then a profile picked by hand there.
-    private func pickedOnHome() -> Run {
-        var r = rules
-        r.remember("office", name: "Office", profile: nil)
-        var run = Run(rules: r, now: t0)
-        _ = run.handle([.connected(true), on("home")], now: t0)
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .decide(mark: "home", acted: nil))
-        XCTAssertEqual(run.handle(.pickedByHand, now: at(10)), .nothing)
-        return run
-    }
-    private func decides(_ actions: [Run.Action]) -> Bool { actions.contains { if case .decide = $0 { true } else { false } } }
-
-    func testAHandPickStaysWhenTheRuleForAnotherNetworkChanges() {
-        var run = pickedOnHome()
-        var r = run.rules
-        r.elsewhere = nil
-        XCTAssertFalse(decides([run.handle(.rules(r), now: at(20)), run.handle(.timer, now: at(25))]))
-    }
-
-    func testAHandPickStaysWhenTheHomeRulesProfileIsRenamed() {
-        var run = pickedOnHome()
-        var r = run.rules
-        r.renamed("Home", to: "House")
-        XCTAssertFalse(decides([run.handle([.profiles(["House", "Travel"]), .rules(r)], now: at(20)), run.handle(.timer, now: at(25))]))
-        XCTAssertEqual(run.acted, AutoSwitch.Acted(mark: "home", rules: r))
-        // Its rule then set to another profile: that applies.
-        let house = run.acted
-        r.known[0].profile = "Travel"
-        XCTAssertEqual(run.handle(.rules(r), now: at(30)), .wait(at(35)))
-        XCTAssertEqual(run.handle(.timer, now: at(35)), .decide(mark: "home", acted: house))
-    }
-
-    func testAHandPickStaysThroughAShortDropOnTheSameNetwork() {
-        var run = pickedOnHome()
-        XCTAssertEqual(run.handle(.network(.offline), now: at(20)), .nothing)
-        XCTAssertEqual(run.handle(on("home"), now: at(22)), .wait(at(27)))
-        XCTAssertEqual(run.handle(.timer, now: at(27)), .nothing)
-        XCTAssertEqual(run.handle([.connected(false)], now: at(30)), .nothing)
-        XCTAssertEqual(run.handle([.connected(true)], now: at(40)), .wait(at(45)))
-        XCTAssertEqual(run.handle(.timer, now: at(45)), .nothing)
-    }
-
-    /// Picked by hand with no network (the Wi-Fi off), then another network an hour later: that network decides.
-    func testAHandPickWithNoNetworkAndThenAnotherNetwork() {
-        var run = pickedOnHome()
-        _ = run.handle(.network(.offline), now: at(20))
-        _ = run.handle(.pickedByHand, now: at(21))
-        XCTAssertEqual(run.handle(on("cafe"), now: at(3600)), .wait(at(3605)))
-        XCTAssertEqual(run.handle(.timer, now: at(3605)), .decide(mark: "cafe", acted: AutoSwitch.Acted(mark: "home", rules: run.rules)))
-    }
-
-    func testNothingIsDecidedWhileASwitchIsPending() {
+    /// Taken for unrecognised, then its own routers answer for no remembered network: the same network still, so a hand
+    /// pick made meanwhile stays; a remembered network answering is real news.
+    func testALateFingerprintOfTheSameNetwork() {
         var run = Run(rules: rules, now: t0)
-        XCTAssertEqual(run.handle([.connected(true), on("cafe"), .busy(true)], now: t0), .wait(at(5)))
-        XCTAssertEqual(run.handle(.timer, now: at(5)), .nothing)
-        XCTAssertNil(run.acted, "not decided: it is, once the switch settles")
-        XCTAssertEqual(run.handle(.busy(false), now: at(30)), .decide(mark: "cafe", acted: nil))
-        // Taken in together: connected and busy at once never decides on the half seen.
-        var both = Run(rules: rules, now: t0)
-        _ = both.handle(on("cafe"), now: t0)
-        XCTAssertEqual(both.handle([.connected(true), .busy(true)], now: at(10)), .wait(at(15)))
-        XCTAssertEqual(both.handle(.timer, now: at(15)), .nothing)
+        XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending(Self.cafe)])], until: 25), [unrecognised])
+        _ = run.handle(.pickedByHand, now: at(30))
+        XCTAssertEqual(drive(&run, [(40, [on("x", Self.cafe)])], until: 100), [])
+        var late = Run(rules: rules, now: t0)
+        XCTAssertEqual(drive(&late, [(0, [.profiles(names), .connected(true), pending()]), (40, [on("a,b")])], until: 100), [unrecognised, "a,b"])
+    }
+
+    // MARK: Late routers, sleep and wakes (T2-1, X-4, T3-1)
+
+    /// T2-1, X-4, T3-1: at home, the Mac offline for a moment or asleep for hours, the routers answering at any of the
+    /// watcher's read times: nothing switches, and a hand pick stays.
+    func testAWakeAtHomeNeverSwitchesAwayAndBack() {
+        for gap: Double in [1, 30, 119, 600, 28_800] {
+            for answer: Double in [0.5, 3, 10, 19, 21, 25, 30, 45, 60, 75, 80] {
+                for heard in ["a", "b", "a,b"] {
+                    for sleeps in [false, true] {
+                        var run = settled()
+                        _ = run.handle(.pickedByHand, now: at(50))
+                        let start = 100 + gap
+                        let got = drive(&run, [(100, sleeps ? [.sleep(true), offline] : [offline]), (start, sleeps ? [.sleep(false), pending()] : [pending()]),
+                                               (start + answer, [on(heard)])], until: start + 300)
+                        XCTAssertEqual(got, [], "offline \(gap) s, router \(heard) after \(answer) s")
+                        XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules))
+                    }
+                }
+            }
+        }
+        // The eight-hour sleep with the router at 30 s, as the test lane drives it (timers at 10, 20, 25 s).
+        var night = settled()
+        _ = night.handle(offline, now: at(100))
+        var actions = [night.handle(pending(), now: at(100 + 8 * 3600))]
+        for t in [10.0, 20, 25] { actions.append(night.handle(.timer, now: at(100 + 8 * 3600 + t))) }
+        actions.append(night.handle(on("a,b"), now: at(100 + 8 * 3600 + 30)))
+        actions.append(night.handle(.timer, now: at(100 + 8 * 3600 + 35)))
+        XCTAssertFalse(actions.contains { if case .decide = $0 { true } else { false } })
+        // A tunnel reconnect with a reread in between, and a roam with no offline at all.
+        var re = settled()
+        XCTAssertEqual(drive(&re, [(100, [.connected(false)]), (100.5, [pending()]), (103, [.connected(true)]), (104, [on("b")])], until: 300), [])
+        var roam = settled()
+        XCTAssertEqual(drive(&roam, [(100, [pending()]), (160, [on("a")])], until: 300), [])
+    }
+
+    /// The limit of the wait: a router answering after the last read comes after the network counted as unrecognised,
+    /// so the Mac switches back once it answers (the protective choice: another network can look like home).
+    func testARouterLaterThanTheLastReadSwitchesBack() {
+        var run = settled()
+        XCTAssertEqual(drive(&run, [(100, [offline]), (102, [pending()]), (300, [on("a,b")])], until: 400), [unrecognised, "a,b"])
+    }
+
+    // MARK: Routers shared by two remembered networks (R-3, R-4, X-2, T3-2)
+
+    /// R-4, R-3: on the office, its own router away for a while: still the office, and a switch pending meanwhile is
+    /// still for the same network. T3-2: arriving there, the shared router alone at the settle moment.
+    func testASharedRouterKeepsTheNetworkItWasReadAs() {
+        var run = settled("b,c", Self.office)
+        _ = run.handle(.pickedByHand, now: at(10))
+        XCTAssertEqual(drive(&run, [(20, [on("b", Self.office)]), (40, [on("b,c", Self.office)]), (60, [on("b", Self.office)])], until: 200), [])
+        XCTAssertEqual(run.here(at: at(200)), "b,c")
+        var arriving = Run(rules: rules, now: t0)
+        XCTAssertEqual(drive(&arriving, [(0, [.profiles(names), .connected(true), pending(Self.office)]), (3, [on("b,c", Self.office)]),
+                                         (4, [on("b", Self.office)]), (20, [on("b,c", Self.office)])], until: 100), ["b,c"])
+        // Reached afresh with only the shared router: neither network, whichever was remembered first.
+        var fresh = Run(rules: rules, now: t0)
+        XCTAssertEqual(drive(&fresh, [(0, [.profiles(names), .connected(true), on("b", Self.office)])], until: 100), ["b"])
+        XCTAssertEqual(rules.profile(on: "b"), "Travel")
+    }
+
+    /// X-2: after leaving home, a network reached another way whose only router is the shared one is neither home nor
+    /// the office. Back at home's place, it is home read again: the shared router alone stays home.
+    func testAPreferenceNeverOutlivesLeavingTheNetwork() {
+        var run = settled()
+        XCTAssertEqual(drive(&run, [(10, [offline]), (200, [on("b", "en0|192.168.50.1")])], until: 300), ["b"])
+        var cable = settled()
+        XCTAssertEqual(drive(&cable, [(10, [on("b", "en5|192.168.1.1")])], until: 300), ["b"], "another interface")
+        var back = settled()
+        XCTAssertEqual(drive(&back, [(10, [offline]), (200, [on("b")])], until: 300), [])
+    }
+
+    // MARK: Switches the app couldn't make (X-3)
+
+    /// X-3: the switch asked for wasn't made (a reconnect, a reread meanwhile): owed again once things settle; not over
+    /// a hand pick made since.
+    func testASwitchNotMadeIsOwedAgain() {
+        var run = settled()
+        let decided = run.acted!
+        XCTAssertEqual(run.handle(.unapplied(decided), now: at(7)), .wait(at(12)))
+        XCTAssertEqual(run.handle(.timer, now: at(12)), .decide(mark: "a,b", acted: nil))
+        // Not made while disconnected: owed once connected again.
+        _ = run.handle(.connected(false), now: at(20))
+        _ = run.handle(.unapplied(run.acted!), now: at(21))
+        XCTAssertEqual(drive(&run, [(30, [.connected(true)])], until: 100), ["a,b"])
+        // A hand pick since: the pick stands.
+        let again = run.acted!
+        _ = run.handle(.pickedByHand, now: at(101))
+        _ = run.handle(.pickedByHand, now: at(102))
+        var picked = run
+        _ = picked.handle([.network(.mark("a", place: Self.home))], now: at(103))
+        XCTAssertEqual(drive(&picked, [(104, [.unapplied(Acted(mark: "x", rules: rules))])], until: 200), [], "another decision's report")
+        XCTAssertEqual(again, run.acted)
+    }
+
+    // MARK: Hand picks and rules (P-2, P-5, R-5, T-3, T-4)
+
+    func testAHandPickStaysUntilTheNetworkOrItsRuleChanges() {
+        var run = settled()
+        _ = run.handle(.pickedByHand, now: at(10))
+        var r = rules
+        r.elsewhere = nil
+        r.known[1].profile = "Home"
+        XCTAssertEqual(drive(&run, [(20, [.rules(r)])], until: 40), [], "rules for other networks")
+        r.renamed("Home", to: "House")
+        XCTAssertEqual(drive(&run, [(50, [.profiles(["House", "Work", "Travel"]), .rules(r)])], until: 70), [], "a rename")
+        // A rename while the network reads nothing, or the Mac is offline for a moment, follows the pick too (R-5).
+        r.renamed("House", to: "Casa")
+        XCTAssertEqual(drive(&run, [(80, [pending()]), (81, [.profiles(["Casa", "Work", "Travel"]), .rules(r)]), (84, [on("a,b")])], until: 100), [])
+        r.renamed("Casa", to: "Haus")
+        XCTAssertEqual(drive(&run, [(110, [offline]), (111, [.profiles(["Haus", "Work", "Travel"]), .rules(r)]), (113, [on("a,b")])], until: 130), [])
+        // A new profile for this network applies, over the pick (P-2).
+        r.known[0].profile = "Travel"
+        XCTAssertEqual(drive(&run, [(140, [.rules(r)])], until: 160), ["a,b"])
+        // Another network decides again.
+        XCTAssertEqual(drive(&run, [(170, [on("b,c", Self.office)])], until: 200), ["b,c"])
+    }
+
+    /// P-5, T-4: a pick made offline has no network: the next one decides. A pick made while the network is still read
+    /// counts for what the reading gives, even when nothing looked at it on time.
+    func testAHandPickWithoutANetwork() {
+        var run = settled()
+        _ = run.handle(offline, now: at(20))
+        _ = run.handle(.pickedByHand, now: at(21))
+        XCTAssertEqual(drive(&run, [(3600, [on("x", Self.cafe)])], until: 3700), ["x"])
+        var reading = settled()
+        XCTAssertEqual(drive(&reading, [(10, [offline]), (20, [pending(Self.cafe)]), (21, [.pickedByHand]), (25, [on("b,c", Self.cafe)])], until: 100), [])
+        var late = settled()
+        _ = late.handle(.connected(false), now: at(8))
+        _ = late.handle([offline], now: at(10))
+        _ = late.handle([pending(Self.cafe)], now: at(20))
+        _ = late.handle(.pickedByHand, now: at(21))
+        XCTAssertEqual(drive(&late, [(500, [.connected(true)])], until: 600), [])
+        XCTAssertEqual(late.acted, Acted(mark: unrecognised, rules: rules))
+        // A rules change drops a pick still waiting for its network.
+        var dropped = settled()
+        var r = rules
+        r.elsewhere = "Work"
+        XCTAssertEqual(drive(&dropped, [(10, [offline]), (20, [pending(Self.cafe)]), (21, [.pickedByHand]), (22, [.rules(r)]), (25, [on("x", Self.cafe)])], until: 100), ["x"])
+    }
+
+    // MARK: Properties over random sequences
+
+    private struct Rng { var s: UInt64; mutating func next() -> UInt64 { s ^= s << 13; s ^= s >> 7; s ^= s << 17; return s }
+        mutating func int(_ n: Int) -> Int { Int(next() % UInt64(n)) }
+        mutating func pick<T>(_ a: [T]) -> T { a[int(a.count)] } }
+
+    /// Whatever happens: a decision only while connected, not busy and on the network it names; never twice for the same
+    /// network and profile unless reported not made; nothing waits for ever; and which network was remembered first
+    /// never changes a decision.
+    func testRandomSequencesKeepThePrinciples() {
+        var g = Rng(s: 0x5eed)
+        var reversed = rules
+        reversed.known.reverse()
+        let readings: [Run.Event] = [offline, pending(), pending(Self.cafe), pending(Self.office), on("a,b"), on("a"), on("b"), on("b,c", Self.office),
+                                     on("b", Self.office), on("c", Self.office), on("x", Self.cafe), on("d", "en5|"), pending("en5|")]
+        for seq in 0..<2000 {
+            var run = Run(rules: rules, now: t0), mirror = Run(rules: reversed, now: t0)
+            var now = 0.0, due: ContinuousClock.Instant?, last: Acted?, log: [String] = []
+            func feed(_ events: [Run.Event], _ t: ContinuousClock.Instant) {
+                let a = run.handle(events, now: t), b = mirror.handle(events, now: t)
+                log.append("\((t - t0).components.seconds): \(events) -> \(a) acted \(String(describing: run.acted?.mark))")
+                XCTAssertEqual(a, b, "seq \(seq): the order networks were remembered in changed a decision")
+                // A report of a switch not made, a hand pick or an arrival makes a decision owed again.
+                if events.contains(where: { $0 == .pickedByHand || { if case .unapplied = $0 { true } else { false } }($0) }) || run.acted == nil { last = nil }
+                if case .decide(let m, _) = a {
+                    XCTAssertTrue(run.connected && !run.busy && run.here(at: t) == m, "seq \(seq): decided while it may not")
+                    let d = Acted(mark: m, rules: run.rules)
+                    XCTAssertNotEqual(d, last, "seq \(seq): decided twice on \(m)\n" + log.joined(separator: "\n"))
+                    last = d
+                }
+                if case .wait(let w) = a { due = w } else { due = nil }
+            }
+            for _ in 0..<(1 + g.int(30)) {
+                now += g.pick([0.2, 1, 3, 5, 9, 15, 30, 90, 4000])
+                while let w = due, w <= at(now) { due = nil; feed([.timer], w) }
+                var events: [Run.Event] = []
+                switch g.int(10) {
+                case 0...4: events.append(g.pick(readings))
+                case 5: events.append(.connected(g.int(4) > 0))
+                case 6: events.append(.busy(g.int(3) == 0))
+                case 7: events.append(.pickedByHand)
+                case 8: events.append(.sleep(g.int(2) == 0))
+                default: if let a = run.acted { events.append(.unapplied(a)) }
+                }
+                feed(events, at(now))
+            }
+            // Quiet, connected, not busy: whatever waits ends, and then nothing more is asked for.
+            feed([.connected(true), .busy(false)], at(now + 0.1))
+            var n = 0
+            while let w = due, n < 10 { due = nil; feed([.timer], w); n += 1 }
+            XCTAssertNil(due, "seq \(seq): still waiting")
+            if run.reading != .offline { XCTAssertNotNil(run.here(at: at(now + 1000))) }
+        }
+    }
+
+    /// Staying on one network: its routers coming and going within what it holds, moments offline, sleeps of any length,
+    /// reconnects and rereads answered within the read times never switch, and a hand pick stays.
+    func testRandomStaysOnOneNetworkNeverSwitch() {
+        var g = Rng(s: 0xb0b)
+        for seq in 0..<1500 {
+            var run = settled()
+            _ = run.handle(.pickedByHand, now: at(6))
+            var now = 10.0, steps: [(Double, [Run.Event])] = []
+            for _ in 0..<(1 + g.int(25)) {
+                switch g.int(6) {
+                case 0: steps.append((now, [on(g.pick(["a", "b", "a,b"]))]))
+                case 1: // A moment offline, or a sleep of any length; then a reread answered within the read times.
+                    let sleeps = g.int(2) == 0, gap = sleeps ? g.pick([30.0, 600, 30_000]) : g.pick([0.5, 3, 9])
+                    steps.append((now, sleeps ? [.sleep(true), offline] : [offline])); now += gap
+                    steps.append((now, sleeps ? [.sleep(false), pending()] : [pending()])); now += g.pick([0.5, 10, 21, 45, 75])
+                    steps.append((now, [on(g.pick(["a", "b", "a,b"]))]))
+                case 2: steps.append((now, [.connected(false)])); now += 2; steps.append((now, [.connected(true)]))
+                case 3: steps.append((now, [pending()])); now += g.pick([1.0, 30, 70]); steps.append((now, [on("a,b")]))
+                case 4: steps.append((now, [.busy(true)])); now += 3; steps.append((now, [.busy(false)]))
+                default: steps.append((now, [.timer]))
+                }
+                now += g.pick([1.0, 6, 40])
+            }
+            XCTAssertEqual(drive(&run, steps, until: now + 200), [], "seq \(seq)")
+            XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules), "seq \(seq)")
+        }
     }
 
     func testASwitchThatAProviderLimitWouldQuestionIsNeverStartedByItself() {

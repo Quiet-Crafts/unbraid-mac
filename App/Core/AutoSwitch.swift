@@ -94,16 +94,17 @@ nonisolated struct NetworkRules: Codable, Equatable, Sendable {
 nonisolated enum AutoSwitch {
     /// How long a network must last before a switch, so a handover or a short drop passes without one.
     static let settle: Duration = .seconds(5)
-    /// How long the Mac must be on a network that gives no fingerprint before it counts as one unbraid can't recognise:
-    /// long enough for a router that answers late (after joining or a wake), so a remembered network isn't taken for
-    /// another one in between.
+    /// How long a network reached afresh may give no fingerprint before it counts as one unbraid can't recognise.
     static let unrecognisedAfter: Duration = .seconds(20)
+    /// The same, for the network the Mac was already on, read again after a wake, a moment offline or a reconnect: long
+    /// enough for a router that answers late (the watcher reads until 80 s), and bounded, since another network can be
+    /// reached the same way.
+    static let lateRouter: Duration = .seconds(85)
+    /// Offline for no longer than this while awake, the Mac is still on the network it was on (a roam, a blip).
+    static let blip: Duration = .seconds(10)
     /// What a network that gives no fingerprint goes by: never a fingerprint (those are hex), so it is never remembered
     /// and its profile is the one for any other network. All such networks look the same.
     static let unrecognised = "unrecognised"
-    /// How long the Mac may be offline and still come back to the same attachment (a wake, a roam): a remembered network
-    /// whose router answers late then stays itself.
-    static let sameAttachment: Duration = .seconds(120)
     static func isUnrecognised(_ mark: String) -> Bool { mark == unrecognised }
 
     /// What was last decided on: the network (a remembered one by its own name, so a router coming or going doesn't
