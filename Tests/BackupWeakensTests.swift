@@ -250,7 +250,7 @@ final class BackupWeakensTests: XCTestCase {
         home.prefs.lan = true
         home.home.wg = try WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 192.168.77.201/24\n[Peer]\nPublicKey = \(peer)\nEndpoint = home.example.org:51820\nAllowedIPs = 10.0.0.0/8\n", name: "Home")
         let narrower = home.with { $0.home.wg?.allowedIps = ["10.20.0.0/16"] }
-        XCTAssertEqual(Backup.weakens(home, narrower), ["Traffic to 1 home address range goes Direct instead of through the home tunnel."])
+        XCTAssertEqual(Backup.weakens(home, narrower), ["Part of the home network goes Direct instead of through the home tunnel."])
         // OpenVPN: another of its servers, or a port it inherits.
         let config = "client\ndev tun\nproto udp\nremote primary.example 1194\nremote old.example 1194\nremote-random\nremote-cert-tls server\n<ca>\n-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----\n</ca>\n"
         var office = base()
@@ -261,6 +261,77 @@ final class BackupWeakensTests: XCTestCase {
         office.routes[3].ovpn?.config = lone
         XCTAssertEqual(Backup.weakens(office, office.with { $0.routes[3].ovpn?.config = lone.replacingOccurrences(of: "port 1194", with: "port 443") }),
                        ["\"Office\" connects to another server at primary.example."])
+    }
+
+    // MARK: Found in the fifth review
+
+    /// A name given Direct takes an app on a VPN there too: walked from that app's program, not only the default's.
+    func testAWebsiteRuleSaysWhatItDoesToEveryApp() {
+        var here = base()
+        here.defaultRoute = DIRECT
+        here.apps = ["com.example.browser": "nl"]
+        XCTAssertEqual(Backup.weakens(here, here.with { $0.sites["example.com"] = DIRECT }), ["1 website goes from a VPN route to Direct."])
+    }
+
+    /// A home range narrowed at its far end, its first address still covered: the edges of every range are walked.
+    func testAHomeRangeNarrowedAtEitherEndIsSaid() throws {
+        var home = base()
+        home.prefs.lan = true
+        home.home.wg = try WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 192.168.77.201/24\n[Peer]\nPublicKey = \(peer)\nEndpoint = home.example.org:51820\nAllowedIPs = 10.0.0.0/8\n", name: "Home")
+        XCTAssertEqual(Backup.weakens(home, home.with { $0.home.wg?.allowedIps = ["10.0.0.0/16"] }), ["Part of the home network goes Direct instead of through the home tunnel."])
+        XCTAssertEqual(Backup.weakens(home, home.with { $0.home.wg?.allowedIps = ["10.0.0.0/8", "172.16.0.0/12"] }), [])
+        XCTAssertEqual(RestoreTraffic.edges("10.0.0.0/8"), ["10.0.0.1", "10.255.255.254"])
+        XCTAssertEqual(RestoreTraffic.edges("192.168.1.7/32"), ["192.168.1.7"])
+    }
+
+    /// An app with two copies, one inside a blocked bundle: the other copy is walked too.
+    func testEveryCopyOfAnAppIsWalked() {
+        var here = base()
+        here.defaultRoute = DIRECT
+        here.apps = ["com.example.outer": BLOCK, "com.example.child": BLOCK]
+        let apps = ["com.example.outer": [Compiler.pattern(forPath: "/Applications/Outer.app", ignoringCase: true)],
+                    "com.example.child": [Compiler.pattern(forPath: "/Applications/Outer.app/Contents/Child.app", ignoringCase: true),
+                                          Compiler.pattern(forPath: "/Users/someone/Applications/Child.app", ignoringCase: true)]]
+        XCTAssertEqual(Backup.weakens(here, here.with { $0.apps["com.example.child"] = nil }, apps: apps), ["1 app that is blocked now won't be."])
+    }
+
+    /// The default route refused now (its route waits for its config) and Direct after: said.
+    func testTheDefaultRouteLetOutIsSaid() {
+        var here = base()
+        here.routes.append(Route(id: "k1", wg: wg().withoutSecrets(), own: "sk", keyless: true))
+        here.servers.append(OwnServer(id: "sk", wg: wg().withoutSecrets(), keyless: true))
+        here.defaultRoute = "k1"
+        XCTAssertEqual(Backup.weakens(here, here.with { $0.defaultRoute = DIRECT }),
+                       ["The default route can't connect now, because its route waits for a server's config; after the restore its traffic goes out."])
+    }
+
+    /// Every kind of loss, for the default route, an app, a website and a home address, has a sentence.
+    func testEveryLossHasASentence() {
+        let here = base()
+        for kind in RestoreTraffic.Loss.allCases {
+            for slot in 0..<4 {
+                var l = RestoreTraffic.Losses()
+                switch slot { case 0: l.defaultRoute = kind; case 1: l.apps["org.example.a"] = kind; case 2: l.sites["example.com"] = kind; default: l.home["10.0.0.1"] = kind }
+                XCTAssertFalse(Backup.trafficNotes(l, current: here, filterOff: false).isEmpty, "\(kind) in slot \(slot)")
+            }
+        }
+    }
+
+    /// The largest setup a backup may hold: 50 websites, 20 profiles, 1,000 apps on Block, long keys, Direct default.
+    /// The whole comparison stays well under a second (it runs away from the window, which shows that it checks).
+    func testTheLargestSetupIsComparedQuickly() {
+        var big = base()
+        big.defaultRoute = DIRECT
+        big.apps = Dictionary(uniqueKeysWithValues: (0..<Backup.maxApps).map { ("org.example." + String(repeating: "x", count: 200) + ".\($0)", $0 % 3 == 0 ? BLOCK : $0 % 3 == 1 ? "nl" : DIRECT) })
+        big.sites = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("s\($0).example", $0 % 2 == 0 ? BLOCK : DIRECT) })
+        big.profiles = (0..<Setup.maxProfiles).map { Profile(name: "P\($0)", defaultRoute: "nl") }
+        let next = big.with { $0.apps = $0.apps.mapValues { $0 == BLOCK ? DIRECT : $0 }; $0.sites = $0.sites.mapValues { _ in "m1" } }
+        let start = Date()
+        let said = Backup.weakens(big, next)
+        let took = Date().timeIntervalSince(start)
+        print("RESTORE-CHECK largest setup: \(String(format: "%.2f", took)) s, \(said.count) notes")
+        XCTAssertFalse(said.isEmpty)
+        XCTAssertLessThan(took, 1)
     }
 
     // MARK: Passphrases

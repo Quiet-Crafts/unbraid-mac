@@ -1100,7 +1100,7 @@ extension AppModel {
         let now = Date.now
         // Every route either setup has, and with the profile every assignment: no edit still under way lands on top.
         let targets = Set([RouteEdits.Target.profile, .defaultRoute] + (setup.routes + content.setup.routes).map { .location($0.id) })
-        guarded({ s in s = Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now).setup }, targets: targets, after: { [weak self] _, _ in
+        guarded({ s in s = Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, judge: false).setup }, targets: targets, after: { [weak self] _, _ in
             // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
             UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)
             MoveHistory.generation += 1

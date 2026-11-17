@@ -18,13 +18,52 @@ nonisolated enum RestoreTraffic {
     }
 
     /// A compiled config, read for walking.
-    struct Config {
-        var rules: [[String: Any]]
-        var final: String
-        var servers: [String: [String: Any]]
-        var defaultResolver: String
+    final class Config {
+        let rules: [[String: Any]]
+        let final: String
+        let servers: [String: [String: Any]]
+        let defaultResolver: String
         /// The addresses of providers' own blocking resolvers, to tell them from a route's ordinary one.
-        var blocking: Set<String>
+        let blocking: Set<String>
+        /// One matcher per list of program patterns a rule holds, made once for every walk of this config. The patterns
+        /// the compiler writes for apps are literal paths (`Compiler.pattern(forPath:)`): those are compared as text;
+        /// anything else is one expression for the whole list.
+        private var matchers: [[String]: Matcher] = [:]
+        private struct Matcher {
+            /// Bundles (a path inside), tools (that path), each lower-cased when the pattern ignores case.
+            var bundles: [(String, Bool)] = [], tools: [(String, Bool)] = []
+            var rest: NSRegularExpression?
+            func matches(_ path: String) -> Bool {
+                let lower = path.lowercased()
+                if bundles.contains(where: { ($0.1 ? lower : path).hasPrefix($0.0) }) { return true }
+                if tools.contains(where: { ($0.1 ? lower : path) == $0.0 }) { return true }
+                return rest?.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)) != nil
+            }
+        }
+
+        init(rules: [[String: Any]], final: String, servers: [String: [String: Any]], defaultResolver: String, blocking: Set<String>) {
+            (self.rules, self.final, self.servers, self.defaultResolver, self.blocking) = (rules, final, servers, defaultResolver, blocking)
+        }
+
+        func matches(_ patterns: [String], _ path: String) -> Bool {
+            if let m = matchers[patterns] { return m.matches(path) }
+            var m = Matcher(), other: [String] = []
+            for p in patterns {
+                let fold = p.hasPrefix("(?i)")
+                // Literal only when it reads back to exactly the pattern the compiler would write for it.
+                if let sample = samplePath(p) {
+                    let bundle = p.hasSuffix("/"), path = bundle ? String(sample.dropLast("/Contents/MacOS/main".count)) : sample
+                    if Compiler.pattern(forPath: path, ignoringCase: fold) == p {
+                        if bundle { m.bundles.append(((fold ? path.lowercased() : path) + "/", fold)) } else { m.tools.append((fold ? path.lowercased() : path, fold)) }
+                        continue
+                    }
+                }
+                other.append(p)
+            }
+            if !other.isEmpty { m.rest = try? NSRegularExpression(pattern: other.map { "(?:\($0))" }.joined(separator: "|")) }
+            matchers[patterns] = m
+            return m.matches(path)
+        }
     }
 
     /// unbraid's own bundle as the compiler is given it (its traffic always goes direct).
@@ -77,13 +116,6 @@ nonisolated enum RestoreTraffic {
     static func connect(_ c: Config, process: String?, name: String?, address: String = publicAddress) -> Outcome? {
         var ip = name == nil ? address : fakeAddress
         var resolver: String?
-        var regexes: [String: NSRegularExpression] = [:]
-        func regex(_ p: String) -> NSRegularExpression? {
-            if let r = regexes[p] { return r }
-            let r = try? NSRegularExpression(pattern: p)
-            regexes[p] = r
-            return r
-        }
         func strings(_ v: Any?) -> [String] { (v as? [String]) ?? ((v as? String).map { [$0] } ?? []) }
         /// Whether `r` matches; nil when it holds a condition this walk can't judge.
         func matches(_ r: [String: Any]) -> Bool? {
@@ -110,7 +142,7 @@ nonisolated enum RestoreTraffic {
                 case "port": hit = hit && ((v as? [Int])?.contains(443) ?? ((v as? Int) == 443))
                 case "ip_cidr": hit = hit && strings(v).contains { contains($0, ip) }
                 case "process_path_regex":
-                    hit = hit && process.map { p in strings(v).contains { regex($0)?.firstMatch(in: p, range: NSRange(p.startIndex..., in: p)) != nil } } == true
+                    hit = hit && process.map { c.matches(strings(v), $0) } == true
                 case "domain", "domain_suffix": continue
                 default: return nil
                 }
@@ -174,7 +206,7 @@ nonisolated enum RestoreTraffic {
     // MARK: What gets weaker
 
     /// One app, website or home address whose connection protects less after the restore, and how.
-    enum Loss: Equatable, Sendable { case unblocked, toDirect, filter, providerBlocking, homeDirect }
+    enum Loss: Equatable, Sendable, CaseIterable { case unblocked, toDirect, filter, providerBlocking, homeDirect }
 
     static func loss(_ was: Outcome, _ now: Outcome) -> Loss? {
         if was.exit == .rejected { return now.exit == .rejected ? nil : .unblocked }
@@ -193,10 +225,29 @@ nonisolated enum RestoreTraffic {
         var apps: [String: Loss] = [:], sites: [String: Loss] = [:], home: [String: Loss] = [:]
     }
 
+    /// How bad a loss is, so the worst of several (an app's copies, a website seen from several apps) is the one kept.
+    private static func rank(_ l: Loss?) -> Int { switch l { case .unblocked: 5; case .toDirect, .homeDirect: 4; case .filter: 3; case .providerBlocking: 2; case nil: 0 } }
+
+    /// The most walks one comparison makes: every app, website and address is walked at least once whatever this
+    /// says; websites are walked from every kind of app only while this allows.
+    static let maxWalks = 20_000
+
     static func losses(_ current: Setup, _ next: Setup, apps given: [String: [String]]? = nil) -> Losses? {
         let keys = Set(current.apps.keys).union(next.apps.keys).union(current.prefs.effectiveFilter.apps.keys).union(next.prefs.effectiveFilter.apps.keys)
-        let apps = (given ?? [:]).merging(patterns(keys.subtracting(given?.keys.map { $0 } ?? []))) { a, _ in a }
-        guard let was = compile(current, apps: apps), let now = compile(next, apps: apps) else { return nil }
+        let all = (given ?? [:]).merging(patterns(keys.subtracting(given?.keys.map { $0 } ?? []))) { a, _ in a }
+        // Apps the compiler can't tell apart (the same choice and filter switch on both sides, one copy, none inside
+        // another's bundle or around one) go the same way: one of each is compiled and walked, and stands for the rest.
+        let nested = nesting(all)
+        var stands: [String: String] = [:], groups: [String: String] = [:]
+        for key in all.keys.sorted() {
+            guard !nested.contains(key), all[key]?.count == 1 else { stands[key] = key; continue }
+            let f = (current.prefs.effectiveFilter.apps[key], next.prefs.effectiveFilter.apps[key])
+            let kind = "\(current.apps[key] ?? "-")|\(next.apps[key] ?? "-")|\(String(describing: f.0))|\(String(describing: f.1))"
+            if groups[kind] == nil { groups[kind] = key }
+            stands[key] = groups[kind]
+        }
+        let apps = all.filter { stands[$0.key] == $0.key }
+        guard let was = compile(current.keeping(apps.keys), apps: apps), let now = compile(next.keeping(apps.keys), apps: apps) else { return nil }
         func pair(_ process: String?, _ name: String?, _ address: String = publicAddress) -> (Outcome, Outcome)? {
             guard let a = connect(was, process: process, name: name, address: address), let b = connect(now, process: process, name: name, address: address) else { return nil }
             return (a, b)
@@ -204,18 +255,45 @@ nonisolated enum RestoreTraffic {
         var out = Losses()
         guard let d = pair(otherProgram, otherName) else { return nil }
         out.defaultRoute = loss(d.0, d.1)
+        // Every copy of every app (a bundle can be installed in more than one place, or inside another), the worst kept.
+        // Copies that go the same way before and after are one kind of app, for the websites below.
+        var kinds: [String: String] = ["\(d.0)|\(d.1)": otherProgram]
+        // What each walked program loses on its own: a website seen from it says only what is the website's.
+        var own: [String: Loss] = [:]
+        own[otherProgram] = out.defaultRoute
         for (key, patterns) in apps.sorted(by: { $0.key < $1.key }) {
-            guard let path = patterns.lazy.compactMap(samplePath).first, let o = pair(path, otherName) else { continue }
-            out.apps[key] = loss(o.0, o.1)
+            var worst: Loss?
+            for path in Set(patterns.compactMap(samplePath)).sorted() {
+                guard let o = pair(path, otherName) else { continue }
+                let l = loss(o.0, o.1)
+                if rank(l) > rank(worst) { worst = l }
+                if kinds["\(o.0)|\(o.1)"] == nil { kinds["\(o.0)|\(o.1)"] = path; own[path] = l }
+            }
+            out.apps[key] = worst
         }
-        let names = Set(Sites.applied(current).keys).union(Sites.applied(next).keys)
-        for name in names.sorted() {
-            let found = [name, "zz-check." + name].compactMap { pair(otherProgram, $0) }.compactMap { loss($0.0, $0.1) }
-            out.sites[name] = found.first
+        for (key, stand) in stands where stand != key { out.apps[key] = out.apps[stand] }
+        // Every name with a website rule on either side, and one under it, from every kind of app: a website rule
+        // comes before its app's route, so a name given Direct takes an app on a VPN there too.
+        let names = Set(Sites.applied(current).keys).union(Sites.applied(next).keys).sorted()
+        let programs = [otherProgram] + kinds.values.filter { $0 != otherProgram }.sorted()
+        let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [otherProgram]
+        for name in names {
+            var worst: Loss?
+            for probe in [name, "zz-check." + name] {
+                for program in fromApps {
+                    guard let o = pair(program, probe) else { continue }
+                    let l = loss(o.0, o.1)
+                    // The app's own change (unblocked, say) is said for the app, not again for each website it opens.
+                    if l == own[program] ?? nil { continue }
+                    if rank(l) > rank(worst) { worst = l }
+                }
+            }
+            out.sites[name] = worst
         }
-        // Addresses of the home networks either setup reaches through a tunnel, and one on the local network.
+        // The edges of every home range either setup reaches through a tunnel (its first and last address: a range
+        // narrowed at either end shows there), and one on the local network.
         let ranges = [current, next].flatMap { s in (s.home.tailscale ? s.home.subnets : []) + (s.home.wg.map(Compiler.homeCidrs) ?? []) }
-        for address in Set(ranges.compactMap(firstHost) + ["192.168.1.20"]).sorted() {
+        for address in Set(ranges.flatMap(edges) + ["192.168.1.20"]).sorted() {
             // Through the home tunnel (or the tailnet) before, Direct after.
             guard let o = pair(otherProgram, nil, address), o.0.exit == .home || o.0.exit == .tunnel(Compiler.tsTag), o.1.exit == .direct else { continue }
             out.home[address] = .homeDirect
@@ -223,12 +301,48 @@ nonisolated enum RestoreTraffic {
         return out
     }
 
-    /// The first host address of an IPv4 range.
-    private static func firstHost(_ cidr: String) -> String? {
-        guard let n = Compiler.canonical(cidr), !n.contains(":") else { return nil }
-        let parts = n.split(separator: "/")[0].split(separator: ".").compactMap { UInt32($0) }
-        guard parts.count == 4 else { return nil }
-        let v = (parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]) &+ 1
-        return [v >> 24, v >> 16 & 255, v >> 8 & 255, v & 255].map(String.init).joined(separator: ".")
+    /// The apps whose patterns lie inside another's bundle, or hold another's: found by walking up each path, not by
+    /// comparing every pair.
+    private static func nesting(_ apps: [String: [String]]) -> Set<String> {
+        var owner: [String: String] = [:]
+        for (key, patterns) in apps { for p in patterns where p.hasSuffix("/") { if let path = samplePath(p) { owner[String(path.dropLast("/Contents/MacOS/main".count)).lowercased()] = key } } }
+        var out: Set<String> = []
+        for (key, patterns) in apps {
+            for p in patterns {
+                guard let path = samplePath(p)?.lowercased() else { out.insert(key); continue }
+                var up = (path as NSString).deletingLastPathComponent
+                // A bundle's own sample lies inside itself: start above the bundle.
+                if p.hasSuffix("/") { up = ((up as NSString).deletingLastPathComponent as NSString).deletingLastPathComponent }
+                while up.count > 1 {
+                    if let o = owner[up], o != key { out.insert(key); out.insert(o) }
+                    up = (up as NSString).deletingLastPathComponent
+                }
+            }
+        }
+        return out
+    }
+
+    /// The first and last host addresses of an IPv4 range; a /32 or /31 its own addresses.
+    static func edges(_ cidr: String) -> [String] {
+        guard let n = Compiler.canonical(cidr), !n.contains(":") else { return [] }
+        let halves = n.split(separator: "/"), bits = Int(halves[1]) ?? 32
+        let parts = halves[0].split(separator: ".").compactMap { UInt32($0) }
+        guard parts.count == 4 else { return [] }
+        let base = parts[0] << 24 | parts[1] << 16 | parts[2] << 8 | parts[3]
+        let last = base | (bits == 0 ? UInt32.max : (UInt32(1) << (32 - bits)) &- 1)
+        let ends = bits >= 31 ? [base, last] : [base &+ 1, last &- 1]
+        return Set(ends).sorted().map { v in [v >> 24, v >> 16 & 255, v >> 8 & 255, v & 255].map(String.init).joined(separator: ".") }
+    }
+
+}
+
+nonisolated private extension Setup {
+    /// This setup with only the app choices and filter switches of `keys` (the apps that stand for the others).
+    func keeping(_ keys: some Collection<String>) -> Setup {
+        let k = Set(keys)
+        var s = self
+        s.apps = apps.filter { k.contains($0.key) }
+        s.prefs.filter.apps = prefs.filter.apps.filter { k.contains($0.key) }
+        return s
     }
 }

@@ -371,7 +371,7 @@ nonisolated enum Backup {
             // Either setup is one the engine would refuse whole: nothing can be said app by app.
             return out + ["What this restore changes for each app and website couldn't be worked out."]
         }
-        return out + traffic(l, current: current, filterOff: filterOff)
+        return out + trafficNotes(l, current: current, filterOff: filterOff)
     }
 
     /// An own server, a route through one or the Home WireGuard tunnel that keeps its id or name here but connects to
@@ -428,9 +428,13 @@ nonisolated enum Backup {
             + (s.home.wg.map { [exit(homeKey, "", $0, nil, nil)] } ?? [])
     }
 
-    /// The losses, in the sheet's few sentences.
-    private static func traffic(_ l: RestoreTraffic.Losses, current: Setup, filterOff: Bool) -> [String] {
+    /// The losses, in the sheet's few sentences: every one the comparison finds has one.
+    static func trafficNotes(_ found: RestoreTraffic.Losses, current: Setup, filterOff: Bool) -> [String] {
         typealias Loss = RestoreTraffic.Loss
+        // Leaving a home tunnel for Direct is leaving a tunnel for Direct, wherever it is found.
+        func plain(_ x: Loss?) -> Loss? { x == .homeDirect ? .toDirect : x }
+        var l = found
+        (l.defaultRoute, l.apps, l.sites) = (plain(l.defaultRoute), l.apps.mapValues { plain($0)! }, l.sites.mapValues { plain($0)! })
         let apps = Array(l.apps.values), sites = Array(l.sites.values)
         func n(_ list: [Loss], _ kind: Loss) -> Int { list.filter { $0 == kind }.count }
         func parts(_ kind: Loss) -> [String] {
@@ -448,6 +452,10 @@ nonisolated enum Backup {
         if !blocking.isEmpty { out.append("\(list(blocking)) \(one(blocking) ? "loses the provider's ad and tracker blocking it has" : "lose the provider's ad and tracker blocking they have") now.") }
         // Refused now because its route waits for its server's config, rather than blocked by choice: said apart.
         func waiting(_ id: String?) -> Bool { id.flatMap(current.route).map { LinkPicker.keyLeftOut($0, in: current) } == true }
+        if l.defaultRoute == .unblocked {
+            out.append(waiting(current.defaultRoute) ? "The default route can't connect now, because its route waits for a server's config; after the restore its traffic goes out."
+                                                     : "The default route can't connect now; after the restore its traffic goes out.")
+        }
         let rules = Sites.applied(current)
         func rule(_ name: String) -> String? { rules.filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
         let opened = l.apps.filter { $0.value == .unblocked }.keys, openedSites = l.sites.filter { $0.value == .unblocked }.keys
@@ -459,10 +467,7 @@ nonisolated enum Backup {
         if !wait.isEmpty {
             out.append("\(list(wait)) that can't connect now, because \(one(wait) ? "its route waits" : "their routes wait") for a server's config, \(one(wait) ? "goes" : "go") out without it.")
         }
-        if !l.home.isEmpty {
-            out.append(l.home.count == 1 ? "Traffic to 1 home address range goes Direct instead of through the home tunnel."
-                                         : "Traffic to \(l.home.count) home address ranges goes Direct instead of through the home tunnel.")
-        }
+        if !l.home.isEmpty { out.append("Part of the home network goes Direct instead of through the home tunnel.") }
         return out
     }
 
@@ -512,7 +517,7 @@ nonisolated enum Backup {
     /// whose id the backup uses for something else gets a new id, and the kept profile follows it. `now` is when the
     /// restore happens, for rules that run from it. `apps` are the patterns of the apps on this Mac, as the engine is
     /// given them, for what the sheet says each app gets (made up from their keys when nil).
-    static func plan(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, apps: [String: [String]]? = nil) -> Plan {
+    static func plan(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, apps: [String: [String]]? = nil, judge: Bool = true) -> Plan {
         var b = content.setup
         // Saved without keys: an own server this Mac still has gets its config back here.
         let full = Dictionary(b.servers.filter(\.keyless).compactMap { k in
@@ -534,7 +539,8 @@ nonisolated enum Backup {
         replaced.homeTunnel = current.home.wg != nil && content.keys
         var plan = Plan(setup: r, holds: content.summary, replaces: replaced,
                         protectionChanges: current.prefs.killLevel != r.prefs.killLevel || current.prefs.alwaysOn != r.prefs.alwaysOn)
-        plan.weakens = weakens(current, r, apps: apps)
+        // The slow part (both setups compiled and walked): left out where only the restored setup is needed.
+        if judge { plan.weakens = weakens(current, r, apps: apps) }
         plan.dropsHome = current.home.wg != nil && r.home.wg == nil
         plan.weak = weak(b, accepted: current)
         guard keepPrevious, setUp(current) else { plan.needConfig = needConfig(plan.setup); return plan }
@@ -720,7 +726,8 @@ nonisolated enum Backup {
         func separator(_ c: Character) -> Bool { c.isWhitespace || (c.isASCII && !c.isLetter && !c.isNumber && c != "\u{1}") }
         // Pieces: a word and the separators after it; what comes before the first word stands alone.
         var pieces: [(word: String, after: String)] = [("", "")]
-        for c in t.prefix(4096) {
+        // Runs of one character first, then the cap: a long repeat at the start can't push the rest out of it.
+        for c in t.reduce(into: "", { if $0.last != $1 { $0.append($1) } }).prefix(4096) {
             if separator(c) { pieces[pieces.count - 1].after.append(c) }
             else if pieces[pieces.count - 1].after.isEmpty { pieces[pieces.count - 1].word.append(c) }
             else { pieces.append((String(c), "")) }

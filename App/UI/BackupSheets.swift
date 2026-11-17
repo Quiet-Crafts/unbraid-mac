@@ -374,14 +374,23 @@ private struct RestoreSheet: View {
     @State private var weakAccepted = false
     /// The patterns of the apps either setup names (nested ones included), as the engine gets them: read once.
     @State private var patterns: [String: [String]]?
+    /// What the restore would weaken, worked out away from the main actor (both setups compiled and walked); nil while
+    /// that runs, and Restore waits for it.
+    @State private var weakens: [String]?
+    /// What `weakens` was worked out from: this Mac's setup and the app patterns.
+    private struct Inputs: Hashable { var setup: Setup; var patterns: [String: [String]]? }
 
     var body: some View {
         let current = model.setup
         let here = Backup.setUp(current)
         // Worked out again for every change, of the switch or of this Mac's setup meanwhile.
-        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now, apps: patterns)
+        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now, judge: false)
         let canKeep = here && !keeping.unkept
-        let plan = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, apps: patterns)
+        let plan = {
+            var p = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, judge: false)
+            p.weakens = weakens ?? []
+            return p
+        }()
         let phase = model.vpn.state.phase
         let notes = BackupTexts.restoreNotes(plan, accounts: model.accounts, tunnelUp: phase == .on || phase == .paused)
         SheetFrame(title: "Restore Settings", subtitle: BackupTexts.restoreFacts(file: flow.fileName, content)) {
@@ -390,12 +399,22 @@ private struct RestoreSheet: View {
                 details(plan, notes: notes, here: here, keeping: keeping, canKeep: canKeep)
                 ScrollView { details(plan, notes: notes, here: here, keeping: keeping, canKeep: canKeep) }
             }
+        } status: {
+            if weakens == nil { Working(text: "Checking what the restore changes…") }
         } actions: {
             Button("Cancel") { flow.close() }.keyboardShortcut(.cancelAction)
             Button("Restore") {
                 model.restoreBackup(content, keepPrevious: canKeep && keep)
                 flow.close()
-            }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(!plan.weak.isEmpty && !weakAccepted)
+            }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled((!plan.weak.isEmpty && !weakAccepted) || weakens == nil)
+        }
+        // Worked out again when this Mac's setup changes meanwhile; a result for inputs since replaced is dropped.
+        .task(id: Inputs(setup: current, patterns: patterns)) {
+            guard let patterns else { return }
+            weakens = nil
+            let restored = Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, judge: false).setup
+            let found = await Task.detached(priority: .userInitiated) { Backup.weakens(current, restored, apps: patterns) }.value
+            if !Task.isCancelled { weakens = found }
         }
         .onAppear {
             let catalog = AppCatalog.shared, mine = model.setup, theirs = content.setup
