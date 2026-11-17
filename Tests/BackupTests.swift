@@ -779,7 +779,7 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.inBackup(Backup.Summary(routes: 4, apps: 11, websites: 5, profiles: 2, servers: 1, keyless: 1)),
                        "4 routes, 11 app choices, 5 websites, 2 profiles, 1 own server without its keys")
         XCTAssertEqual(Backup.replaces(Backup.Summary(routes: 3, apps: 8, profiles: 1)),
-                       "Your 3 routes, 8 app choices and 1 profile on this Mac. Provider sign-ins, Tailscale and statistics stay as they are.")
+                       "Your 3 routes, 8 app choices and 1 profile on this Mac. Provider sign-ins, your Tailscale sign-in and statistics stay as they are.")
         // Singular, plural, and nothing said of what there is none of.
         XCTAssertEqual(Backup.holds(Backup.Summary(routes: 1)), "It holds 1 route.")
         XCTAssertEqual(Backup.holds(Backup.Summary(routes: 1, websites: 2)), "It holds 1 route and 2 websites.")
@@ -790,21 +790,29 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.inBackup(Backup.Summary(routes: 1, profiles: 1, servers: 2, homeTunnel: true)), "1 route, 1 profile, 2 own servers, the Home WireGuard tunnel")
         XCTAssertEqual(Backup.inBackup(Backup.Summary()), "Preferences only")
         XCTAssertEqual(Backup.replaces(Backup.Summary(routes: 1, apps: 1, websites: 1, profiles: 2, servers: 1, homeTunnel: true)),
-                       "Your 1 route, 1 app choice, 1 website, 2 profiles, 1 own server and Home WireGuard tunnel on this Mac. Provider sign-ins, Tailscale and statistics stay as they are.")
-        XCTAssertEqual(Backup.replaces(Backup.Summary()), "Nothing set up on this Mac yet. Provider sign-ins, Tailscale and statistics stay as they are.")
+                       "Your 1 route, 1 app choice, 1 website, 2 profiles, 1 own server and Home WireGuard tunnel on this Mac. Provider sign-ins, your Tailscale sign-in and statistics stay as they are.")
+        XCTAssertEqual(Backup.replaces(Backup.Summary()), "Nothing set up on this Mac yet. Provider sign-ins, your Tailscale sign-in and statistics stay as they are.")
     }
 
     func testPassphraseStrengthIsAndroidsRule() {
         XCTAssertEqual(Backup.strength(""), .easy)
         XCTAssertEqual(Backup.strength("abc123"), .easy)
         XCTAssertEqual(Backup.strength("abcdefghij"), .easy)
-        XCTAssertEqual(Backup.strength("abcdefghijk1"), .fair)
+        XCTAssertEqual(Backup.strength("qjxv7mwz3k"), .fair)
         XCTAssertEqual(Backup.strength("Tr0ub4dor&3"), .hard)
         XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
         XCTAssertEqual(Backup.strength("ab cd ef gh"), .fair)
         XCTAssertEqual(Backup.strength("ab cd"), .easy)
         XCTAssertEqual(Backup.Strength.hard.text, "Hard to guess")
         XCTAssertTrue(Backup.Strength.easy.text.hasPrefix("Easy to guess"))
+        // Length alone is no sign of a passphrase picked at random: repeats, runs, repeated words and common passwords
+        // add almost nothing, and never let keys into the file.
+        for trivial in ["aaaaaaaaaaaaaaaa", "aaaa aaaa aaaa aaaa", "horse horse horse horse", "abcdefghijk1", "abcdefghijklmnopqrstuvwxyz",
+                        "1234567890123456", "password1234", "Password1234!", "qwertyqwertyqwerty", "abcabcabcabcabcabc", "zyxwvutsrqponmlk", "aaa bbb ccc ddd"] {
+            XCTAssertEqual(Backup.strength(trivial), .easy, trivial)
+            XCTAssertFalse(BackupTexts.saveCheck(trivial, trivial, keys: true).ready, trivial)
+        }
+        XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
     }
 
     // MARK: The sheets' rules
@@ -818,11 +826,14 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(BackupTexts.saveCheck(hard, "correct horse battery stapel", keys: false), .init(ready: false, problem: "The passphrases don't match"))
         XCTAssertEqual(BackupTexts.saveCheck(hard, hard + "s", keys: false), .init(ready: false, problem: "The passphrases don't match"))
         XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: false), .init(ready: true))
-        // Easy to guess is only a hint, until keys go in the file.
-        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: false), .init(ready: true))
+        // Easy to guess is only a hint, until keys go in the file; but never shorter than 8 characters, said once the
+        // second field is being typed.
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: false), .init(ready: false, problem: "Use 8 or more characters"))
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "", keys: false), .init(ready: false))
+        XCTAssertEqual(BackupTexts.saveCheck("abcd1234", "abcd1234", keys: false), .init(ready: true))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: true), .init(ready: false, problem: "Choose a passphrase that is harder to guess to include keys"))
         XCTAssertEqual(BackupTexts.saveCheck("abc", "", keys: true).ready, false)
-        XCTAssertEqual(BackupTexts.saveCheck("abcdefghijk1", "abcdefghijk1", keys: true), .init(ready: true))
+        XCTAssertEqual(BackupTexts.saveCheck("qjxv7mwz3k", "qjxv7mwz3k", keys: true), .init(ready: true))
         XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: true), .init(ready: true))
         XCTAssertEqual([Backup.Strength.easy, .fair, .hard].map(BackupTexts.segments), [1, 2, 3])
     }

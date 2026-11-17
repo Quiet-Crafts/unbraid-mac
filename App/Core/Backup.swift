@@ -7,8 +7,9 @@ import Foundation
 /// app takes the other's setup for its own: the two models differ.
 ///
 /// In it: routes and the default, app and website choices, favourites, profiles (and which is in use), own servers, the
-/// Home WireGuard tunnel, preferences and provider page settings. Never in it: provider sign-ins (they live outside the
-/// setup, in `Store.accounts`), anything of Tailscale (it belongs to this Mac's sign-in), the statistics consent, the
+/// Home WireGuard tunnel, preferences and provider page settings, Tailscale exit routes (a node's name and tailnet address)
+/// among the routes. Never in it: provider sign-ins (they live outside the setup, in `Store.accounts`), this Mac's
+/// Tailscale sign-in and home access settings, the statistics consent, the
 /// profile request salt and a pending profile switch. Without keys, own servers and the routes through them keep only
 /// what isn't secret and wait for their config after a restore (`Route.keyless`), and the Home WireGuard tunnel stays out.
 nonisolated enum Backup {
@@ -580,10 +581,10 @@ nonisolated enum Backup {
     }
 
     /// The restore sheet's "It replaces": "Your 3 routes, 8 app choices and 1 profile on this Mac. Provider sign-ins,
-    /// Tailscale and statistics stay as they are."
+    /// your Tailscale sign-in and statistics stay as they are."
     static func replaces(_ s: Summary) -> String {
         let parts = counts(s) + (s.homeTunnel ? ["Home WireGuard tunnel"] : [])
-        let stay = "Provider sign-ins, Tailscale and statistics stay as they are."
+        let stay = "Provider sign-ins, your Tailscale sign-in and statistics stay as they are."
         return parts.isEmpty ? "Nothing set up on this Mac yet. \(stay)" : "Your \(list(parts)) on this Mac. \(stay)"
     }
 
@@ -602,22 +603,43 @@ nonisolated enum Backup {
         case easy, fair, hard
         var text: String {
             switch self {
-            case .easy: "Easy to guess. Use 12 or more characters, or four or more words."
+            case .easy: "Easy to guess. Use 12 or more characters, or four or more different words."
             case .fair: "Fair. Longer is safer: four or more words work well."
             case .hard: "Hard to guess"
             }
         }
     }
 
-    /// The Android app's rule: four or more words of three letters or more, or enough bits for its length and the kinds
-    /// of character it uses.
+    /// The Android app's rule, counting only what adds to a guess: four or more different words of three letters or
+    /// more, or enough bits for the characters that count (`guessable`) and the kinds of character it uses. Length
+    /// alone is no sign of a passphrase picked at random: "aaaaaaaaaaaaaaaa" or "horse horse horse horse" stay easy.
     static func strength(_ passphrase: String) -> Strength {
         let kinds = [(26, passphrase.contains(where: \.isLowercase)), (26, passphrase.contains(where: \.isUppercase)), (10, passphrase.contains(where: \.isNumber)),
                      (33, passphrase.contains { !$0.isLetter && !$0.isNumber })]
         let pool = max(1, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) })
-        let bits = Double(passphrase.count) * log2(Double(pool))
-        let words = passphrase.split(whereSeparator: \.isWhitespace).filter { $0.count >= 3 }.count
-        return words >= 4 || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
+        let bits = Double(guessable(passphrase)) * log2(Double(pool))
+        let words = Set(passphrase.lowercased().split(whereSeparator: \.isWhitespace).filter { $0.count >= 3 }.map(String.init))
+        return (words.count >= 4 && words.allSatisfy { guessable($0) >= 3 }) || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
+    }
+
+    /// Passwords everyone tries first: each counts as one character wherever it appears.
+    private static let common = ["password", "passw0rd", "qwerty", "azerty", "letmein", "welcome", "iloveyou", "admin", "unbraid", "monkey", "dragon", "123456"]
+
+    /// How many characters of `s` add to a guess: not one that repeats the one before or continues a run (abc, 321), a
+    /// stretch of three or more that already appeared counts once, and so does a common password.
+    private static func guessable(_ s: String) -> Int {
+        var t = s.lowercased()
+        for w in common { t = t.replacingOccurrences(of: w, with: "\u{1}") }
+        let c = t.unicodeScalars.prefix(256).map { Int($0.value) }
+        func seen(_ i: Int, _ l: Int) -> Bool { (0...(i - l)).contains { j in c[j..<j + l].elementsEqual(c[i..<i + l]) } }
+        var n = 0, i = 0
+        while i < c.count {
+            if i >= 3, let l = stride(from: min(c.count - i, i), through: 3, by: -1).first(where: { seen(i, $0) }) { n += 1; i += l; continue }
+            let step = i > 0 ? c[i] - c[i - 1] : 99, before = i > 1 ? c[i - 1] - c[i - 2] : 99
+            if step != 0 && !(abs(step) == 1 && step == before) { n += 1 }
+            i += 1
+        }
+        return n
     }
 }
 

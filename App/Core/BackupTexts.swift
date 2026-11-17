@@ -14,9 +14,9 @@ nonisolated enum BackupTexts {
     }
     static let restoredSignIn = "Settings restored. Sign in to your providers to use their routes."
 
-    static let footer = "A backup is one file, locked with a passphrase you choose. Provider sign-ins, Tailscale and statistics are never in it."
+    static let footer = "A backup is one file, locked with a passphrase you choose. Provider sign-ins, your Tailscale sign-in and statistics are never in it."
     static let standIn = "Not available while your settings are held for the keychain or were saved by a newer unbraid"
-    static let never = "Never in the file: provider sign-ins, Tailscale, statistics. You sign in again after a restore."
+    static let never = "Never in the file: provider sign-ins, your Tailscale sign-in, statistics. On another Mac, you sign in again after a restore."
     static let unrecoverable = "unbraid can't recover a forgotten passphrase"
     static let keysTitle = "Include server keys and passwords"
     static let keysOff = "Off: your own servers are saved without their keys and wait for their config after a restore."
@@ -38,13 +38,19 @@ nonisolated enum BackupTexts {
         var problem: String?
     }
 
+    /// The shortest passphrase a backup is saved with. Only saving asks for it: a file made elsewhere with a shorter one
+    /// still opens.
+    static let minLength = 8
+
     /// Both fields filled and the same. A mismatch is said once the second is as long as the first, so typing it isn't
-    /// interrupted. With keys in the file, a passphrase that is easy to guess is refused.
+    /// interrupted. With keys in the file, a passphrase that is easy to guess is refused. Shorter than `minLength` is
+    /// said once the second field is being typed.
     static func saveCheck(_ passphrase: String, _ again: String, keys: Bool) -> SaveCheck {
         if keys, !passphrase.isEmpty, Backup.strength(passphrase) == .easy {
             return SaveCheck(ready: false, problem: "Choose a passphrase that is harder to guess to include keys")
         }
         guard !passphrase.isEmpty, !again.isEmpty else { return SaveCheck(ready: false) }
+        if passphrase.count < minLength { return SaveCheck(ready: false, problem: "Use \(minLength) or more characters") }
         if again != passphrase {
             return SaveCheck(ready: false, problem: again.count >= passphrase.count ? "The passphrases don't match" : nil)
         }
