@@ -179,7 +179,8 @@ private struct BackupSheet: View {
             switch flow.step {
             case .save: SaveSheet()
             case .passphrase: PassphraseSheet()
-            case .restore: if let c = flow.content { RestoreSheet(content: c) }
+            // A sheet of its own per backup: what was worked out or accepted for one never carries over to another.
+            case .restore: if let c = flow.content { RestoreSheet(content: c).id(c.setup) }
             case nil: EmptyView()
             }
         }
