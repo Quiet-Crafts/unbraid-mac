@@ -457,8 +457,8 @@ final class BackupTests: XCTestCase {
         // A route's own choice turns it off, with the provider's setting on in both.
         XCTAssertEqual(Backup.weakens(own, own.with { $0.routes[4].filter = false; $0.routes[0].filter = false }), ["The provider's own blocking is turned off for 2 routes."])
         XCTAssertEqual(Backup.weakens(own.with { $0.routes[4].filter = false }, own.with { $0.routes[4].filter = nil; $0.opts["mullvad"]?["protect"] = "off" }), [])
-        // With unbraid's filter on VPN routes the provider's blocking isn't what protects them: nothing to say.
-        XCTAssertEqual(Backup.weakens(here.with { $0.opts = own.opts }, here.with { $0.opts = open.opts }), [])
+        // Said with unbraid's filter on VPN routes too: once the filter is off, the provider's setting is what protects them.
+        XCTAssertEqual(Backup.weakens(here.with { $0.opts = own.opts }, here.with { $0.opts = open.opts }).last, "Threat Protection Lite is turned off for NordVPN.")
         // An own server or the Home WireGuard tunnel under the same name that connects elsewhere or sets other DNS servers:
         // the host and servers are said, never a key.
         var moved = here
@@ -480,6 +480,40 @@ final class BackupTests: XCTestCase {
         let plan = Backup.plan(onto: here, from: try read(weaker), keepPrevious: false, now: .now)
         XCTAssertEqual(plan.weakens.count, 8)
         XCTAssertTrue(BackupTexts.restoreNotes(plan, accounts: [:], tunnelUp: false).contains("The DNS filter is turned off."))
+    }
+
+    /// Every protective setting the user can change, one at a time: a restore that weakens it says so.
+    func testEveryProtectiveFieldThatGoesIsSaid() throws {
+        var here = Setup()
+        here.routes = [nl(), Route(id: "r0", wg: wg, own: "s0"),
+                       Route(id: "m1", loc: Location(provider: "mullvad", countryCode: "SE", country: "Sweden"), filter: true)]
+        here.servers = [OwnServer(id: "s0", wg: wg)]
+        here.apps = ["org.example.a": "r0", "org.example.b": BLOCK]
+        here.sites = ["example.com": "r0", "tracker.example": BLOCK]
+        here.prefs.killLevel = .home; here.prefs.alwaysOn = true; here.prefs.lan = false
+        here.prefs.filter = Filter(id: "quad9", routes: true, direct: true, directApps: true, apps: ["org.example.c": true])
+        here.opts["nord"] = ["protect": "on"]
+        here = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(here))
+        XCTAssertEqual(Backup.weakens(here, here), [])
+        let cases: [(String, (inout Setup) -> Void)] = [
+            ("kill switch off", { $0.prefs.killLevel = .off }), ("kill switch home to internet", { $0.prefs.killLevel = .internet }),
+            ("connect on demand off", { $0.prefs.alwaysOn = false }), ("filter off", { $0.prefs.filter = Filter() }),
+            ("filter another server", { $0.prefs.filter.id = "adguard" }), ("filter no longer on routes", { $0.prefs.filter.routes = false }),
+            ("filter no longer on Direct", { $0.prefs.filter.direct = false }), ("filter no longer for Direct apps", { $0.prefs.filter.directApps = false }),
+            ("filter no longer for one app", { $0.prefs.filter.apps = ["org.example.c": false] }),
+            ("filter off for an app that inherited it", { $0.prefs.filter.apps["org.example.z"] = false }),
+            ("local network allowed", { $0.prefs.lan = true }),
+            ("blocked app unblocked", { $0.apps["org.example.b"] = DIRECT }), ("blocked app removed", { $0.apps["org.example.b"] = nil }),
+            ("blocked website unblocked", { $0.sites["tracker.example"] = DIRECT }), ("blocked website removed", { $0.sites["tracker.example"] = nil }),
+            ("NordVPN Threat Protection off", { $0.opts["nord"] = ["protect": "off"] }),
+            ("a provider route's own blocking off", { $0.routes[2].filter = false }),
+            ("default route from a VPN to Direct", { $0.defaultRoute = DIRECT }),
+            ("an app from a VPN to Direct", { $0.apps["org.example.a"] = DIRECT }),
+            ("a website from a VPN to Direct", { $0.sites["example.com"] = DIRECT }),
+            ("an own server elsewhere under its name", { $0.servers[0].wg?.endpoint = "198.51.100.9:51820" }),
+        ]
+        let unsaid = cases.filter { name, change in Backup.weakens(here, here.with(change)).isEmpty }.map(\.0)
+        XCTAssertEqual(unsaid, [])
     }
 
     /// A server the import would warn about as weak is named with the import's own warning, and waits for the user to

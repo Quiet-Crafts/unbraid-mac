@@ -361,8 +361,9 @@ nonisolated enum Backup {
         out += exitChanges(current, next)
         // Routes and choices a new install starts with aren't the user's: nothing to compare them with.
         guard setUp(current) else { return out }
-        // A provider's own blocking runs only while unbraid's filter doesn't take its place on VPN routes.
-        if !was.coversRoutes && !now.coversRoutes { out += providerWeakens(current, next) }
+        // Said even while unbraid's filter takes the provider's place on VPN routes: the filter may be turned off later,
+        // and then the provider's setting is what protects them.
+        out += providerWeakens(current, next)
         let vpn = { (id: String) in id != DIRECT && id != BLOCK }
         if vpn(current.defaultRoute), next.defaultRoute == DIRECT {
             out.append("The default route goes from \(current.route(current.defaultRoute)?.name ?? "a VPN") to Direct.")
