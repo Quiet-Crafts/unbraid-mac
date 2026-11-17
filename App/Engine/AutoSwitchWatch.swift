@@ -40,7 +40,7 @@ final class AutoSwitchWatch {
         observer = ChangeObserver(read: { [weak self] in
             guard let m = self?.model else { return }
             _ = m.vpn.state.phase; _ = m.store.networks; _ = m.store.setupStandIn; _ = m.setup.pendingSwitch
-            _ = m.setup.profiles; _ = m.setup.profile; _ = m.refusedProfile; _ = m.accounts
+            _ = m.setup.profiles; _ = m.setup.profile; _ = m.refusedProfile; _ = m.accounts; _ = m.limitAsk
         }, reconcile: { @MainActor [weak self] in self?.reconcile() })
         observer?.start()
         monitor.pathUpdateHandler = { [weak self] path in
@@ -124,6 +124,9 @@ final class AutoSwitchWatch {
             timer = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
                 guard !Task.isCancelled, let self else { return }
+                // What is busy is read again now: a question that opened while this waited must be seen before
+                // anything is decided, or the switch would take it away.
+                self.reconcile()
                 self.apply(self.run.handle(.timer))
             }
         case .decide(let mark, let acted): decide(mark, acted)

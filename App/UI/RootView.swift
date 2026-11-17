@@ -33,6 +33,8 @@ struct SiteTarget: Identifiable {
 @Observable final class Presentation {
     static let shared = Presentation()
     var picker: PickerTarget?
+    /// The protection reminder is showing above the pages: nothing else that only asks (the support band) joins it.
+    var safetyShowing = false
     /// The page on show, or to show when the window next appears (a route clicked in the menu bar panel). Kept here and
     /// not in the window's state, so only the sidebar's selection and the page itself redraw when it changes.
     var page: Page? = .apps(nil)
@@ -123,7 +125,10 @@ struct RootView: View {
     /// Whether the window is quiet enough for the support card to ask.
     private var supportCalm: WindowCalm {
         let updates = Updates.shared, state = model.vpn.state, store = model.store
+        // Anything else that already asks for attention: another band above the page (the protection reminder among
+        // them), a route that isn't working or isn't answering, a backup sheet.
         let notice = store.newerSetup || model.notice != nil || (store.unsaved && !store.unsavedDismissed) || !state.blocked.isEmpty
+            || !state.silent.isEmpty || presentation.safetyShowing || BackupFlow.shared.step != nil
             || model.switchingProfile != nil || model.refusedProfile != nil || !Attention().keySetupNames(now: .now).isEmpty
         return WindowCalm(termsAccepted: store.termsAccepted, signedIn: model.signedIn, updateShowing: updates.askPending || updates.showNotice,
                           noticeShowing: notice, asking: holdUpdateAsk, phase: state.phase, error: state.error != nil)
@@ -521,6 +526,7 @@ private struct SafetyNotice: View {
             }
         }
         .onChange(of: show) { _, show in
+            Presentation.shared.safetyShowing = show
             if show { AccessibilityNotification.Announcement("Apps go online without unbraid when it's off").post() }
         }
         .task(id: model.vpn.state.phase) {
