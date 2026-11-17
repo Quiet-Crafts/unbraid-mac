@@ -368,6 +368,8 @@ private struct RestoreSheet: View {
     private let model = AppModel.shared
     private let flow = BackupFlow.shared
     @State private var keep = true
+    /// Weak servers in the backup were accepted, as the import asks for them.
+    @State private var weakAccepted = false
 
     var body: some View {
         let current = model.setup
@@ -394,6 +396,9 @@ private struct RestoreSheet: View {
                     SwitchCard(title: BackupTexts.keepTitle(keeping.keptAs), caption: canKeep ? BackupTexts.keepCaption : BackupTexts.keepUnavailable,
                                isOn: canKeep ? $keep : .constant(false), enabled: canKeep)
                 }
+                if !plan.weak.isEmpty {
+                    SwitchCard(title: BackupTexts.weakTitle, caption: BackupTexts.weakCaption(plan.weak), isOn: $weakAccepted)
+                }
                 if !notes.isEmpty {
                     Label { Text(notes.joined(separator: " ")).fixedSize(horizontal: false, vertical: true) } icon: {
                         Image(systemName: "info.circle").foregroundStyle(Ink.warningText)
@@ -408,7 +413,7 @@ private struct RestoreSheet: View {
             Button("Restore") {
                 model.restoreBackup(content, keepPrevious: canKeep && keep)
                 flow.close()
-            }.keyboardShortcut(.defaultAction).contentButton(prominent: true)
+            }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(!plan.weak.isEmpty && !weakAccepted)
         }
     }
 }

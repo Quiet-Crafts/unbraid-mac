@@ -418,9 +418,12 @@ final class BackupTests: XCTestCase {
         var weaker = full()
         weaker.prefs.killLevel = .internet; weaker.prefs.alwaysOn = false; weaker.prefs.filter = Filter(); weaker.prefs.lan = true
         weaker.apps["org.example.d"] = DIRECT
+        // From a VPN to Direct: the default route, and an app and a website with a VPN route of their own.
+        weaker.defaultRoute = DIRECT; weaker.apps["org.example.a"] = DIRECT; weaker.sites["example.com"] = DIRECT
         XCTAssertEqual(Backup.weakens(here, weaker), [
             "The kill switch goes from Internet and home network to Internet.", "Connect on demand is turned off.", "The DNS filter is turned off.",
-            "Apps can reach the local network again.", "1 app that is blocked now won't be.", "1 website that is blocked now won't be.",
+            "Apps can reach the local network again.", "The default route goes from Netherlands to Direct.",
+            "1 app and 1 website go from a VPN route to Direct.", "1 app that is blocked now won't be.", "1 website that is blocked now won't be.",
         ])
         XCTAssertEqual(Backup.weakens(weaker, here), [])
         XCTAssertEqual(Backup.weakens(here, here), [])
@@ -429,10 +432,70 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter changes to another server."])
         filter.prefs.filter = Filter(id: "adguard", routes: false, direct: true)
         XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter covers less than it does now."])
+        // App by app: a Direct app the filter covers now, and won't.
+        var perApp = here
+        perApp.prefs.filter.apps = ["org.example.b": true]
+        XCTAssertEqual(Backup.weakens(perApp, here), ["The DNS filter covers less than it does now."])
+        XCTAssertEqual(Backup.weakens(here, perApp), [])
+        // Apps that follow a default going to Direct count as well; one following a VPN default the backup sets on Direct too.
+        var follow = here
+        follow.apps = [:]; follow.sites = [:]
+        XCTAssertEqual(Backup.weakens(follow, follow.with { $0.apps = ["org.example.a": DIRECT, "org.example.b": "nl"] }), ["1 app goes from a VPN route to Direct."])
+        XCTAssertEqual(Backup.weakens(follow.with { $0.apps = ["org.example.a": "w1", "org.example.b": "m1"] }, follow.with { $0.defaultRoute = DIRECT }),
+                       ["The default route goes from Netherlands to Direct.", "2 apps go from a VPN route to Direct."])
+        // The provider's own blocking, which runs while unbraid's filter doesn't cover VPN routes.
+        var own = here
+        own.prefs.filter = Filter()
+        own.routes.append(Route(id: "iv", loc: Location(provider: "ivpn", countryCode: "CH", country: "Switzerland")))
+        own.opts = ["nord": ["protect": "on"], "mullvad": ["protect": "on", "gambling": "on", "owned": "on"], "ivpn": ["protect": "on", "list": "10.0.254.4|10.0.254.5", "hardcore": "on"]]
+        let open = own.with { $0.opts = ["nord": ["protect": "off"], "mullvad": [:], "ivpn": ["protect": "on"]] }
+        XCTAssertEqual(Backup.weakens(own, open), [
+            "Hardcore mode is turned off for IVPN.", "IVPN's block list goes back to the standard one.",
+            "Mullvad blocking, Gambling and Mullvad-owned servers only are turned off for Mullvad.", "Threat Protection Lite is turned off for NordVPN.",
+        ])
+        XCTAssertEqual(Backup.weakens(open, own), [])
+        // A route's own choice turns it off, with the provider's setting on in both.
+        XCTAssertEqual(Backup.weakens(own, own.with { $0.routes[4].filter = false; $0.routes[0].filter = false }), ["The provider's own blocking is turned off for 2 routes."])
+        XCTAssertEqual(Backup.weakens(own.with { $0.routes[4].filter = false }, own.with { $0.routes[4].filter = nil; $0.opts["mullvad"]?["protect"] = "off" }), [])
+        // With unbraid's filter on VPN routes the provider's blocking isn't what protects them: nothing to say.
+        XCTAssertEqual(Backup.weakens(here.with { $0.opts = own.opts }, here.with { $0.opts = open.opts }), [])
+        // An own server or the Home WireGuard tunnel under the same name that connects elsewhere or sets other DNS servers:
+        // the host and servers are said, never a key.
+        var moved = here
+        moved.servers[0].wg?.endpoint = "198.51.100.9:51820"; moved.servers[0].wg?.dns = ["9.9.9.9"]
+        moved.servers[2].ss?.server = "203.0.113.77"
+        moved.home.wg?.endpoint = "elsewhere.example:51820"
+        XCTAssertEqual(Backup.weakens(here, moved), [
+            "The Home WireGuard tunnel connects to elsewhere.example instead of home.example.org.",
+            "\"Home box\" connects to 198.51.100.9 instead of 203.0.113.1.", "\"Home box\" uses other DNS servers: 9.9.9.9.",
+            "\"Outline é\" connects to 203.0.113.77 instead of 2001:db8::1.",
+        ])
+        XCTAssertFalse(Backup.weakens(here, moved).joined().contains(peerKey))
+        // A route of its own (not tied to a server) too.
+        let loose = here.with { $0.routes[2].own = nil; $0.servers.remove(at: 1) }
+        let config = try XCTUnwrap(loose.routes[2].ovpn?.config).replacingOccurrences(of: "remote vpn.example.net 443", with: "remote other.example 443")
+        let looseMoved = loose.with { $0.routes[2].ovpn?.config = config }
+        XCTAssertEqual(Backup.weakens(loose, looseMoved), ["\"Office\" connects to other.example instead of vpn.example.net."])
         // The plan carries them, and the sheet's notes show them.
         let plan = Backup.plan(onto: here, from: try read(weaker), keepPrevious: false, now: .now)
-        XCTAssertEqual(plan.weakens.count, 6)
+        XCTAssertEqual(plan.weakens.count, 8)
         XCTAssertTrue(BackupTexts.restoreNotes(plan, accounts: [:], tunnelUp: false).contains("The DNS filter is turned off."))
+    }
+
+    /// A server the import would warn about as weak is named with the import's own warning, and waits for the user to
+    /// accept it, unless this Mac already has that very config.
+    func testAWeakServerIsSaidAsTheImportSaysIt() throws {
+        var weak = full()
+        let cfb = try Manual.parseSs("ss://aes-128-cfb:pw@203.0.113.5:8388", name: "Old box")
+        weak.servers[2].ss = cfb; weak.routes[3].ss = cfb
+        let why = try XCTUnwrap(Manual.weakness(cfb))
+        let plan = Backup.plan(onto: Setup(), from: try read(weak), keepPrevious: false, now: .now)
+        XCTAssertEqual(plan.weak, ["Old box: \(why)"])
+        XCTAssertEqual(BackupTexts.weakCaption(plan.weak), "Weak security in Old box: \(why)")
+        XCTAssertEqual(Backup.plan(onto: weak, from: try read(weak), keepPrevious: true, now: .now).weak, [])
+        XCTAssertEqual(Backup.plan(onto: Setup(), from: try read(full()), keepPrevious: false, now: .now).weak, [])
+        // Saved without keys: nothing to judge until its config is added again, through the import.
+        XCTAssertEqual(Backup.plan(onto: Setup(), from: try read(weak, keys: false), keepPrevious: false, now: .now).weak, [])
     }
 
     /// A file can't make the check cost more than its size: app choices are capped, and profiles that choose the same
@@ -748,6 +811,9 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(BackupTexts.saveFailure(CocoaError(.fileWriteNoPermission)), "The backup couldn't be saved there. Choose another folder and try again.")
         XCTAssertEqual(BackupTexts.keepTitle(nil), "Keep my current setup as the profile \"Previous\"")
         XCTAssertEqual(BackupTexts.keepTitle("Previous 2"), "Keep my current setup as the profile \"Previous 2\"")
+        // What the kept profile holds, and the way out when the backup's own profiles leave no room (deleting one here can't).
+        XCTAssertEqual(BackupTexts.keepCaption, "It keeps your routes and your app and website choices, not your settings. You can switch back to it from Profiles.")
+        XCTAssertEqual(BackupTexts.keepUnavailable, "No room to keep it: this backup already has 20 profiles. Restore without keeping it.")
         XCTAssertEqual(BackupTexts.wrongKind("OpenVPN", needs: "WireGuard"), "That is an OpenVPN config; this server needs a WireGuard one")
         XCTAssertEqual(BackupTexts.wrongKind("Shadowsocks", needs: "OpenVPN"), "That is a Shadowsocks config; this server needs an OpenVPN one")
         XCTAssertEqual(BackupTexts.restoredNotice(signedIn: true), "Settings restored.")
@@ -793,6 +859,16 @@ final class BackupTests: XCTestCase {
         let single = Backup.plan(onto: Setup(), from: try read(one, keys: false), keepPrevious: false, now: .now)
         XCTAssertEqual(BackupTexts.restoreNotes(single, accounts: [nlProvider: "a", "mullvad": "b"], tunnelUp: false),
                        ["\"Home box\" needs its config again before its apps can connect."])
+        // A backup with keys and no Home WireGuard tunnel removes this Mac's: said by name. Without keys it stays.
+        var noHome = full()
+        noHome.home.wg = nil
+        let withHome = here.with { $0.home.wg = self.homeWg }
+        let dropped = Backup.plan(onto: withHome, from: try read(noHome), keepPrevious: true, now: .now)
+        XCTAssertTrue(dropped.dropsHome)
+        XCTAssertEqual(BackupTexts.restoreNotes(dropped, accounts: [nlProvider: "a"].merging(mullvad) { $1 }, tunnelUp: false),
+                       ["The Home WireGuard tunnel on this Mac is removed: this backup has none."])
+        XCTAssertFalse(Backup.plan(onto: withHome, from: try read(noHome, keys: false), keepPrevious: true, now: .now).dropsHome)
+        XCTAssertFalse(Backup.plan(onto: withHome, from: try read(full()), keepPrevious: true, now: .now).dropsHome)
     }
 
     func testUnlockTellsAWrongPassphraseFromTheRest() throws {

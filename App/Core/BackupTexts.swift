@@ -21,8 +21,9 @@ nonisolated enum BackupTexts {
     static let keysTitle = "Include server keys and passwords"
     static let keysOff = "Off: your own servers are saved without their keys and wait for their config after a restore."
     static let keysOn = "On: anyone with the file and its passphrase can use your own servers."
-    static let keepUnavailable = "No room to keep it: delete a profile first, or restore without keeping it"
-    static let keepCaption = "You can switch back to it from Profiles."
+    /// The limit is the backup's: its profiles replace this Mac's, so deleting one here makes no room.
+    static let keepUnavailable = "No room to keep it: this backup already has \(Setup.maxProfiles) profiles. Restore without keeping it."
+    static let keepCaption = "It keeps your routes and your app and website choices, not your settings. You can switch back to it from Profiles."
     static let needsConfig = "Needs its config again"
 
     /// The save sheet's line under its title.
@@ -88,6 +89,10 @@ nonisolated enum BackupTexts {
         return "\(file) · saved \(c.created.formatted(style)) with unbraid \(c.app)"
     }
 
+    /// The switch Restore waits for when the backup holds a server the import would warn about (`Plan.weak`).
+    static let weakTitle = "Restore servers with weak security"
+    static func weakCaption(_ weak: [String]) -> String { weak.map { "Weak security in \($0)" }.joined(separator: "\n") }
+
     /// The keep switch's title, with the name the plan would give the kept profile.
     static func keepTitle(_ name: String?) -> String { "Keep my current setup as the profile \"\(name ?? Backup.previous)\"" }
 
@@ -103,6 +108,7 @@ nonisolated enum BackupTexts {
         if plan.setup.routes.contains(where: { !$0.imported && accounts[$0.loc.provider] == nil }) {
             notes.append("Routes on a provider you aren't signed in to stay blocked until you sign in.")
         }
+        if plan.dropsHome { notes.append("The Home WireGuard tunnel on this Mac is removed: this backup has none.") }
         notes += plan.weakens
         if tunnelUp {
             notes.append(plan.protectionChanges ? "The kill switch or Connect on Demand setting changes, so the VPN restarts." : "The VPN reconnects for a moment.")
