@@ -607,17 +607,7 @@ final class AppModel {
         }
     }
 
-    func removeRoute(_ id: String) {
-        store.update { s in
-            guard s.routes.count > 1 || s.defaultRoute != id else { return }
-            s.routes.removeAll { $0.id == id }
-            if s.defaultRoute == id { s.defaultRoute = s.routes.first?.id ?? DIRECT }
-            s.apps = s.apps.filter { $0.value != id }
-            // Its websites follow their apps again (profiles are tidied with the routes).
-            s.sites = s.sites.filter { $0.value != id }
-            s.tidyProfiles()
-        }
-    }
+    func removeRoute(_ id: String) { store.update { $0.removeRoute(id) } }
 
     func setDefault(_ id: String) {
         guarded({ s in
@@ -830,13 +820,7 @@ final class AppModel {
 
     /// Removes a saved server and the routes using it; their apps follow the default route.
     func removeServer(_ id: String) {
-        store.update { s in
-            let gone = Set(s.routes.filter { $0.own == id }.map(\.id))
-            s.servers.removeAll { $0.id == id }
-            s.routes.removeAll { gone.contains($0.id) }
-            if gone.contains(s.defaultRoute) { s.defaultRoute = s.routes.first?.id ?? DIRECT }
-            s.apps = s.apps.filter { !gone.contains($0.value) }
-        }
+        store.update { $0.removeServer(id) }
         resetIfEmpty()
     }
 
@@ -866,12 +850,7 @@ final class AppModel {
     /// Skips providers: Tailscale becomes the only network feature.
     func useTailscaleOnly() {
         let noProviders = accounts.isEmpty
-        store.update { s in
-            if noProviders { s.routes.removeAll { !$0.imported } }
-            s.home.tailscale = true
-            if s.route(s.defaultRoute) == nil { s.defaultRoute = s.routes.first?.id ?? DIRECT }
-            s.apps = s.apps.filter { $0.value == DIRECT || $0.value == BLOCK || s.route($0.value) != nil }
-        }
+        store.update { $0.useTailscaleOnly(noProviders: noProviders) }
     }
 
     // MARK: Tailscale

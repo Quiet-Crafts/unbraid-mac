@@ -137,6 +137,36 @@ final class SitesTests: XCTestCase {
         XCTAssertEqual(s.profiles.first?.sites, ["p.example": BLOCK])
     }
 
+    /// However a route goes (removed, its server removed, Tailscale signed out or set as the only feature, an import with
+    /// no provider signed in), its websites follow their apps again at once, in the setup and its profiles, as removing
+    /// the route by hand does; the rest stay, and a backup of what is left saves.
+    func testWebsitesOnARouteThatGoesFollowTheirAppsWhereverItGoes() throws {
+        let wg = WgPeer(name: "Own", privateKey: ProviderFixtures.priv, address: ["10.7.0.2/32"], publicKey: ProviderFixtures.key,
+                        endpoint: "203.0.113.70:51820", allowedIps: ["0.0.0.0/0"])
+        var imported = wg
+        imported.endpoint = "203.0.113.71:51820"
+        var before = Setup(routes: [Route(id: "nord", loc: Location(provider: "nord", countryCode: "NL", country: "Netherlands")),
+                                    Route(id: "own", wg: wg, own: "s1"), Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit")],
+                           defaultRoute: "nord", apps: ["com.a": "own"],
+                           sites: ["own.example": "own", "ts.example": "ts", "nord.example": "nord", "d.example": DIRECT, "b.example": BLOCK])
+        before.servers = [OwnServer(id: "s1", wg: wg)]
+        before.profiles = [Profile(name: "P", defaultRoute: "nord", apps: [:], sites: ["own.example": "own", "ts.example": "ts", "p.example": DIRECT])]
+        for (name, remove, gone) in [
+            ("removeRoute", { (s: inout Setup) in s.removeRoute("own") }, ["own"]),
+            ("removeServer", { $0.removeServer("s1") }, ["own"]),
+            ("dropTailscale", { $0.dropTailscale() }, ["ts"]),
+            ("useTailscaleOnly", { $0.useTailscaleOnly(noProviders: true) }, ["nord"]),
+            ("addImported", { _ = $0.addImported("", id: "new", signedIn: []) { $0.wg = imported } }, ["nord"]),
+        ] as [(String, (inout Setup) -> Void, [String])] {
+            let after = Store.edited(before, remove)
+            let left = Set(after.routes.map(\.id) + [DIRECT, BLOCK])
+            XCTAssertEqual(after.sites, before.sites.filter { !gone.contains($0.value) }, name)
+            XCTAssertTrue(after.profiles.allSatisfy { $0.sites.values.allSatisfy(left.contains) }, name)
+            XCTAssertEqual(after.profiles.first?.sites["p.example"], DIRECT, name)
+            XCTAssertNoThrow(try Backup.read(Backup.export(after, app: "1.2.0", created: .now, keys: true)), name)
+        }
+    }
+
     /// Any change to the websites must reach the engine before a provider can delay it, as an app leaving Direct does.
     func testAWebsiteChangeNeedsTheInterimRules() {
         var moved = setup

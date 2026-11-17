@@ -368,8 +368,12 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(other["rcode"] as? String, "REFUSED")
         XCTAssertEqual(try tagProblems(c), [])
 
+        // Removing a route takes its websites' rules with it; one that still names it (a setup put together by hand) is
+        // refused all the same.
         var gone = withSites
         gone.routes.removeAll { $0.id == "it" }
+        XCTAssertNil(gone.sites["example.com"])
+        gone.sites = withSites.sites
         let g = try compile(gone)
         XCTAssertEqual(action(try XCTUnwrap(rules(g).first { names($0) == ["example.com"] })), "reject")
         XCTAssertNil(rules(g).first { names($0) == ["example.com"] && outbound($0) != nil })

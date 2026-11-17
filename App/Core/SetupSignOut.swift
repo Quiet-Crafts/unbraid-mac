@@ -1,6 +1,7 @@
 import Foundation
 
-// Setup edits for signing out: what goes and what stays when one provider, Tailscale, or everything is signed out.
+// Setup edits for signing out and removing routes: what goes and what stays when one provider, Tailscale, or everything
+// is signed out, or a route or saved server is removed.
 
 nonisolated extension Setup {
     /// Whether there is anything to route through: a signed-in provider, an imported route or saved server, Tailscale,
@@ -22,5 +23,32 @@ nonisolated extension Setup {
         home.tsEnrolled = nil
         if gone.contains(defaultRoute) { defaultRoute = routes.first?.id ?? DIRECT }
         apps = apps.filter { !gone.contains($0.value) }
+    }
+
+    // Removing routes. Websites on a removed route follow their apps again wherever routes go (see `routes`).
+
+    /// One route goes (never the last while it is the default); its apps follow the default.
+    mutating func removeRoute(_ id: String) {
+        guard routes.count > 1 || defaultRoute != id else { return }
+        routes.removeAll { $0.id == id }
+        if defaultRoute == id { defaultRoute = routes.first?.id ?? DIRECT }
+        apps = apps.filter { $0.value != id }
+    }
+
+    /// A saved server goes with the routes using it; their apps follow the default.
+    mutating func removeServer(_ id: String) {
+        let gone = Set(routes.filter { $0.own == id }.map(\.id))
+        servers.removeAll { $0.id == id }
+        routes.removeAll { gone.contains($0.id) }
+        if gone.contains(defaultRoute) { defaultRoute = routes.first?.id ?? DIRECT }
+        apps = apps.filter { !gone.contains($0.value) }
+    }
+
+    /// Use Tailscale Only: Tailscale for the home network; without a provider account, provider routes go.
+    mutating func useTailscaleOnly(noProviders: Bool) {
+        if noProviders { routes.removeAll { !$0.imported } }
+        home.tailscale = true
+        if route(defaultRoute) == nil { defaultRoute = routes.first?.id ?? DIRECT }
+        apps = apps.filter { $0.value == DIRECT || $0.value == BLOCK || route($0.value) != nil }
     }
 }

@@ -342,8 +342,13 @@ nonisolated struct ProfileSwitch: Codable, Hashable, Sendable {
 nonisolated struct Setup: Codable, Hashable, Sendable {
     var routes = [Route(id: "nl", loc: Location(countryId: 153, countryCode: "NL", country: "Netherlands"))] {
         didSet {
-            // Imports, sign-outs and server removal all remove routes through this value.
-            if !Set(oldValue.map(\.id)).isSubset(of: Set(routes.map(\.id))) { tidyProfiles() }
+            // Imports, sign-outs and server removal all remove routes through this value: websites on a route that went
+            // follow their apps again, here and in every profile, so no rule ever names a route the setup lacks.
+            if !Set(oldValue.map(\.id)).isSubset(of: Set(routes.map(\.id))) {
+                let valid = Set(routes.map(\.id) + [DIRECT, BLOCK])
+                sites = sites.filter { valid.contains($0.value) }
+                tidyProfiles()
+            }
         }
     }
     var defaultRoute = "nl"
