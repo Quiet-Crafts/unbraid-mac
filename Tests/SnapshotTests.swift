@@ -427,7 +427,8 @@ final class SnapshotTests: XCTestCase {
         for unsure in ["Starting", "NoState", "Whatever", nil] { XCTAssertEqual(ok(unsure), ["nl": true, "ts": nil], unsure ?? "nil") }
     }
 
-    /// TS for Tailscale's own control server, HS for a self-hosted one; on only while connected and Tailscale runs.
+    /// Tailscale for its own control server, Headscale for a self-hosted one, in words; on only while connected and
+    /// Tailscale runs.
     func testTailscaleMark() {
         var s = Setup(routes: [nl], defaultRoute: "nl", apps: [:])
         func mark(_ phase: Snapshot.Phase, _ ts: String?) -> String? {
@@ -435,19 +436,21 @@ final class SnapshotTests: XCTestCase {
         }
         XCTAssertNil(mark(.on, "Running"), "not set up")
         s.home.tailscale = true
-        XCTAssertEqual(mark(.on, "Running"), "TS on")
-        XCTAssertEqual(mark(.on, "NeedsLogin"), "TS off")
-        XCTAssertEqual(mark(.on, nil), "TS off")
-        XCTAssertEqual(mark(.paused, "Running"), "TS off")
+        XCTAssertEqual(mark(.on, "Running"), "Tailscale on")
+        XCTAssertEqual(mark(.on, "NeedsLogin"), "Tailscale off")
+        XCTAssertEqual(mark(.on, nil), "Tailscale off")
+        XCTAssertEqual(mark(.paused, "Running"), "Tailscale off")
         s.home.tsControlUrl = "https://headscale.example.com"
-        XCTAssertEqual(mark(.on, "Running"), "HS on")
+        XCTAssertEqual(mark(.on, "Running"), "Headscale on")
         s.home.tsControlUrl = "https://controlplane.tailscale.com"
-        XCTAssertEqual(mark(.on, "Running"), "TS on")
+        XCTAssertEqual(mark(.on, "Running"), "Tailscale on")
         var exitOnly = Setup(routes: [nl], defaultRoute: "nl", apps: ["a": "ts"])
         exitOnly.routes.append({ var r = Route(id: "ts"); r.tsExit = "100.64.0.1"; return r }())
-        XCTAssertEqual(Snapshot.tailscale(exitOnly, on: false), "TS off", "an exit node is Tailscale set up too")
-        XCTAssertEqual(Snapshot(profile: "Home", tailscale: "TS on").statusLine, "Home · TS on")
-        XCTAssertEqual(Snapshot(tailscale: "HS off").statusLine, "HS off")
+        XCTAssertEqual(Snapshot.tailscale(exitOnly, on: false), "Tailscale off", "an exit node is Tailscale set up too")
+        XCTAssertEqual(Snapshot(profile: "Home", tailscale: "Tailscale on").statusLine, "Home · Tailscale on")
+        XCTAssertEqual(Snapshot(tailscale: "Headscale off").statusLine, "Headscale off")
+        XCTAssertEqual(Snapshot(profile: "Home", tailscale: "Tailscale on").statusShort, "Home")
+        XCTAssertEqual(Snapshot(tailscale: "Headscale off").statusShort, "Headscale off")
         XCTAssertNil(Snapshot().statusLine)
     }
 

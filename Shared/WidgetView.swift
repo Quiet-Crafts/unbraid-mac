@@ -65,7 +65,12 @@ struct WidgetView: View {
                 Text(Snapshot.healthLine(working: h.working, total: h.total)).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
                 if family != .systemSmall, let line = s.statusLine {
-                    Text(line).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1).minimumScaleFactor(0.8)
+                    // In words, never abbreviated: where both don't fit, the profile alone.
+                    ViewThatFits(in: .horizontal) {
+                        Text(line)
+                        Text(s.statusShort ?? line).minimumScaleFactor(0.8)
+                    }
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
                 }
             } else {
                 Text(title).font(.headline).padding(.top, 8)

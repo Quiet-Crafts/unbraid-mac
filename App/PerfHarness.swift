@@ -376,7 +376,7 @@ private final class Meter: NSObject {
             return Snapshot.Day(date: today.addingTimeInterval(Double(i - 6) * 86_400), bytes: bytes)
         }
         return Snapshot(phase: .on, since: .now, exits: routes.count, routes: routes, direct: 2, directSites: 1, week: week, updated: .now,
-                        profile: "Home", protected: true, tailscale: "TS on")
+                        profile: "Home", protected: true, tailscale: "Tailscale on")
     }
 
     /// The widget at its real size (content margins included) in a window of its own, on the widget's rounded ground.

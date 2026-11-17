@@ -41,9 +41,10 @@ extension Snapshot {
             tailscale: tailscale(s, on: phase == .on && TailscaleStatus(tsState) == .connected))
     }
 
-    /// "TS on" or "HS off": HS for a self-hosted control server; on only while Tailscale itself says it runs. Nil when
-    /// Tailscale isn't set up (neither home access through it nor an exit node).
+    /// "Tailscale on" or "Headscale off": Headscale for a self-hosted control server, as the Android widget names it; on
+    /// only while Tailscale itself says it runs. Nil when Tailscale isn't set up (neither home access through it nor an
+    /// exit node).
     static func tailscale(_ s: Setup, on: Bool) -> String? {
-        s.tailscale ? "\(Compiler.officialTs(s.home) ? "TS" : "HS") \(on ? "on" : "off")" : nil
+        s.tailscale ? "\(Compiler.officialTs(s.home) ? "Tailscale" : "Headscale") \(on ? "on" : "off")" : nil
     }
 }

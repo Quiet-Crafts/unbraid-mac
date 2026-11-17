@@ -55,8 +55,8 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     var profileGeneration: String? = nil
     /// Whether a confirmed running configuration has a VPN route. Absent in older snapshots.
     var protected: Bool? = nil
-    /// Tailscale as the widgets name it: "TS on", "TS off", or "HS" for a self-hosted control server; nil when it isn't
-    /// set up, and in older snapshots.
+    /// Tailscale as the widgets name it: "Tailscale on", "Tailscale off", or "Headscale on" for a self-hosted control
+    /// server (an earlier build wrote "TS on"); nil when it isn't set up, and in older snapshots.
     var tailscale: String? = nil
 
     /// How many apps and websites take a route: "5 apps · 2 websites", "2 websites", or the apps alone.
@@ -82,11 +82,13 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
         return down == 0 ? "route\(total == 1 ? "" : "s") working" : "\(down) route\(down == 1 ? "" : "s") not answering"
     }
 
-    /// The profile in use and Tailscale, under the status: "Home · TS on". Nil when there is neither.
+    /// The profile in use and Tailscale, under the status: "Home · Tailscale on". Nil when there is neither.
     var statusLine: String? {
         let line = [profile, tailscale].compactMap { $0 }.joined(separator: " · ")
         return line.isEmpty ? nil : line
     }
+    /// The status line where all of it doesn't fit: the profile alone, else Tailscale.
+    var statusShort: String? { profile ?? tailscale }
 
     /// The link View Route opens: the app's window on that route's page, nothing else.
     static func routeLink(_ id: String) -> URL {
