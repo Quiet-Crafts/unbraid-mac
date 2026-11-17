@@ -312,8 +312,7 @@ private final class Meter: NSObject {
                 await meter.frames(30)
                 await shoot(window, "\(dir)/traffic-apps\(suffix).png")
             }
-            // The smallest the window goes: AppKit holds the frame at its minimum, whatever is asked.
-            window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+            await shrink()
             report("[Perf] minimum window \(Int(window.frame.width))x\(Int(window.frame.height))")
             for (name, target) in pages where name != "direct" && name != "blocked" {
                 go(target); await meter.frames(60)
@@ -453,12 +452,12 @@ private final class Meter: NSObject {
         go("apps"); await meter.frames(30)
         Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
         await shoot(window, "\(dir)/\(prefix)update-notice\(suffix).png")
-        window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+        await shrink()
         await shoot(window, "\(dir)/\(prefix)min-update-notice\(suffix).png")
         window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(UpdateCheck.State()); await meter.frames(90)
         await shoot(window, "\(dir)/\(prefix)update-ask\(suffix).png")
-        window.setFrame(NSRect(x: 80, y: 80, width: 770, height: 564), display: true); await meter.frames(60)
+        await shrink()
         await shoot(window, "\(dir)/\(prefix)min-update-ask\(suffix).png")
         window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
@@ -471,6 +470,10 @@ private final class Meter: NSObject {
         SupportCardTesting.shared.force = true; await meter.frames(60)
         window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); await meter.frames(30)
         await shoot(window, "\(dir)/support-card\(suffix).png")
+        // At the smallest size over a route with websites, the fullest page: the card takes its room from the page.
+        go("route:us"); await shrink()
+        await shoot(window, "\(dir)/min-support-card\(suffix).png")
+        window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); go("apps"); await meter.frames(45)
         SupportCardTesting.shared.force = false; await meter.frames(45)
         let w = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 720, height: 640), styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.isReleasedWhenClosed = false
@@ -561,6 +564,13 @@ private final class Meter: NSObject {
         flow.perfShow(nil, in: w); await meter.frames(30)
     }
 
+    /// The window at its smallest. The first time it asks for less than it can be (AppKit holds the frame at its
+    /// minimum) and remembers what it got; after that it asks for exactly that, which `shoot` then checks.
+    private func shrink() async {
+        window.setFrame(NSRect(origin: NSPoint(x: 80, y: 80), size: smallest ?? NSSize(width: 770, height: 564)), display: true); await meter.frames(60)
+        if smallest == nil { smallest = window.frame.size }
+    }
+
     /// With nothing really connected, the copy drifts back to connecting now and then: shown connected, with a fresh
     /// reading on the live graphs, for the picture.
     private func shoot(_ w: NSWindow, _ path: String) async {
@@ -569,8 +579,13 @@ private final class Meter: NSObject {
         await meter.frames(15)
         // No picture is taken taller than this: a taller window means something in it forced its height (a band whose
         // text was measured at no width), which pushes the real window off the screen.
+        let name = (path as NSString).lastPathComponent
         if w.frame.height > 1400 {
-            report("[Perf] window grew to \(Int(w.frame.height)) points for \((path as NSString).lastPathComponent)"); shotsMissing += 1
+            report("[Perf] window grew to \(Int(w.frame.height)) points for \(name)"); shotsMissing += 1
+        }
+        // At the smallest size, a band above the page takes its room from the page: the window stays as small as asked.
+        if w === window, name.contains("min-"), let smallest, w.frame.size != smallest {
+            report("[Perf] window \(Int(w.frame.width))x\(Int(w.frame.height)), not the \(Int(smallest.width))x\(Int(smallest.height)) asked, for \(name)"); shotsMissing += 1
         }
         // Every column of an apps or websites table is in view: one made in a narrow window used to keep its widths
         // and push This Week out of sight.
@@ -875,6 +890,9 @@ private final class Meter: NSObject {
     // MARK: The matrix
 
     private var shotsMissing = 0
+    /// The smallest the window goes with no band above the page, measured once: every later picture at the smallest
+    /// size asks for exactly this and must get it, band or not.
+    private var smallest: NSSize?
     private var page = "apps"
     private func go(_ name: String) { page = name; NotificationCenter.default.post(name: DebugHooks.pageNote, object: name) }
 

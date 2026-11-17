@@ -113,6 +113,8 @@ struct RootView: View {
 
     /// The narrowest a page gets, and the bands above it with it.
     private static let pageMinWidth: CGFloat = 560
+    /// The shortest the page and the bands above it get, together.
+    private static let pageMinHeight: CGFloat = 480
 
     /// Another sheet or question is up.
     private var busy: Bool {
@@ -146,7 +148,7 @@ struct RootView: View {
                 } detail: {
                     // Pages switch without a cross-fade: a table kept on screen through a fade while its rows are torn
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
-                    DetailPage().frame(minWidth: Self.pageMinWidth, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
+                    DetailPage().frame(minWidth: Self.pageMinWidth, maxWidth: .infinity, maxHeight: .infinity)
                         // What needs attention shows above every page, not only the one it was raised on. Never
                         // narrower than the page: the window's smallest size is measured at no width, where a band's
                         // wrapping text is one letter a line and thousands of points tall, and the window grows to it.
@@ -154,6 +156,9 @@ struct RootView: View {
                             VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice(); SupportCard(calm: supportCalm.isCalm) }
                                 .frame(minWidth: Self.pageMinWidth)
                         }
+                        // The smallest height holds the bands and the page together: a band that appears takes its room
+                        // from the page, which scrolls, and never makes the window grow by itself.
+                        .frame(minHeight: Self.pageMinHeight, maxHeight: .infinity)
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
