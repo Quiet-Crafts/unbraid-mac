@@ -587,6 +587,10 @@ private final class Meter: NSObject {
         if w === window, name.contains("min-"), let smallest, w.frame.size != smallest {
             report("[Perf] window \(Int(w.frame.width))x\(Int(w.frame.height)), not the \(Int(smallest.width))x\(Int(smallest.height)) asked, for \(name)"); shotsMissing += 1
         }
+        // The Settings gear stays on the toolbar on every page, whatever else goes into the overflow.
+        if w === window, let bar = w.toolbar, !(bar.visibleItems ?? []).contains(where: { $0.label == "Settings" || $0.toolTip?.hasPrefix("Settings") == true }) {
+            report("[Perf] Settings gear not on the toolbar for \(name) (shown: \((bar.visibleItems ?? []).map { $0.label.isEmpty ? $0.itemIdentifier.rawValue : $0.label }.joined(separator: ", ")))"); shotsMissing += 1
+        }
         // Every column of an apps or websites table is in view: one made in a narrow window used to keep its widths
         // and push This Week out of sight.
         for table in appTables(in: w) {

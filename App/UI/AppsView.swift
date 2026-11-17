@@ -60,7 +60,10 @@ struct AppsView: View {
             ToolbarItemGroup(placement: .primaryAction) {
                 if let id = route {
                     if s.route(id) != nil {
-                        Button("Change Location…") { Presentation.shared.picker = PickerTarget(id: id) }
+                        // A symbol like the items beside it: as words it was wide enough to push the Settings gear into
+                        // the overflow in a narrow window.
+                        Button { Presentation.shared.picker = PickerTarget(id: id) } label: { Label("Change Location…", systemImage: "mappin.and.ellipse") }
+                            .help("Change this route's location")
                     }
                     if s.route(id) != nil || (id != BLOCK && id != s.defaultRoute) {
                         Menu { RouteActions(id: id) } label: { Label("Actions for \(s.label(id))", systemImage: "ellipsis") }
