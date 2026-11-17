@@ -459,6 +459,14 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(Snapshot.healthLine(working: 1, total: 1), "route working")
         XCTAssertEqual(Snapshot.healthLine(working: 3, total: 4), "1 route not answering")
         XCTAssertEqual(Snapshot.healthLine(working: 0, total: 2), "2 routes not answering")
+        // A count that leaves routes out says so; one that doesn't work says that first.
+        XCTAssertEqual(Snapshot.healthLine(working: 1, total: 1, unchecked: 2), "working, 2 not checked")
+        XCTAssertEqual(Snapshot.healthLine(working: 0, total: 1, unchecked: 2), "1 route not answering")
+        var s = Snapshot(phase: .on, routes: [Snapshot.Route(id: "a", name: "A", code: "A", hue: 0, apps: 0, isDefault: true, ok: true),
+                                              Snapshot.Route(id: "b", name: "B", code: "B", hue: 1, apps: 1, isDefault: false)])
+        XCTAssertEqual(s.unchecked, 1)
+        s.phase = .paused
+        XCTAssertEqual(s.unchecked, 0)
     }
 
     /// View Route's link opens a route's page only for a route the setup has; anything else only opens the window.

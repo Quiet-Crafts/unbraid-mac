@@ -429,7 +429,8 @@ private struct RouteHealthCards: View {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(RouteHealth.title).font(.system(size: 13, weight: .semibold))
-                            Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id), sites: SiteEdits.on(route.id, in: model.setup).count))
+                            Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id), sites: SiteEdits.on(route.id, in: model.setup).count,
+                                                        othersAnswer: model.vpn.state.answering.contains { $0 != route.id }))
                                 .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                         }
                         Spacer(minLength: 0)

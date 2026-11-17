@@ -76,11 +76,15 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     /// The first route that doesn't work, the one View Route opens.
     var failing: Route? { phase == .on ? routes.first { $0.ok == false } : nil }
 
-    /// Under the count: "routes working", or "1 route not answering".
-    static func healthLine(working: Int, total: Int) -> String {
+    /// Under the count: "routes working", "working, 2 not checked" when the count leaves routes out (not checked yet,
+    /// or never: an own server with its check off), or "1 route not answering".
+    static func healthLine(working: Int, total: Int, unchecked: Int = 0) -> String {
         let down = total - working
-        return down == 0 ? "route\(total == 1 ? "" : "s") working" : "\(down) route\(down == 1 ? "" : "s") not answering"
+        if down > 0 { return "\(down) route\(down == 1 ? "" : "s") not answering" }
+        return unchecked > 0 ? "working, \(unchecked) not checked" : "route\(total == 1 ? "" : "s") working"
     }
+    /// Routes listed while connected whose health isn't known, which the count leaves out.
+    var unchecked: Int { phase == .on ? routes.filter { $0.ok == nil }.count : 0 }
 
     /// The profile in use and Tailscale, under the status: "Home · Tailscale on". Nil when there is neither.
     var statusLine: String? {

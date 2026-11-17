@@ -25,14 +25,17 @@ final class RouteHealthTests: XCTestCase {
     /// The card's text counts what can't connect, and says why the route stays where it is.
     func testExplanationCountsAndReason() {
         XCTAssertEqual(RouteHealth.explanation(home, apps: 3, sites: 1),
-                       "Its 3 apps and 1 website can't connect until it answers again. unbraid keeps checking. It never moves your own server's route somewhere else.")
+                       "Its 3 apps and 1 website can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else.")
         XCTAssertEqual(RouteHealth.explanation(home, apps: 1, sites: 0),
-                       "Its 1 app can't connect until it answers again. unbraid keeps checking. It never moves your own server's route somewhere else.")
+                       "Its 1 app can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else.")
         XCTAssertEqual(RouteHealth.explanation(pinned, apps: 0, sites: 2),
-                       "Its 2 websites can't connect until it answers again. unbraid keeps checking. Choose Change Location… to use another server.")
+                       "Its 2 websites can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. Choose Change Location… to use another server.")
         XCTAssertEqual(RouteHealth.explanation(pinned, apps: 0, sites: 0),
-                       "Nothing can connect through it until it answers again. unbraid keeps checking. Choose Change Location… to use another server.")
+                       "Nothing can connect through it until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. Choose Change Location… to use another server.")
         XCTAssertFalse(RouteHealth.explanation(nil, apps: 0, sites: 0).contains("Change Location"))
+        // Another route answering meanwhile: the network reaches the internet, so the server's side is the likelier.
+        XCTAssertEqual(RouteHealth.explanation(home, apps: 1, sites: 0, othersAnswer: true),
+                       "Its 1 app can't connect until it answers again. Your other routes answer, so the trouble is at the server or its own connection. unbraid keeps checking. It never moves your own server's route somewhere else.")
     }
 
     /// The switch is offered for an own server, not for a provider route or a Tailscale exit; it shows what is checked.
@@ -58,6 +61,6 @@ final class RouteHealthTests: XCTestCase {
         XCTAssertTrue(RouteHealth.checkCaption.hasPrefix("Tests about once a minute"))
         XCTAssertGreaterThanOrEqual(HealthSchedule.every.lowerBound, 40)
         XCTAssertLessThanOrEqual(HealthSchedule.every.upperBound, 90)
-        XCTAssertTrue(RouteHealth.title.hasSuffix("from this network"))
+        XCTAssertFalse(RouteHealth.title.contains("network"), "the network isn't blamed when it may be the server")
     }
 }

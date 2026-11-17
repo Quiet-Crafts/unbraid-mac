@@ -62,19 +62,19 @@ struct WidgetView: View {
                 // Working routes of all: the count says it, the line under it says it in words, for every rendering.
                 Text("\(h.working)/\(h.total)").font(.system(size: family == .systemSmall ? 30 : 26, weight: .bold, design: .monospaced))
                     .foregroundStyle(color ? (h.working == h.total ? Self.good : Palette.block) : .primary).padding(.top, 4)
-                Text(Snapshot.healthLine(working: h.working, total: h.total)).font(.caption).foregroundStyle(.secondary)
+                Text(Snapshot.healthLine(working: h.working, total: h.total, unchecked: s.unchecked)).font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).minimumScaleFactor(0.8)
-                if family != .systemSmall, let line = s.statusLine {
-                    // In words, never abbreviated: where both don't fit, the profile alone.
-                    ViewThatFits(in: .horizontal) {
-                        Text(line)
-                        Text(s.statusShort ?? line).minimumScaleFactor(0.8)
-                    }
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
             } else {
                 Text(title).font(.headline).padding(.top, 8)
-                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(failed ? 1 : 2)
+                Text(subtitle).font(.caption).foregroundStyle(.secondary).lineLimit(failed || statusText != nil ? 1 : 2)
+            }
+            if let line = statusText {
+                // In words, never abbreviated: where both don't fit, the profile alone.
+                ViewThatFits(in: .horizontal) {
+                    Text(line)
+                    Text(s.statusShort ?? line).minimumScaleFactor(0.8)
+                }
+                .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
             }
             // Which action failed is the app's to say (connect, change, pause, disconnect): the snapshot knows one did.
             if failed { Label("Last action failed", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(color ? Palette.block : .primary).lineLimit(1) }
@@ -203,6 +203,8 @@ struct WidgetView: View {
     }
 
     private var failed: Bool { s.failed == true }
+    /// The profile and Tailscale line, with or without a count; the small widget has no room for it.
+    private var statusText: String? { family == .systemSmall ? nil : s.statusLine }
 
     private var tint: Color {
         switch s.phase {

@@ -356,7 +356,12 @@ private final class Meter: NSObject {
         closePanel()
         Connection.shared.perfSilent([]); await meter.frames(20)
         let ok = Self.widgetSnapshot(failing: false), failing = Self.widgetSnapshot(failing: true)
+        // Right after connecting: one route checked so far, then none.
+        var partial = ok, unchecked = ok
+        for i in partial.routes.indices where i > 0 { partial.routes[i].ok = nil }
+        for i in unchecked.routes.indices { unchecked.routes[i].ok = nil }
         for (name, s, size) in [("small", ok, WidgetFamily.systemSmall), ("small-failing", failing, .systemSmall),
+                                ("medium-partial", partial, .systemMedium), ("medium-unchecked", unchecked, .systemMedium),
                                 ("medium-failing", failing, .systemMedium), ("large-failing", failing, .systemLarge)] {
             openWidget(s, size); await meter.frames(30)
             if let panel { await shoot(panel, "\(dir)/widget-\(name)\(suffix).png") }

@@ -62,7 +62,7 @@ final class Connection {
                 routeWake?.cancel(); routeWake = nil
                 if !state.dropping.isEmpty { state.dropping = [] }
                 if !state.silent.isEmpty { state.silent = [] }
-                if !state.answering.isEmpty { state.answering = [] }
+                forgetAnswers()
             }
             if state.phase == .off || state.phase == .paused {
                 routeRetry.clear(); blockedReasons = [:]
@@ -211,6 +211,7 @@ final class Connection {
             self.failing.removeAll()
             if !self.state.dropping.isEmpty { self.state.dropping = [] }
             if !self.state.silent.isEmpty { self.state.silent = [] }
+            self.forgetAnswers()
             self.onNetworkChange?()
             guard self.state.phase == .on else { return }
             if resetPorts { await self.reload(checked: self.commits, healthAction: true) }
@@ -339,6 +340,7 @@ final class Connection {
                 self?.healthReset += 1
                 if self?.state.dropping.isEmpty == false { self?.state.dropping = [] }
                 if self?.state.silent.isEmpty == false { self?.state.silent = [] }
+                self?.forgetAnswers()
             }
         }
         pathMonitor.pathUpdateHandler = { [weak self] path in
@@ -2259,6 +2261,8 @@ final class Connection {
         committed = Committed(input: input, json: json, accounts: accounts, tags: tags, probeDNS: (try? Compiler.probeDNS(input)) ?? [:], revision: Revision(input, accounts ?? store.accounts),
                               blocking: blocking, interim: interim, search: searched ?? search(input))
         commits += 1
+        // A route now on another tag or server isn't vouched for by an answer about the one before.
+        refreshAnswering()
         if blocking { recordRun { $0.deniedAll() } }
         else if Revision(input, accounts ?? store.accounts) == revision() {
             recordRun { $0.committed(revision: RunState.revision(s), setup: s, fresh: true, interim: interim) }
@@ -2550,8 +2554,6 @@ final class Connection {
     /// Checks provider tunnels in rounds; only results from the same engine and network count.
     private func watchHealth() async {
         var plan = HealthSchedule()
-        // Tags whose last check in this basis was answered.
-        var passed: Set<String> = []
         var basis = (runIdentity.engineStarts, healthReset)
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(1)) } catch { return }
@@ -2561,8 +2563,7 @@ final class Connection {
                 plan.restart(now: .now)
                 if !state.dropping.isEmpty { state.dropping = [] }
                 if !state.silent.isEmpty { state.silent = [] }
-                passed.removeAll()
-                if !state.answering.isEmpty { state.answering = [] }
+                forgetAnswers()
                 failing.removeAll()
             }
             guard state.phase == .on, !SpeedTest.shared.testing, let setup = running else { continue }
@@ -2571,7 +2572,7 @@ final class Connection {
             // would ever say it answers again.
             let watched = Set(exits.values.flatMap(\.keys))
             if !state.silent.allSatisfy(watched.contains) { state.silent = state.silent.filter(watched.contains) }
-            if !state.answering.allSatisfy(watched.contains) { state.answering = state.answering.filter(watched.contains) }
+            refreshAnswering()
             let eligible = Set(exits.keys.filter { id in
                 guard let exit = exits[id] else { return false }
                 return exit.keys.allSatisfy { route in
@@ -2621,9 +2622,10 @@ final class Connection {
             if dropping != state.dropping { state.dropping = dropping }
             let silent = exits.filter { plan.silent($0.key, now: .now) }.values.flatMap { $0.keys }.filter { setup.route($0)?.movable == false }.sorted()
             if silent != state.silent { state.silent = silent }
-            for (tag, ok) in answers { if ok { passed.insert(tag) } else { passed.remove(tag) } }
-            let answering = exits.filter { passed.contains($0.key) }.values.flatMap { $0.keys }.sorted()
-            if answering != state.answering { state.answering = answering }
+            for (tag, ok) in answers {
+                for (id, server) in exits[tag] ?? [:] { if ok { passedChecks.insert(Self.answer(tag, id, server)) } else { passedChecks.remove(Self.answer(tag, id, server)) } }
+            }
+            refreshAnswering()
             guard !deadTags.isEmpty else { continue }
             let dead = deadTags.compactMap { exits[$0] }
             let routeIds = Set(dead.flatMap { $0.keys })
@@ -2660,6 +2662,23 @@ final class Connection {
                 await reload(dead: moved, avoid: Set(moved.values), checked: c, healthAction: true, revokedAction: !revoked.isEmpty)
             }
         }
+    }
+
+    /// Checks answered in this engine run and on this network, each for the engine tag and server it reached: a route
+    /// whose tag or server changed since (a reload, a move) has no answer yet.
+    private var passedChecks: Set<String> = []
+    private static func answer(_ tag: String, _ id: String, _ server: String) -> String { "\(tag)|\(id)|\(server)" }
+
+    /// `VpnState.answering` from the checks answered for what each route runs now.
+    private func refreshAnswering() {
+        let now = state.phase != .on ? [] : healthExits().flatMap { tag, ids in ids.filter { passedChecks.contains(Self.answer(tag, $0.key, $0.value)) }.keys }.sorted()
+        if now != state.answering { state.answering = now }
+    }
+
+    /// The network, the Mac's sleep or the engine changed: no earlier answer says anything about now.
+    private func forgetAnswers() {
+        passedChecks.removeAll()
+        if !state.answering.isEmpty { state.answering = [] }
     }
 
     /// The tunnels that are checked, grouped by their current engine tag: provider tunnels, pins and dedicated IPs
