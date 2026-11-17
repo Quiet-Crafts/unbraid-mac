@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 private typealias O = [String: Any]
@@ -2937,5 +2938,39 @@ extension CompilerTests {
                 XCTAssertEqual(try? Data(contentsOf: url), Data(config.utf8), "\(name): the compiled config changed, or its fixture is missing")
             }
         }
+    }
+}
+
+// MARK: Websites across states
+
+extension CompilerTests {
+    /// Seeded setups whose websites are all ordinary internet names, across the states that decide whether a name's own
+    /// resolver answers it (Reach your tailnet, Tailscale's server or Headscale, the tailnet's domain, devices on this
+    /// network): `Tests/Fixtures/sites-upgrade.txt` holds what the compiler wrote for each before those states were
+    /// taken into account (recorded once, on the compiler of 1.2.0's release candidate). Every config must stay the same.
+    func testSetupsWithOrdinaryWebsitesCompileAsBefore() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/sites-upgrade.txt")
+        var seed: UInt64 = 0x51_7e5
+        func next(_ n: Int) -> Int { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Int(seed >> 33) % n }
+        let names = ["example.com", "api.example.com", "a.b.example.com", "netflix.com", "bank.example", "tracker.example", "cdn.tracker.example",
+                     "news.example.org", "video.example.net", "shop.example.co.uk", "go.co", "k12.ca.us", "xn--bcher-kva.de", "intranet.example"]
+        let routes = ["nl", "us", "it", DIRECT, BLOCK]
+        var lines: [String] = []
+        for i in 0..<300 {
+            var s = example
+            s.defaultRoute = [ "nl", "us", DIRECT][next(3)]
+            s.prefs.lan = next(2) == 0
+            s.home.tailscale = next(2) == 0
+            if next(3) == 0 { s.home.tsControlUrl = "https://hs.example" }
+            s.sites = Dictionary((0..<next(9)).map { _ in (names[next(names.count)], routes[next(routes.count)]) }) { a, _ in a }
+            let suffix = [nil, "tail123.ts.net", "corp.example"][next(3)]
+            let config = try Compiler.compile(Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: suffix))
+            lines.append("\(i) \(SHA256.hash(data: Data(config.utf8)).map { String(format: "%02x", $0) }.joined())")
+        }
+        guard let saved = try? String(contentsOf: file, encoding: .utf8) else {
+            try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
+            return XCTFail("recorded \(file.path): run again")
+        }
+        XCTAssertEqual(lines, saved.split(separator: "\n").map(String.init))
     }
 }
