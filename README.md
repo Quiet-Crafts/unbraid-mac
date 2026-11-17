@@ -57,8 +57,8 @@ providers. It needs Android 13 or later.
   servers are checked too, and a route that stops answering says so.
 - A DNS filter of your choice for VPN routes and Direct traffic, plus the provider's own ad and tracker blocking
   where it has one.
-- Saved profiles, a menu bar panel with the front app's route one click away, desktop widgets that show whether your
-  routes are working, and Control Center controls.
+- Saved profiles that can switch by themselves on the networks you remember, a menu bar panel with the front app's
+  route one click away, desktop widgets that show whether your routes are working, and Control Center controls.
 - Back up your setup to a passphrase-protected file and restore it on this Mac or another one.
 - Stats on this Mac: data per route, app and routed website, live speed and connected time, and M-Lab speed tests
   through one route or several at once.
