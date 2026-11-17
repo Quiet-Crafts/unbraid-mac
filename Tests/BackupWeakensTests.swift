@@ -76,7 +76,7 @@ final class BackupWeakensTests: XCTestCase {
             if weaker && said.isEmpty { problems.append("weaker but nothing said: \(here.apps) \(here.sites) → \(next.apps) \(next.sites)") }
             // Nothing the traffic gets changed, and no setting: nothing to say.
             let apps = Set(here.apps.keys).union(next.apps.keys).union(here.prefs.filter.apps.keys).union(next.prefs.filter.apps.keys)
-            let sites = Set(Sites.applied(here.sites).keys).union(Sites.applied(next.sites).keys)
+            let sites = Set(Sites.applied(here).keys).union(Sites.applied(next).keys)
             if Backup.traffic(here, apps: apps, sites: sites) == Backup.traffic(next, apps: apps, sites: sites), here.prefs == next.prefs, here.opts == next.opts,
                here.routes == next.routes, !said.isEmpty {
                 problems.append("nothing changed but said \(said): \(here.apps) \(here.sites) → \(next.apps) \(next.sites)")
@@ -92,7 +92,7 @@ final class BackupWeakensTests: XCTestCase {
         let chain = ["n.example", "b.n.example", "c.b.n.example", "d.c.b.n.example", "o.example", "nas.lan", "x.nas.lan"]
         let probes = chain.flatMap { [$0, "zz9." + $0, "q.zz9." + $0] }
         func gets(_ name: String, _ rules: [String: String]) -> String? {
-            Sites.applied(rules).filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value
+            Sites.applied(Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: rules)).filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value
         }
         var problems: [String] = []
         for _ in 0..<3000 {

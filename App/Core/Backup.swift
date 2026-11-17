@@ -455,7 +455,7 @@ nonisolated enum Backup {
         // The default's lookups use the filter where it covers Direct traffic; an app with a route of its own on Direct
         // where it covers that app (`Filter.through`); a Direct website where it covers Direct traffic or Direct apps.
         let byDefault = on(s.defaultRoute, directFiltered: f.server != nil && f.direct)
-        let rules = Sites.applied(s.sites, tailnet: Compiler.tsSuffix(s.home.tsSuffix))
+        let rules = Sites.applied(s)
         func site(_ name: String) -> Treatment {
             // Without a rule it goes as its app does: most apps follow the default.
             guard let rule = rules.filter({ Sites.under(name, $0.key) }).max(by: { $0.key.count < $1.key.count }) else { var t = byDefault; t.followsApp = true; return t }
@@ -487,8 +487,7 @@ nonisolated enum Backup {
     /// website name either has an applied rule for.
     static func lost(_ current: Setup, _ next: Setup) -> (defaultRoute: Loss?, apps: [Loss], sites: [Loss]) {
         let apps = Set(current.apps.keys).union(next.apps.keys).union(current.prefs.effectiveFilter.apps.keys).union(next.prefs.effectiveFilter.apps.keys)
-        let tailnet = Compiler.tsSuffix(current.home.tsSuffix)
-        let sites = Set(Sites.applied(current.sites, tailnet: tailnet).keys).union(Sites.applied(next.sites, tailnet: Compiler.tsSuffix(next.home.tsSuffix)).keys)
+        let sites = Set(Sites.applied(current).keys).union(Sites.applied(next).keys)
         let was = traffic(current, apps: apps, sites: sites), now = traffic(next, apps: apps, sites: sites)
         return (loss(was.defaultRoute, now.defaultRoute), apps.sorted().compactMap { a in loss(was.apps[a]!, now.apps[a]!) },
                 sites.sorted().compactMap { n in loss(was.sites[n]!, now.sites[n]!) })
