@@ -176,9 +176,14 @@ nonisolated enum Backup {
         // What passes is what the reader made of it: anything it repaired was refused above.
         guard setup.apps == body.mac.apps, setup.sites == body.mac.sites, setup.profiles == body.mac.profiles,
               setup.profile == body.mac.profile, setup.defaultRoute == body.mac.defaultRoute else { throw Failure.damaged }
-        return Content(setup: setup, app: body.app, created: Date(timeIntervalSince1970: Double(body.created) / 1000), keys: body.keys,
+        return Content(setup: setup, app: version(body.app), created: Date(timeIntervalSince1970: Double(body.created) / 1000), keys: body.keys,
                        summary: Summary(setup))
     }
+
+    nonisolated(unsafe) private static let versionPattern = /[0-9][0-9A-Za-z.+-]{0,31}/
+    /// The version that made a backup, shown on the restore sheet: a short plain version string, or nothing. The rest of
+    /// the file is checked before it is shown; this is the one free text the sheet would print as it came.
+    static func version(_ app: String) -> String { app.wholeMatch(of: versionPattern) != nil ? app : "" }
 
     /// No string longer than `maxString` (an OpenVPN config up to `maxConfig`), so a hostile file can't fill memory
     /// through the parsers.

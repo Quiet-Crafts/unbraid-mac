@@ -846,6 +846,16 @@ final class BackupTests: XCTestCase {
         let c = try read(full())
         XCTAssertEqual(BackupTexts.restoreFacts(file: "b.unbraidbackup", c, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(identifier: "UTC")!),
                        "b.unbraidbackup · saved 14 Nov 2023 with unbraid 1.2.0")
+        // The version comes from the file: shown only when it is a short plain version string.
+        for odd in ["1.2.0 \u{202E}checked and safe", String(repeating: "9", count: 40), "safe to restore", "", "\n1.2"] {
+            var top = try XCTUnwrap(JSONSerialization.jsonObject(with: Backup.export(full(), app: "1.2.0", created: Date(timeIntervalSince1970: 1_700_000_000), keys: true)) as? [String: Any])
+            top["app"] = odd
+            let shown = try Backup.read(JSONSerialization.data(withJSONObject: top))
+            XCTAssertEqual(shown.app, "", odd)
+            XCTAssertEqual(BackupTexts.restoreFacts(file: "b.unbraidbackup", shown, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(identifier: "UTC")!),
+                           "b.unbraidbackup · saved 14 Nov 2023 with unbraid", odd)
+        }
+        XCTAssertEqual(Backup.version("2.9.1-beta+3"), "2.9.1-beta+3")
         XCTAssertEqual(BackupTexts.openFailure(.wrongPassphrase), "That passphrase doesn't open this backup")
         XCTAssertEqual(BackupTexts.openFailure(.damaged), "This backup is damaged and can't be opened")
         XCTAssertEqual(BackupTexts.openFailure(.notABackup), "That isn't an unbraid backup")

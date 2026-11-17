@@ -92,7 +92,7 @@ nonisolated enum BackupTexts {
     static func restoreFacts(file: String, _ c: Backup.Content, locale: Locale = .current, timeZone: TimeZone = .current) -> String {
         var style = Date.FormatStyle(date: .abbreviated, time: .omitted, locale: locale)
         style.timeZone = timeZone
-        return "\(file) · saved \(c.created.formatted(style)) with unbraid \(c.app)"
+        return "\(file) · saved \(c.created.formatted(style)) with unbraid" + (c.app.isEmpty ? "" : " \(c.app)")
     }
 
     /// The switch Restore waits for when the backup holds a server the import would warn about (`Plan.weak`).
