@@ -63,8 +63,19 @@ struct SignInView: View {
                         row(p.name, p.fields.map(\.label).joined(separator: " · "), initial: String(p.name.prefix(1)), chevron: true) { choice = p.id }
                     }
                 } header: { Text("VPN providers") } footer: {
-                    // A new Mac can start from the setup of another one.
-                    if first { Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }.buttonStyle(.link).font(.system(size: 12)) }
+                    VStack(alignment: .leading, spacing: 6) {
+                        // For someone with no account yet; the page marks which links may earn a commission.
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let u = URL(string: Site.providers) {
+                                SwiftUI.Link(destination: u) { Label { Text("Need a VPN account?") } icon: { Image(systemName: "arrow.up.right") } .labelStyle(NeedVpnLabel()) }
+                                    .buttonStyle(.link).font(.system(size: 12))
+                            }
+                            Text("Opens unbraid.app. Links marked Affiliate link may earn us a commission if you subscribe.")
+                                .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                        // A new Mac can start from the setup of another one.
+                        if first { Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }.buttonStyle(.link).font(.system(size: 12)) }
+                    }
                 }
                 Section {
                     row("Import WireGuard or OpenVPN File…", ".conf or .ovpn, from any provider or your own server", symbol: "doc") { importer.file() }
@@ -102,6 +113,13 @@ struct SignInView: View {
             .frame(maxWidth: .infinity, minHeight: Measure.listRow, alignment: .leading).contentShape(.rect)
         }
         .buttonStyle(.plain).help("\(title)\n\(sub)").accessibilityLabel("\(title), \(sub)")
+    }
+}
+
+/// The link's words, then a small external-link symbol.
+private struct NeedVpnLabel: LabelStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        HStack(spacing: 3) { configuration.title; configuration.icon.font(.system(size: 9, weight: .semibold)).accessibilityHidden(true) }
     }
 }
 

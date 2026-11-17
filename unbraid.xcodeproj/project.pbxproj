@@ -79,6 +79,7 @@
 		38615483D0B4D2D5640A060D /* ManualTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 749928C45FDE90DD1FC1AF69 /* ManualTests.swift */; };
 		38C8A807F70B8F30BA36123D /* Compiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220CE28E2A1DD5D6B23E1A2A /* Compiler.swift */; };
 		3946097DF3257D9A3267B7DD /* SiteMatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DC387308B24098059D49CBF /* SiteMatch.swift */; };
+		3951AA222A8A84D0B4281644 /* SupportCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9257FE740B2FDE6E0B720FB /* SupportCard.swift */; };
 		39CF4982DFB1C50702CCD6F9 /* Compiler.swift in Sources */ = {isa = PBXBuildFile; fileRef = 220CE28E2A1DD5D6B23E1A2A /* Compiler.swift */; };
 		3A096A84EC3EE1BF20D9E585 /* ConfigFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 945B35DC1691963CF9DDE956 /* ConfigFile.swift */; };
 		3AF0533F86E444C358E03085 /* LifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 16540D9011D973EC4593EA77 /* LifecycleTests.swift */; };
@@ -529,6 +530,7 @@
 		C4F1ABB29EF896E82F9D7333 /* notices.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = notices.txt; sourceTree = "<group>"; };
 		C6912E62E3933537ACE101C1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		C885B6A78F36934F52AA1EE3 /* Palette.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Palette.swift; sourceTree = "<group>"; };
+		C9257FE740B2FDE6E0B720FB /* SupportCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportCard.swift; sourceTree = "<group>"; };
 		CA97665A72F677C3BC0A9A9B /* AppPresenceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppPresenceTests.swift; sourceTree = "<group>"; };
 		CB126BA95FDBFAF351EF3B8D /* CatalogTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTests.swift; sourceTree = "<group>"; };
 		CBD06F9AF294932A0D3943C2 /* TailscaleStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TailscaleStatus.swift; sourceTree = "<group>"; };
@@ -741,6 +743,7 @@
 				19627767C9EF257C3B8C6744 /* SignInView.swift */,
 				4785607FED79AD809FBF193E /* SpeedTestView.swift */,
 				E8F21E6CFFBB389D39E5DC4D /* StatsCards.swift */,
+				C9257FE740B2FDE6E0B720FB /* SupportCard.swift */,
 				305CD0EA4C26C5554744DE14 /* TailscaleSignIn.swift */,
 				0C8F2955A17FA21741B5E6E3 /* Theme.swift */,
 				CE9978D061EBEC0E97859EA6 /* TrafficView.swift */,
@@ -1233,6 +1236,7 @@
 				4109F9F10FA1740450FD59D8 /* StatsInbox.swift in Sources */,
 				736CBE736522E38888B0062B /* StatsMath.swift in Sources */,
 				BA39829C83133406B500B006 /* Store.swift in Sources */,
+				3951AA222A8A84D0B4281644 /* SupportCard.swift in Sources */,
 				15BB609665F2BA6D08B5CA92 /* Surfshark.swift in Sources */,
 				55DE803FF6E463BB6B091789 /* TailscaleSignIn.swift in Sources */,
 				81DD6DDB4B6FEC9D5905376D /* TailscaleStatus.swift in Sources */,

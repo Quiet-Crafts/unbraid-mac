@@ -538,6 +538,7 @@ final class AppModel {
 
     private func resolveProfileSwitch() {
         let state = vpn.state
+        if state.phase == .on { store.nudge { Nudges.connectedDay($0, now: .now) } }
         if let error = state.error, error != lastProfileError { AccessibilityNotification.Announcement(error).post() }
         for id in state.blocked.keys.sorted() where state.blocked[id] != lastProfileBlocked[id] {
             if let reason = state.blocked[id] {

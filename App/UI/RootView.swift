@@ -120,6 +120,15 @@ struct RootView: View {
         busy || model.limitAsk != nil || loginItem.offer || model.store.tourPending || presentation.tourStep != nil
     }
 
+    /// Whether the window is quiet enough for the support card to ask.
+    private var supportCalm: WindowCalm {
+        let updates = Updates.shared, state = model.vpn.state, store = model.store
+        let notice = store.newerSetup || model.notice != nil || (store.unsaved && !store.unsavedDismissed) || !state.blocked.isEmpty
+            || model.switchingProfile != nil || model.refusedProfile != nil || !Attention().keySetupNames(now: .now).isEmpty
+        return WindowCalm(termsAccepted: store.termsAccepted, signedIn: model.signedIn, updateShowing: updates.askPending || updates.showNotice,
+                          noticeShowing: notice, asking: holdUpdateAsk, phase: state.phase, error: state.error != nil)
+    }
+
     var body: some View {
         Group {
             if model.signedIn {
@@ -131,7 +140,7 @@ struct RootView: View {
                     // down aborts inside SwiftUI (AppKitOutlineTableCoordinator).
                     DetailPage().frame(minWidth: 560, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
                         // What needs attention shows above every page, not only the one it was raised on.
-                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice() } }
+                        .safeAreaInset(edge: .top, spacing: 0) { VStack(spacing: 0) { Attention(); SafetyNotice(); UpdateAsk(hold: holdUpdateAsk); UpdateNotice(); SupportCard(calm: supportCalm.isCalm) } }
                         .foregroundStyle(Ink.text).pageGround()
                         .toolbar(removing: .title)
                         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
@@ -466,7 +475,7 @@ private struct Attention: View {
         }
     }
 
-    private func keySetupNames(now: Date) -> [String] {
+    fileprivate func keySetupNames(now: Date) -> [String] {
         guard model.vpn.state.phase == .on, model.vpn.state.runState.standIn == .none,
               let setup = model.vpn.state.runState.appliedSetup else { return [] }
         let ids = Set(setup.activeRoutes.filter { !$0.imported }.map { $0.loc.provider })

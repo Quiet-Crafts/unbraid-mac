@@ -63,4 +63,41 @@ final class NudgesTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(NudgeState.self, from: JSONEncoder().encode(off)).disabled, true)
         XCTAssertEqual(try JSONDecoder().decode(NudgeState.self, from: Data("{}".utf8)), NudgeState())
     }
+
+    private func defaults() -> UserDefaults {
+        let name = "NudgesTests-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: name)!
+        addTeardownBlock { UserDefaults().removePersistentDomain(forName: name) }
+        return d
+    }
+
+    func testTheStateSurvivesASaveAndALoad() {
+        let d = defaults()
+        XCTAssertEqual(NudgeState.load(d), NudgeState(), "nothing kept reads as a new state")
+        let s = Nudges.shown(Nudges.disable(ready()), now: days(20))
+        s.save(d)
+        XCTAssertEqual(NudgeState.load(d), s)
+        XCTAssertEqual(NudgeState.load(d).connectedDays.count, 3)
+    }
+
+    func testGarbageInDefaultsReadsAsANewState() {
+        let d = defaults()
+        d.set("not json", forKey: NudgeState.key); XCTAssertEqual(NudgeState.load(d), NudgeState())
+        d.set(Data("[1,2".utf8), forKey: NudgeState.key); XCTAssertEqual(NudgeState.load(d), NudgeState())
+        d.set(Data("{}".utf8), forKey: NudgeState.key); XCTAssertEqual(NudgeState.load(d), NudgeState())
+        d.set(42, forKey: NudgeState.key); XCTAssertEqual(NudgeState.load(d), NudgeState())
+    }
+
+    func testTheWindowIsCalmOnlyWhenNothingElseIsAsking() {
+        let calm = WindowCalm(termsAccepted: true, signedIn: true, phase: .on)
+        XCTAssertTrue(calm.isCalm)
+        var off = calm; off.phase = .off; XCTAssertTrue(off.isCalm)
+        for phase in [Snapshot.Phase.connecting, .paused] { var c = calm; c.phase = phase; XCTAssertFalse(c.isCalm, "\(phase)") }
+        let breaks: [(String, (inout WindowCalm) -> Void)] = [
+            ("terms", { $0.termsAccepted = false }), ("signed out", { $0.signedIn = false }), ("update", { $0.updateShowing = true }),
+            ("notice", { $0.noticeShowing = true }), ("sheet or tour", { $0.asking = true }), ("error", { $0.error = true }),
+        ]
+        for (name, change) in breaks { var c = calm; change(&c); XCTAssertFalse(c.isCalm, name) }
+        XCTAssertFalse(WindowCalm().isCalm, "a window that is not yet ready is not calm")
+    }
 }

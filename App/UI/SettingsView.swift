@@ -1126,6 +1126,7 @@ enum Site {
     static let home = "https://unbraid.app/"
     static let guides = "https://unbraid.app/guides/"
     static let donate = "https://unbraid.app/donate/"
+    static let providers = "https://unbraid.app/providers/#need-a-vpn"
     static let contact = "https://unbraid.app/contact/"
     static let privacy = "https://unbraid.app/privacy/"
     static let terms = "https://unbraid.app/terms/"

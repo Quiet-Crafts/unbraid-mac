@@ -63,3 +63,35 @@ nonisolated enum Nudges {
 
     static func disable(_ s: NudgeState) -> NudgeState { var s = s; s.disabled = true; return s }
 }
+
+extension NudgeState {
+    static let key = "supportCard"
+
+    /// Reads the state kept in `defaults`; anything missing or unreadable is a new state.
+    static func load(_ defaults: UserDefaults) -> NudgeState {
+        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(NudgeState.self, from: $0) } ?? NudgeState()
+    }
+
+    func save(_ defaults: UserDefaults) {
+        if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: Self.key) }
+    }
+}
+
+/// What the main window is doing, as far as the support card cares: it shows only while nothing else is asking for
+/// attention and nothing is going wrong.
+nonisolated struct WindowCalm: Equatable, Sendable {
+    var termsAccepted = false
+    var signedIn = false
+    /// The update question or the update notice is showing.
+    var updateShowing = false
+    /// Another notice, a connection error or an unsaved-changes row is showing above the page.
+    var noticeShowing = false
+    /// A sheet, an alert or a question (login item, limit) is up, or the tour is running or about to be offered.
+    var asking = false
+    var phase = Snapshot.Phase.off
+    var error = false
+
+    var isCalm: Bool {
+        termsAccepted && signedIn && !updateShowing && !noticeShowing && !asking && !error && (phase == .on || phase == .off)
+    }
+}

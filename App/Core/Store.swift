@@ -70,6 +70,10 @@ final class Store {
         } else { held = unkept }
         // A setup with apps already assigned was made after the disclosure (or before the gate existed).
         disclosed = defaults.bool(forKey: "disclosed") || !s.apps.isEmpty
+        // Noted once per launch: when unbraid was first opened, for the support card's first-week rule.
+        let kept = NudgeState.load(defaults), noted = Nudges.installed(kept, now: .now)
+        nudge = noted
+        if noted != kept { noted.save(defaults) }
         if loaded != nil, loaded?.profileSalt == nil { save("setup", setup) }
         // Kept in plain defaults before it moved into the sealed setup: Tailscale's own domain carries over, any other is
         // asked about again (a file any process running as the user can write is no one's consent).
@@ -481,6 +485,12 @@ final class Store {
     var termsAccepted: Bool {
         get { defaults.bool(forKey: "termsAccepted") }
         set { defaults.set(newValue, forKey: "termsAccepted") }
+    }
+    /// What the support card remembers (dates only), kept in defaults. Changed through `nudge(_:)`.
+    private(set) var nudge: NudgeState { didSet { nudge.save(defaults) } }
+    func nudge(_ change: (NudgeState) -> NudgeState) {
+        let next = change(nudge)
+        if next != nudge { nudge = next }
     }
     var tourPending: Bool {
         get { defaults.bool(forKey: "tourPending") }

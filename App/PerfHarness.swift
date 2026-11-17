@@ -335,6 +335,7 @@ private final class Meter: NSObject {
             if !empty { await healthShots(dir, suffix) }
             await updateShots(dir, prefix, suffix, normal)
             if !empty { await profileShots(dir, suffix) }
+            if !empty { await supportShots(dir, suffix) }
             if !empty { await settingsShots(dir, suffix) }
             window.makeKeyAndOrderFront(nil)
         }
@@ -461,6 +462,24 @@ private final class Meter: NSObject {
         await shoot(window, "\(dir)/\(prefix)min-update-ask\(suffix).png")
         window.setFrame(normal, display: true); await meter.frames(45)
         Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
+    }
+
+    /// The support card over All Apps (forced on; the rules are in the unit tests), and the sign-in page with its link to
+    /// the providers, in a window of its own.
+    private func supportShots(_ dir: String, _ suffix: String) async {
+        go("apps"); window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); await meter.frames(30)
+        SupportCardTesting.shared.force = true; await meter.frames(60)
+        window.setFrame(NSRect(x: 80, y: 80, width: 1100, height: 760), display: true); await meter.frames(30)
+        await shoot(window, "\(dir)/support-card\(suffix).png")
+        SupportCardTesting.shared.force = false; await meter.frames(45)
+        let w = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 720, height: 640), styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        w.isReleasedWhenClosed = false
+        w.contentView = NSHostingView(rootView: SignInView(first: true))
+        w.appearance = NSApp.appearance
+        w.orderFrontRegardless(); await meter.frames(60)
+        await shoot(w, "\(dir)/signin-need-vpn\(suffix).png")
+        w.close(); await meter.frames(20)
+        window.makeKeyAndOrderFront(nil)
     }
 
     /// Each Settings pane, opened through this copy's own settings link and window opener.
