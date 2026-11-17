@@ -719,7 +719,7 @@ nonisolated enum Backup {
             switch self {
             case .easy: "Easy to guess. Four or more different words work well."
             case .fair: "Fair. Longer is safer: four or more words work well."
-            case .hard: "Hard to guess"
+            case .hard: "No obvious pattern found: the meter knows common ones only"
             }
         }
     }
@@ -733,18 +733,25 @@ nonisolated enum Backup {
     ///   that already appeared, or continues a walk: a step to a neighbouring plain letter or digit (abc, 321) or key
     ///   on a keyboard (qaz, asd), after such a step, or the same with every other character (q1w2e3).
     /// Hard: four or more different words of three characters or more that count for 12 characters together, or 72
-    /// bits from the counted characters and the kinds used (letters of either case, letters without case such as Han,
-    /// digits, ASCII symbols, other symbols such as emoji). Only plain letters and digits make walks.
+    /// bits from the counted characters: a plain one (ASCII, or a letter with a case in any script) by the kinds of
+    /// plain character used (lower case, upper case, digits, punctuation), any other (letters without case such as Han,
+    /// emoji) 7, or 11 when those make up most of it. Only ASCII letters and digits make walks.
+    /// It catches obvious patterns only, and says so.
     static func strength(_ passphrase: String) -> Strength {
         let p = passphrase.precomposedStringWithCanonicalMapping
-        let kinds = [(26, p.contains(where: \.isLowercase)), (26, p.contains(where: \.isUppercase)), (10, p.contains(where: \.isNumber)),
-                     (2000, p.contains { $0.isLetter && !$0.isLowercase && !$0.isUppercase }), (33, p.contains { $0.isASCII && !$0.isLetter && !$0.isNumber && !$0.isWhitespace }),
-                     (1000, p.contains { !$0.isASCII && !$0.isLetter && !$0.isNumber })]
-        let pool = max(2, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) })
         let (words, kept) = distinctWords(p)
-        let counted = guessable(kept)
-        let bits = Double(counted) * log2(Double(pool))
-        let fourWords = words.filter { $0.count >= 3 && guessable($0) >= 3 }.count >= 4 && counted >= 12
+        let chars = guessable(kept), counted = chars.count
+        // Plain characters by the kinds of plain character used; any other (another script, an emoji) by a fixed
+        // amount, larger only when those make up most of it: one of them doesn't make every plain one count more.
+        // Plain: ASCII, and letters with a case in any script (é, д): a small alphabet each, like a-z.
+        func plain(_ c: Character) -> Bool { c.isASCII || c.isLowercase || c.isUppercase }
+        let ascii = p.filter(plain)
+        let kinds = [(26, ascii.contains(where: \.isLowercase)), (26, ascii.contains(where: \.isUppercase)), (10, ascii.contains(where: \.isNumber)),
+                     (33, ascii.contains { !$0.isLetter && !$0.isNumber && !$0.isWhitespace })]
+        let pool = Double(max(2, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) }))
+        let other = chars.filter { !plain($0) }.count
+        let bits = Double(counted - other) * log2(pool) + Double(other) * (2 * other > counted ? 11 : 7)
+        let fourWords = words.filter { $0.count >= 3 && guessable($0).count >= 3 }.count >= 4 && counted >= 12
         return fourWords || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
     }
 
@@ -785,8 +792,8 @@ nonisolated enum Backup {
         return pairs
     }()
 
-    /// How many characters of `s` (as the user sees them) add to a guess (see `strength`).
-    private static func guessable(_ s: String) -> Int {
+    /// The characters of `s` (as the user sees them) that add to a guess (see `strength`).
+    private static func guessable(_ s: String) -> [Character] {
         let c = Array(s.prefix(256))
         /// A step between two plain letters or digits: next to each other in the alphabet or on a keyboard.
         func step(_ a: Character, _ b: Character) -> Bool {
@@ -803,12 +810,12 @@ nonisolated enum Backup {
             }
             return best
         }
-        var n = 0, i = 0
+        var n: [Character] = [], i = 0
         while i < c.count {
             let l = seen(i)
             if l >= 2 { i += l; continue }
             let walk = (i >= 2 && step(c[i - 2], c[i - 1]) && step(c[i - 1], c[i])) || (i >= 4 && step(c[i - 4], c[i - 2]) && step(c[i - 2], c[i]))
-            if (i == 0 || c[i] != c[i - 1]) && !walk { n += 1 }
+            if (i == 0 || c[i] != c[i - 1]) && !walk { n.append(c[i]) }
             i += 1
         }
         return n

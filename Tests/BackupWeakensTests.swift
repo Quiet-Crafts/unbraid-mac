@@ -197,6 +197,10 @@ final class BackupWeakensTests: XCTestCase {
         }
         XCTAssertEqual(Backup.strength("🇳🇱🇯🇵🇧🇷🇲🇦🇳🇿🇫🇮🇲🇽🇰🇷🇵🇹🇨🇦🇮🇳🇬🇭🇳🇴🇨🇱🇵🇭🇩🇪"), .hard)
         XCTAssertEqual(Backup.strength("春湖雲島夢舟雪鳥星野森雨月風花海"), .hard)
+        // One character of another kind doesn't lift the rest.
+        XCTAssertEqual(Backup.strength("dog€x"), .easy)
+        XCTAssertEqual(Backup.strength("summer😀"), .easy)
+        XCTAssertNotEqual(Backup.strength("summer2024€"), .hard)
         let t = Date()
         _ = Backup.strength(String(repeating: "correct horse ", count: 20_000))
         XCTAssertLessThan(Date().timeIntervalSince(t), 1)

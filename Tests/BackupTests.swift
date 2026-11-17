@@ -867,7 +867,7 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.strength("correct horse battery staple"), .hard)
         XCTAssertEqual(Backup.strength("ab cd ef gh"), .easy)
         XCTAssertEqual(Backup.strength("ab cd"), .easy)
-        XCTAssertEqual(Backup.Strength.hard.text, "Hard to guess")
+        XCTAssertEqual(Backup.Strength.hard.text, "No obvious pattern found: the meter knows common ones only")
         XCTAssertTrue(Backup.Strength.easy.text.hasPrefix("Easy to guess"))
         // Length alone is no sign of a passphrase picked at random: repeats, runs, repeated words and common passwords
         // add almost nothing, and never let keys into the file.
