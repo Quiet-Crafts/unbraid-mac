@@ -132,7 +132,7 @@ struct UnbraidCommands: Commands {
         CommandGroup(after: .saveItem) {
             Section {
                 Button("Back Up Settings…") { BackupFlow.shared.startSave() }
-                Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }
+                Button("Restore Settings…") { BackupFlow.shared.chooseFile() }
             }
         }
         CommandGroup(after: .textEditing) {

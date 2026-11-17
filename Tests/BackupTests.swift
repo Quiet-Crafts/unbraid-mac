@@ -875,7 +875,7 @@ final class BackupTests: XCTestCase {
         // Every failure has its own sentence.
         let all: [BackupFile.Failure] = [.tooLarge, .notABackup, .newer, .damaged, .wrongPassphrase, .memory]
         XCTAssertEqual(Set(all.map(BackupTexts.openFailure)).count, all.count)
-        XCTAssertEqual(BackupTexts.saveFailure(BackupFile.Failure.tooLarge), "This setup is too large for a backup file")
+        XCTAssertEqual(BackupTexts.saveFailure(BackupFile.Failure.tooLarge), "This setup is too large for a backup")
         XCTAssertEqual(BackupTexts.saveFailure(CocoaError(.fileWriteNoPermission)), "The backup couldn't be saved there. Choose another folder and try again.")
         XCTAssertEqual(BackupTexts.keepTitle(nil), "Keep my current setup as the profile \"Previous\"")
         XCTAssertEqual(BackupTexts.keepTitle("Previous 2"), "Keep my current setup as the profile \"Previous 2\"")

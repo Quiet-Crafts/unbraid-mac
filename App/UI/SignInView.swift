@@ -74,7 +74,7 @@ struct SignInView: View {
                                 .font(.system(size: 11)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                         }
                         // A new Mac can start from the setup of another one.
-                        if first { Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }.buttonStyle(.link).font(.system(size: 12)) }
+                        if first { Button("Restore Settings…") { BackupFlow.shared.chooseFile() }.buttonStyle(.link).font(.system(size: 12)) }
                     }
                 }
                 Section {

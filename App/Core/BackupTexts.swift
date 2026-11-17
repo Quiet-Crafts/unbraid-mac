@@ -82,7 +82,7 @@ nonisolated enum BackupTexts {
     static func saveFailure(_ error: Error) -> String {
         if let e = error as? BackupFile.Unrestorable { return "Nothing was saved: a backup of this setup couldn't be restored later. \(e.why)" }
         return switch error as? BackupFile.Failure {
-        case .tooLarge: "This setup is too large for a backup file"
+        case .tooLarge: "This setup is too large for a backup"
         case .memory: "There isn't enough memory to lock the backup. Quit some apps and try again."
         default: "The backup couldn't be saved there. Choose another folder and try again."
         }

@@ -322,7 +322,7 @@ private struct PassphraseSheet: View {
     @FocusState private var focus: Bool
 
     var body: some View {
-        SheetFrame(title: "Open Backup", subtitle: flow.fileName) {
+        SheetFrame(title: "Restore Settings", subtitle: flow.fileName) {
             VStack(alignment: .leading, spacing: 10) {
                 PassField(label: "Passphrase", text: $passphrase).focused($focus).onSubmit(open)
                 if let error { ErrorLine(text: error) }
