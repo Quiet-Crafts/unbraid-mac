@@ -383,34 +383,11 @@ private struct RestoreSheet: View {
         let phase = model.vpn.state.phase
         let notes = BackupTexts.restoreNotes(plan, accounts: model.accounts, tunnelUp: phase == .on || phase == .paused)
         SheetFrame(title: "Restore Settings", subtitle: BackupTexts.restoreFacts(file: flow.fileName, content)) {
-            VStack(alignment: .leading, spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("In this backup").overline()
-                    Text(Backup.inBackup(content.summary)).fixedSize(horizontal: false, vertical: true)
-                    Text("It replaces").overline().padding(.top, 4)
-                    Text(Backup.replaces(plan.replaces, keptAs: plan.keptAs)).fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(.horizontal, 14).padding(.vertical, 12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Ink.surface, in: .rect(cornerRadius: Corner.inner, style: .continuous))
-                .accessibilityElement(children: .combine)
-                if here {
-                    SwitchCard(title: BackupTexts.keepTitle(keeping.keptAs), caption: canKeep ? BackupTexts.keepCaption : BackupTexts.keepUnavailable,
-                               isOn: canKeep ? $keep : .constant(false), enabled: canKeep)
-                }
-                if !plan.weak.isEmpty {
-                    SwitchCard(title: BackupTexts.weakTitle, caption: BackupTexts.weakCaption(plan.weak), isOn: $weakAccepted)
-                }
-                if !notes.isEmpty {
-                    // One line each: a restore can have several things to say, and a paragraph of them reads as one.
-                    Label { Text(notes.joined(separator: "\n")).fixedSize(horizontal: false, vertical: true) } icon: {
-                        Image(systemName: "info.circle").foregroundStyle(Ink.warningText)
-                    }
-                    .font(.system(size: 12)).foregroundStyle(Ink.dim)
-                }
+            // As tall as it needs, and scrolling when that is taller than the window: a restore can have a lot to say.
+            ViewThatFits(in: .vertical) {
+                details(plan, notes: notes, here: here, keeping: keeping, canKeep: canKeep)
+                ScrollView { details(plan, notes: notes, here: here, keeping: keeping, canKeep: canKeep) }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, Layout.gutter).padding(.bottom, 16)
         } actions: {
             Button("Cancel") { flow.close() }.keyboardShortcut(.cancelAction)
             Button("Restore") {
@@ -418,5 +395,36 @@ private struct RestoreSheet: View {
                 flow.close()
             }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(!plan.weak.isEmpty && !weakAccepted)
         }
+    }
+
+    private func details(_ plan: Backup.Plan, notes: [String], here: Bool, keeping: Backup.Plan, canKeep: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("In this backup").overline()
+                Text(Backup.inBackup(content.summary)).fixedSize(horizontal: false, vertical: true)
+                Text("It replaces").overline().padding(.top, 4)
+                Text(Backup.replaces(plan.replaces, keptAs: plan.keptAs)).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Ink.surface, in: .rect(cornerRadius: Corner.inner, style: .continuous))
+            .accessibilityElement(children: .combine)
+            if here {
+                SwitchCard(title: BackupTexts.keepTitle(keeping.keptAs), caption: canKeep ? BackupTexts.keepCaption : BackupTexts.keepUnavailable,
+                           isOn: canKeep ? $keep : .constant(false), enabled: canKeep)
+            }
+            if !plan.weak.isEmpty {
+                SwitchCard(title: BackupTexts.weakTitle, caption: BackupTexts.weakCaption(plan.weak), isOn: $weakAccepted)
+            }
+            if !notes.isEmpty {
+                // One line each: a restore can have several things to say, and a paragraph of them reads as one.
+                Label { Text(notes.joined(separator: "\n")).fixedSize(horizontal: false, vertical: true) } icon: {
+                    Image(systemName: "info.circle").foregroundStyle(Ink.warningText)
+                }
+                .font(.system(size: 12)).foregroundStyle(Ink.dim)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, Layout.gutter).padding(.bottom, 16)
     }
 }
