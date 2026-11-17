@@ -152,9 +152,11 @@ struct AddWebsiteSheet: View {
                     ScrollViewReader { scroll in
                         ScrollView {
                             VStack(spacing: 0) {
+                                // Each hairline is drawn over its row's top edge, so the rows are exactly a row tall
+                                // apiece and eight fit the frame below without a sliver to scroll.
                                 ForEach(Array(routes.enumerated()), id: \.element) { i, id in
-                                    if i > 0 { Hairline().padding(.leading, 12 + Measure.slashColumn + 8) }
                                     routeRow(id, s).id(id)
+                                        .overlay(alignment: .top) { if i > 0 { Hairline().padding(.leading, 12 + Measure.slashColumn + 8) } }
                                 }
                             }
                         }
