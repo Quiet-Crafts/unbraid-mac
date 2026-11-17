@@ -210,9 +210,11 @@ struct TrafficView: View {
         // Two programs outside apps can share a file name (two "python3"): the folder then tells them apart.
         let shown = rows.prefix(all ? rows.count : 12)
         let names = Dictionary(grouping: shown, by: { programName($0.app) }).filter { Set($0.value.map(\.app)).count > 1 }.keys
+        // Websites with a route of their own are counted in their own rows: the card says it lists them too.
+        let sites = v.apps.contains { StatsMath.site($0.app) != nil }
         return Card {
             HStack(spacing: 12) {
-                Text("Apps").overline(); Spacer()
+                Text(sites ? "Apps and Websites" : "Apps").overline(); Spacer()
                 GlassMenu(glass: false) {
                     Button("All Routes") { only = nil; all = false }
                     ForEach(v.byExit.filter { $0.exit != DIRECT }, id: \.exit) { e in
@@ -223,7 +225,7 @@ struct TrafficView: View {
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 0) {
                 GridRow {
-                    sortButton(.app).frame(maxWidth: .infinity, alignment: .leading)
+                    sortButton(.app, sites ? "App or Website" : nil).frame(maxWidth: .infinity, alignment: .leading)
                     sortButton(.exit).frame(minWidth: 128, maxWidth: .infinity, alignment: .leading)
                     sortButton(.data).frame(width: 108, alignment: .trailing)
                 }.padding(.bottom, 12)
@@ -264,15 +266,15 @@ struct TrafficView: View {
         }
     }
 
-    private func sortButton(_ column: Sort) -> some View {
+    private func sortButton(_ column: Sort, _ title: String? = nil) -> some View {
         Button {
             if sort == column { ascending.toggle() } else { sort = column; ascending = column != .data }
         } label: {
             HStack(spacing: 4) {
-                Text(column.rawValue)
+                Text(title ?? column.rawValue)
                 if sort == column { Image(systemName: ascending ? "chevron.up" : "chevron.down") }
             }.font(.system(size: 12, weight: .medium)).foregroundStyle(Ink.dim)
-        }.buttonStyle(.plain).accessibilityLabel("Sort by \(column.rawValue)")
+        }.buttonStyle(.plain).accessibilityLabel("Sort by \(title ?? column.rawValue)")
             .accessibilityValue(sort == column ? (ascending ? "Ascending" : "Descending") : "Not sorted")
     }
 }
