@@ -98,9 +98,14 @@ nonisolated enum Sites {
     }
 
     /// `name` as people read it: an international name in its own letters ("xn--mnchen-3ya.de" → "münchen.de").
+    /// Only a decoding that writes back to `name` itself is shown: anything else (a label that decodes to nothing, to
+    /// letters a name can't hold, or to look-alike dots) stays in its ASCII form.
     static func shown(_ name: String) -> String {
         guard name.contains("xn--") else { return name }
-        return name.split(separator: ".").map { l in l.hasPrefix("xn--") ? Punycode.decode(l.dropFirst(4)) ?? String(l) : String(l) }.joined(separator: ".")
+        let decoded = name.split(separator: ".", omittingEmptySubsequences: false).map { l in
+            l.hasPrefix("xn--") ? Punycode.decode(l.dropFirst(4)).flatMap { $0.isEmpty ? nil : $0 } ?? String(l) : String(l)
+        }.joined(separator: ".")
+        return decoded != name && ascii(decoded) == name ? decoded : name
     }
 
     /// A label of a name: letters, digits and hyphens, neither first nor last a hyphen, at most 63.
@@ -168,9 +173,12 @@ nonisolated enum Punycode {
                 w = nw; k += base
             }
             bias = adapt(i - old, out.count + 1, old == 0)
-            n += i / (out.count + 1)
+            // Checked before it is added: a crafted label can carry an increment near Int.max.
+            let step = i / (out.count + 1)
+            guard step <= 0x10FFFF - n else { return nil }
+            n += step
             i %= out.count + 1
-            guard n <= 0x10FFFF, let scalar = Unicode.Scalar(UInt32(n)) else { return nil }
+            guard let scalar = Unicode.Scalar(UInt32(n)) else { return nil }
             out.insert(scalar, at: i)
             i += 1
         }

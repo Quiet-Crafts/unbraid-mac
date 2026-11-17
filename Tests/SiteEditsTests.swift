@@ -71,6 +71,32 @@ final class SiteEditsTests: XCTestCase {
         }
     }
 
+    /// Whatever label a name holds, showing it never traps: a crafted one (an increment near Int.max), an empty one,
+    /// bad digits, long runs. Seeded, so a failure repeats. Only a decoding that writes back to the name is shown.
+    func testShowingAnyLabelNeverTraps() {
+        XCTAssertEqual(SiteEdits.check("xn--mw767205604493046e.com", in: [:]), .valid("xn--mw767205604493046e.com"))
+        XCTAssertEqual(Sites.shown("xn--mw767205604493046e.com"), "xn--mw767205604493046e.com")
+        for label in ["", "-", "--", "a-", "-a", "zzzzzzzzzzzzzzzzzzzz", "99999999999999999999999", "9", "a", "0", "_", "!",
+                      String(repeating: "z", count: 59), String(repeating: "9", count: 59), String(repeating: "-", count: 59)] {
+            _ = Punycode.decode(label[...])
+            XCTAssertEqual(Sites.shown("xn--\(label).com").isEmpty, false, label)
+        }
+        XCTAssertEqual(Sites.shown("xn--.com"), "xn--.com")
+        var seed: UInt64 = 0x5eed_5175
+        func next() -> UInt64 { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return seed >> 33 }
+        let alphabet = Array("abcdefghijklmnopqrstuvwxyz0123456789-_.ABZ\u{e9}9")
+        for _ in 0..<20_000 {
+            let length = Int(next() % 70)
+            let label = String((0..<length).map { _ in alphabet[Int(next() % UInt64(alphabet.count))] })
+            _ = Punycode.decode(label[...])
+            let name = "xn--\(label).example"
+            let shown = Sites.shown(name)
+            if shown != name { XCTAssertEqual(Sites.clean(shown), Sites.clean(name), name) }
+        }
+        // Real names among them still decode.
+        for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw) }
+    }
+
     func testAChangeAppliesAtCommit() {
         var s = Setup(routes: [nl, us], defaultRoute: "nl")
         SiteEdits.apply(["netflix.com": "us", "bank.example": DIRECT, "tracker.example": BLOCK], to: &s)
