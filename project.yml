@@ -150,6 +150,9 @@ targets:
       - path: Resources/Catalog
         type: folder
         buildPhase: resources
+      # Shared name endings (App/Core/Sites.swift).
+      - path: Resources/shared_suffixes.txt
+        buildPhase: resources
       - App/Core
       - App/Providers
       - Shared/Fail.swift

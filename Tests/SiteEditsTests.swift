@@ -84,14 +84,16 @@ final class SiteEditsTests: XCTestCase {
         for name in ["printer.lan", "nas.local", "app.tail9999.ts.net", "168.192.in-addr.arpa"] { XCTAssertNil(reason(name, BLOCK, tailscale: true, lan: true), name) }
     }
 
-    /// A name that only ends other websites' names (a country's "co.uk", a hosting platform) would cover all of them.
+    /// A name that only ends other websites' names (a country's "co.uk", a shared zone such as "k12.ca.us", a hosting
+    /// platform) would cover all of them: the Public Suffix List's ICANN section decides, with its wildcards and exceptions.
     func testAPublicSuffixIsNotAWebsite() {
-        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "github.io", "herokuapp.com", "ts.net"] {
+        XCTAssertGreaterThan(Sites.suffixes.count, 1600, "the bundled list is read")
+        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "k12.ca.us", "github.io", "herokuapp.com", "ts.net", "anything.ck", "foo.kawasaki.jp"] {
             let kept = name.hasPrefix("www.") ? String(name.dropFirst(4)) : name
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(kept) ends many websites' names: add one website under it"), name)
         }
-        for name in ["bbc.co.uk", "example.com.au", "user.github.io", "github.com", "co.com", "uk.com"] {
-            XCTAssertEqual(Sites.clean(name), name, name)
+        for name in ["bbc.co.uk", "example.com.au", "user.github.io", "github.com", "go.co", "co.com", "uk.com", "www.ck", "city.kawasaki.jp", "school.k12.ca.us"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .valid(name == "www.ck" ? "www.ck" : name), name)
         }
     }
 

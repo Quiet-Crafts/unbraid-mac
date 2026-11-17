@@ -150,6 +150,7 @@
 		6D773B895D141EBF2DE10E69 /* RouteRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 703F2015AC9F5FE56A8BCDE0 /* RouteRetryTests.swift */; };
 		6E4823F50A8410D73721220A /* MonotoneCurveTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7091FD9FA9F745EE1F849132 /* MonotoneCurveTests.swift */; };
 		6E551F7EA3DBA2FF7276B306 /* SetupSignOutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */; };
+		6E68D6466BEEC84512BA41A3 /* shared_suffixes.txt in Resources */ = {isa = PBXBuildFile; fileRef = 95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */; };
 		7160288E141E6520CFA3D6BA /* AppCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 780F1844002B2C237EE2744E /* AppCatalog.swift */; };
 		719C70AC9B92D9FBF3E21D04 /* Redact.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B58E47DC1EFE502199E6107 /* Redact.swift */; };
 		7229DD0C1AC13966D35D28F2 /* CommandXPCProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04CF55A607830AD6B924C1A /* CommandXPCProtocol.swift */; };
@@ -169,6 +170,7 @@
 		7C3070436B6FF84429B50BCB /* notices.txt in Resources */ = {isa = PBXBuildFile; fileRef = C4F1ABB29EF896E82F9D7333 /* notices.txt */; };
 		7D6E2DF9CCA188E1C5333925 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = 269129690FE2B3E94FB1C6FB /* Log.swift */; };
 		7DAA37F6491CD93BFB6A8D5E /* ExitAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = D250DB2BE575D83AAA030C34 /* ExitAddress.swift */; };
+		7E280D8B2004CD669F187849 /* shared_suffixes.txt in Resources */ = {isa = PBXBuildFile; fileRef = 95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */; };
 		7E5C92FB78C4E71F8EA89AC2 /* Nudges.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B3636EDB6616452A8ABCD /* Nudges.swift */; };
 		7EFD225D2B7C81FD34697A68 /* AutoSwitch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACFD2671AE832A344B78692 /* AutoSwitch.swift */; };
 		7F344A358F279E4AF266F90C /* Provider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74E1A9850A23A9F05D2A74FD /* Provider.swift */; };
@@ -502,6 +504,7 @@
 		945B35DC1691963CF9DDE956 /* ConfigFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConfigFile.swift; sourceTree = "<group>"; };
 		94A7738E3E1241BAADCB4AE6 /* Fonts */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Fonts; path = Resources/Fonts; sourceTree = SOURCE_ROOT; };
 		955ED297B6D9901F19F3974B /* SetupImport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupImport.swift; sourceTree = "<group>"; };
+		95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */ = {isa = PBXFileReference; lastKnownFileType = text; path = shared_suffixes.txt; sourceTree = "<group>"; };
 		9640535C88C8838D9B31E1DE /* RunState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunState.swift; sourceTree = "<group>"; };
 		96A02AE0280FDB914D162F3B /* Model.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Model.swift; sourceTree = "<group>"; };
 		971AFA913A4946CAAA14DD03 /* Libbox.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Libbox.xcframework; path = Frameworks/Libbox.xcframework; sourceTree = "<group>"; };
@@ -948,6 +951,7 @@
 				BFACABEB29F38B6BBB8826F1 /* Flags.xcassets */,
 				94A7738E3E1241BAADCB4AE6 /* Fonts */,
 				C4F1ABB29EF896E82F9D7333 /* notices.txt */,
+				95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -1106,6 +1110,7 @@
 				FEA70493D47522BA69F9031B /* Flags.xcassets in Resources */,
 				29A7513F30E02F18803665D2 /* Fonts in Resources */,
 				7C3070436B6FF84429B50BCB /* notices.txt in Resources */,
+				7E280D8B2004CD669F187849 /* shared_suffixes.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1115,6 +1120,7 @@
 			files = (
 				1E229B8C0A790FA3F8E14F97 /* Catalog in Resources */,
 				4DF8070839F2147F60DA3170 /* Fixtures in Resources */,
+				6E68D6466BEEC84512BA41A3 /* shared_suffixes.txt in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

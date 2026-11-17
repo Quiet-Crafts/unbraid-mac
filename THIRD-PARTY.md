@@ -21,6 +21,7 @@ a libbox build.
 | [lzokay](https://github.com/jackoalan/lzokay) | The LZO code in go-lzo derives from it | MIT |
 | [Big Shoulders Display](https://github.com/xotypeco/big_shoulders) | Font of the wordmark and headline numbers | SIL Open Font License 1.1 |
 | [flag-icons](https://github.com/lipis/flag-icons) 7.2.3 | Country flags | MIT |
+| [Public Suffix List](https://publicsuffix.org), an extract of its ICANN section (`Resources/shared_suffixes.txt`) | Refusing a website name that many websites share, such as co.uk | MPL-2.0 |
 | Material Symbols (`alt_route`) | The route mark in the menu bar and the app icon, adapted | Apache-2.0, Google |
 | [gluetun](https://github.com/qdm12/gluetun) | ExpressVPN OpenVPN profile and provider notes | MIT |
 | [gluetun-servers](https://github.com/qdm12/gluetun-servers), at a pinned commit | Server lists for Proton VPN and ExpressVPN (`Resources/Catalog`) | MIT |

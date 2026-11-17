@@ -130,11 +130,22 @@ nonisolated enum Sites {
 
     private static let notAName = "That isn't a website address"
     private static let address = "An IP address can't have a rule: add the website's name"
-    /// A name that is itself a public suffix: under it are many unrelated websites (every company's "co.uk"), which a
-    /// rule would all cover. The common country forms and hosting platforms where everyone gets a name of their own.
+    /// A name that is itself an ending many unrelated websites share ("co.uk"): a rule would cover them all. The
+    /// Public Suffix List's ICANN section as `Resources/shared_suffixes.txt` holds it (its wildcard and exception rules
+    /// included), and hosting platforms where everyone gets a name of their own (the list's private section, kept short).
     static func shared(_ name: String) -> Bool {
-        platforms.contains(name) || name.wholeMatch(of: /(co|com|net|org|gov|edu|ac|or|ne|go|ltd|plc|me)\.[a-z]{2}/) != nil
+        let parent = name.split(separator: ".", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+        return suffixes.contains(name) || platforms.contains(name) || suffixes.contains("*." + parent) && !suffixes.contains("!" + name)
     }
+
+    /// The bundled list's rules, read once.
+    static let suffixes: Set<String> = {
+        guard let url = Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt"),
+              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+        return Set(text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") })
+    }()
+
+    private final class BundleToken {}
 
     private static let platforms: Set = ["github.io", "gitlab.io", "blogspot.com", "herokuapp.com", "appspot.com", "netlify.app",
                                          "vercel.app", "pages.dev", "workers.dev", "web.app", "firebaseapp.com",
