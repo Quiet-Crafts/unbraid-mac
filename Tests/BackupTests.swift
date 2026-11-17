@@ -955,6 +955,11 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data("UNBRAID-BACKUP\nsecond".utf8))
         XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [url.lastPathComponent])
         XCTAssertTrue(BackupFile.looksLikeBackup(at: url))
+        // A name as long as a file name may be (255 bytes): the file beside it while writing has a short name of its own.
+        let longest = dir.appending(path: String(repeating: "b", count: 255 - BackupFile.fileExtension.count - 1) + "." + BackupFile.fileExtension)
+        try BackupFile.write(Data("UNBRAID-BACKUP\nlong".utf8), to: longest)
+        XCTAssertEqual(try Data(contentsOf: longest), Data("UNBRAID-BACKUP\nlong".utf8))
+        try FileManager.default.removeItem(at: longest)
         // A folder that can't be written: an error, and nothing written.
         XCTAssertThrowsError(try BackupFile.write(Data("x".utf8), to: dir.appending(path: "missing/file")))
         // Chosen files that aren't backups, or are too large to be, are refused before being read whole.

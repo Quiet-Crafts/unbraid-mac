@@ -179,7 +179,8 @@ nonisolated extension BackupFile {
     /// Writes `data` to `url` in one step: a file only the user can read, made beside it and moved into place, so a
     /// failure never leaves half a backup or replaces a good one with nothing.
     static func write(_ data: Data, to url: URL) throws {
-        let temp = url.deletingLastPathComponent().appending(path: ".\(url.lastPathComponent).\(UUID().uuidString.prefix(8)).tmp")
+        // A short name of its own: one made from the chosen name could be longer than a file name may be.
+        let temp = url.deletingLastPathComponent().appending(path: ".unbraid-\(UUID().uuidString).tmp")
         guard FileManager.default.createFile(atPath: temp.path, contents: data, attributes: [.posixPermissions: 0o600]) else {
             throw CocoaError(.fileWriteUnknown)
         }
