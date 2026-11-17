@@ -298,9 +298,21 @@ private struct Sidebar: View {
     @Environment(\.undoManager) private var undo
 
     var body: some View {
+        // The wordmark heads the sidebar and the connection sits at its foot, the same on every page. Stacked around the
+        // list rather than laid over it, so a list too long for a short window scrolls between them instead of showing
+        // through: the glass sidebar gives them no ground of their own.
+        VStack(spacing: 0) {
+            Wordmark(size: 28).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 2).padding(.bottom, 14)
+            list.listStyle(.sidebar)
+            ConnectionDock().tourAnchor(1)
+        }
+        .sidebarGround()
+    }
+
+    private var list: some View {
         let s = model.setup
         // A list lets ⌘-click clear the selection; the page on show stays selected instead.
-        List(selection: Binding(get: { presentation.page }, set: { if let page = $0 { presentation.page = page } })) {
+        return List(selection: Binding(get: { presentation.page }, set: { if let page = $0 { presentation.page = page } })) {
             Label { Text("All Apps") } icon: { Image(systemName: "square.grid.2x2").foregroundStyle(Ink.accentText) }
                 .badge(model.apps.listed.count).tag(Page.apps(nil))
             Label { Text("Websites") } icon: { Image(systemName: "globe").foregroundStyle(Ink.accentText) }
@@ -332,12 +344,6 @@ private struct Sidebar: View {
                 Label { Text("Speed Test") } icon: { Image(systemName: "gauge.with.dots.needle.67percent").foregroundStyle(Ink.accentText) }.tag(Page.speed).tourAnchor(4)
             }
         }
-        // The wordmark heads the sidebar; the connection sits at its foot, the same on every page.
-        .safeAreaInset(edge: .top, spacing: 0) {
-            Wordmark(size: 28).frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 20).padding(.top, 2).padding(.bottom, 14)
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) { ConnectionDock().tourAnchor(1) }
-        .sidebarGround()
     }
 }
 
