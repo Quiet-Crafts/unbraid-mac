@@ -498,9 +498,10 @@ final class AppModel {
                        finished: ((Bool) -> Void)? = nil) {
         guard setup.profiles.contains(where: { $0.name == name }) else { return }
         autoSwitch.pickedByHand()
-        if setup.profile == name { if connectIfOff && vpn.state.phase != .on { connect() }; return }
+        // Any request still waiting (one by network included) is superseded, even by choosing the profile in use.
         let id = UUID()
         profileSwitchID = id
+        if setup.profile == name { if connectIfOff && vpn.state.phase != .on { connect() }; return }
         refusedProfile = nil
         guarded({ [weak self] s in
             let running = self?.vpn.state.phase == .on && self?.vpn.state.runState.standIn == RunState.StandIn.none ? self?.vpn.running : nil

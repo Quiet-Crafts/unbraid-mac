@@ -34,7 +34,7 @@ final class AutoSwitchWatch {
     /// Set while this watcher's own switch is being asked for: not a profile picked by hand.
     @ObservationIgnored private var switching = false
     /// The profile this watcher switched to, until the switch is through or refused.
-    @ObservationIgnored private var own: String?
+    @ObservationIgnored private var own: (name: String, generation: Int)?
     /// What was said, and on which network and rules: each only once.
     @ObservationIgnored private var told: [(AutoSwitch.Acted?, String)] = []
 
@@ -174,18 +174,19 @@ final class AutoSwitchWatch {
     /// user's own setup, still on that network, and still what its rule names.
     private func make(_ name: String, for mark: String) {
         guard let m = model else { return }
-        own = name
-        switching = true
         let decided = run.generation
+        own = (name, decided)
+        switching = true
         m.switchProfile(name, wanted: { [weak self, weak m] in
-            guard let self, let m else { return false }
+            // Still this decision (no hand pick or newer decision since), connected, the user's own setup, on that
+            // network, and what its rule names.
+            guard let self, let m, self.run.generation == decided else { return false }
             return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.here(at: .now) == mark
                 && m.store.networks.profile(on: mark) == name
         }, finished: { [weak self] made in
-            // Not made (the connection or the network changed while it waited): owed again once they settle. Not when a
-            // profile picked by hand took its place (`own` cleared); the run also ignores a report about anything but
-            // its latest decision.
-            guard !made, let self, self.own == name else { return }
+            // Not made (the connection or the network changed while it waited): owed again once they settle. Only for
+            // the request that still owns the switch: not after a hand pick, nor an older request's late completion.
+            guard !made, let self, self.own?.generation == decided else { return }
             self.own = nil
             self.apply(self.run.handle(.unapplied(decided)))
         })
@@ -195,7 +196,7 @@ final class AutoSwitchWatch {
     /// The engine refused this watcher's switch: the rollback has put back what it still runs (the window says so too).
     /// The network stays decided, so it isn't tried again in a loop.
     private func follow(_ m: AppModel) {
-        guard let name = own else { return }
+        guard let name = own?.name else { return }
         if m.refusedProfile == name {
             own = nil
             tell("Couldn't switch to \(name). \(m.setup.profile ?? "Your previous setup") is still in use.", inWindow: false)

@@ -377,6 +377,54 @@ final class AutoSwitchRunTests: XCTestCase {
         }
     }
 
+    // MARK: Fourth review (Y-2, Y-3, T4-3)
+
+    /// Y-2: a network remembered as one router, and another holding it and one more: on the larger one, its other router
+    /// away for a while keeps it that network (the established one wins over an exact match), and a hand pick stays.
+    func testTheEstablishedNetworkWinsOverAnExactMatch() {
+        var r = NetworkRules(salt: "salt")
+        r.remember("b", name: "Flat", profile: "Work")
+        r.remember("a,b", name: "Home network", profile: "Home")
+        r.elsewhere = "Travel"
+        var run = Run(rules: r, now: t0)
+        XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), on("a,b")])], until: 10), ["a,b"])
+        _ = run.handle(.pickedByHand, now: at(11))
+        XCTAssertEqual(drive(&run, [(20, [on("b")]), (40, [on("a,b")]), (60, [on("b")])], until: 120), [])
+        XCTAssertEqual(run.here(at: at(120)), "a,b")
+        // Reached afresh with b alone: the exact match.
+        var fresh = Run(rules: r, now: t0)
+        XCTAssertEqual(drive(&fresh, [(0, [.profiles(names), .connected(true), on("b", Self.cafe)])], until: 10), ["b"])
+    }
+
+    /// Y-3: the one wait starts once per arrival; learning the router address, or it coming and going, doesn't restart it.
+    func testLearningTheRouterAddressDoesNotRestartTheWait() {
+        var run = Run(rules: rules, now: t0)
+        XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending("en0|")]), (10, [pending(Self.cafe)]),
+                                    (15, [pending("en0|")]), (18, [pending(Self.cafe)])], until: 21), [unrecognised])
+        XCTAssertEqual(run.here(at: at(20)), unrecognised)
+    }
+
+    /// T4-3: a pick made while the network is still being read belongs to the network being read: it holds when the
+    /// router answers after the wait, whatever it turns out to be. A pick made after the network counted as unrecognised
+    /// is the accepted limit: the late answer decides.
+    func testAHandPickWhileReadingHoldsForTheLateAnswer() {
+        for pick: Double in [5, 15, 19] {
+            var run = settled()
+            let got = drive(&run, [(900, [.sleep(true), offline]), (1000, [.sleep(false), pending()]), (1000 + pick, [.pickedByHand]),
+                                   (1030, [on("a,b")])], until: 1100)
+            XCTAssertEqual(got, [], "pick at \(pick) s")
+            XCTAssertEqual(run.acted, Acted(mark: "a,b", rules: rules))
+            // And it holds there until the network changes.
+            XCTAssertEqual(drive(&run, [(1200, [on("a")]), (1300, [on("a,b")])], until: 1400), [])
+        }
+        var office = settled()
+        XCTAssertEqual(drive(&office, [(900, [offline]), (1000, [pending(Self.office)]), (1005, [.pickedByHand]), (1030, [on("b,c", Self.office)])],
+                             until: 1100), [], "whatever the reading turns out to be")
+        var after = settled()
+        XCTAssertEqual(drive(&after, [(900, [.sleep(true), offline]), (1000, [.sleep(false), pending()]), (1022, [.pickedByHand]),
+                                      (1030, [on("a,b")])], until: 1100), [unrecognised, "a,b"])
+    }
+
     func testASwitchThatAProviderLimitWouldQuestionIsNeverStartedByItself() {
         var s = Setup(routes: [Route(id: "a", loc: Location(provider: "nord", countryId: 1)), Route(id: "b", loc: Location(provider: "nord", countryId: 2))],
                       defaultRoute: "a", apps: ["x": "b"])
