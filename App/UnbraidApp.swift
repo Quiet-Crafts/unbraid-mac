@@ -301,7 +301,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let ids = AppModel.shared.setup.routes.map(\.id)
         if let id = urls.lazy.compactMap({ Snapshot.linkedRoute($0, routes: ids) }).first { Presentation.shared.page = .apps(id) }
         if urls.contains(where: { $0.scheme == "unbraid" }) { Self.openMain() }
-        if !SingleCopy.outsideApplications, let file = urls.first(where: { $0.isFileURL && $0.pathExtension.lowercased() == BackupFile.fileExtension }) {
+        if !SingleCopy.outsideApplications, let file = urls.first(where: { $0.isFileURL && BackupFile.named($0) }) {
             // Refused (the terms not accepted yet, settings held): said in the window, never queued for later.
             BackupFlow.shared.open(file) { BackupFlow.notice($0); Self.openMain() }
         }

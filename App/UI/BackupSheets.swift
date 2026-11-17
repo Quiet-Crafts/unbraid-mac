@@ -63,7 +63,9 @@ final class BackupFlow {
     func chooseFile(refuse: @escaping @MainActor (String) -> Void = BackupFlow.notice) {
         if let why = refusal { refuse(why); return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.unbraidBackup]
+        // Android's backups too (a file of an older registration may not know that type): the restore says why it can't
+        // take them, which a greyed-out file never could.
+        panel.allowedContentTypes = [.unbraidBackup] + [UTType(filenameExtension: BackupFile.androidExtension, conformingTo: .data)].compactMap { $0 }
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.directoryURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first

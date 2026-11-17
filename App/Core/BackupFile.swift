@@ -14,6 +14,10 @@ import Security
 /// What is inside is opaque here.
 nonisolated enum BackupFile {
     static let fileExtension = "unbraidbackup"
+    /// What unbraid for Android names its backups: opened too, so the restore can say it can't take them yet.
+    static let androidExtension = "unbraid"
+    /// Whether `url` is named as a backup of either app; what it holds is checked when it is read.
+    static func named(_ url: URL) -> Bool { [fileExtension, androidExtension].contains(url.pathExtension.lowercased()) }
 
     /// Why a file won't open (or a backup can't be made), told apart in this order: too large, not a backup, newer,
     /// damaged (checksum, cut, settings outside the caps), wrong passphrase (check value), damaged (tag).

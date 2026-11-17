@@ -564,6 +564,19 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(failure { try Backup.read(self.plain(#"{"format":1,"platform":"android","mac":{}}"#)) }, .otherPlatform)
         XCTAssertEqual(failure { try Backup.read(self.plain(#"{"format":1,"platform":"mac","setup":{},"mac":{}}"#)) }, .otherPlatform)
         XCTAssertEqual(Backup.Failure.otherPlatform.message, "This backup was made by unbraid for Android. Moving a setup from Android isn't supported yet.")
+        // Android names its backups .unbraid: such a file can be chosen and opened, so this message is what the user
+        // reads. Anything else under that name is told it isn't a backup, before any passphrase is asked for.
+        let dir = FileManager.default.temporaryDirectory.appending(path: "android-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let made = dir.appending(path: "unbraid-backup-2026-11-17.unbraid")
+        try Fixture.data("backup/default.unbraidbackup").write(to: made)
+        XCTAssertTrue(BackupFile.named(made)); XCTAssertTrue(BackupFile.named(URL(fileURLWithPath: "/x/B.UNBRAIDBACKUP")))
+        XCTAssertFalse(BackupFile.named(URL(fileURLWithPath: "/x/b.conf")))
+        XCTAssertEqual(Backup.unlock(try BackupFile.readChosen(made), passphrase: "correct horse battery staple").error?.message, Backup.Failure.otherPlatform.message)
+        let other = dir.appending(path: "notes.unbraid")
+        try Data("something else".utf8).write(to: other)
+        XCTAssertThrowsError(try BackupFile.readChosen(other)) { XCTAssertEqual($0 as? BackupFile.Failure, .notABackup) }
     }
 
     // MARK: Restoring
