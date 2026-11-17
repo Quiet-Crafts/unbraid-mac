@@ -725,6 +725,11 @@ final class BackupTests: XCTestCase {
         XCTAssertTrue(BackupTexts.isGood(BackupTexts.restoredNotice(signedIn: false)))
         XCTAssertTrue(BackupTexts.isGood("Backup saved."))
         XCTAssertFalse(BackupTexts.isGood("Backup saved.\nSomething else"))
+        // Notices queue one per line: each is judged by itself, and one said twice shows once.
+        let queued = BackupTexts.lines("Backup saved.\nBackup saved.\nSettings restored.\nThe backup wasn't restored. Nothing changed.")
+        XCTAssertEqual(queued.map(\.text), ["Backup saved.", "Settings restored.", "The backup wasn't restored. Nothing changed."])
+        XCTAssertEqual(queued.map(\.good), [true, true, false])
+        XCTAssertEqual(BackupTexts.lines("Couldn't switch.\nBackup saved.").map(\.good), [false, true])
         // What the save sheet says the file holds follows the keys switch: the Home WireGuard tunnel only with keys.
         XCTAssertTrue(BackupTexts.saveFacts(full(), keys: true).hasSuffix("3 own servers and the Home WireGuard tunnel."))
         XCTAssertTrue(BackupTexts.saveFacts(full(), keys: false).hasSuffix("and 3 own servers."))

@@ -313,14 +313,18 @@ private struct ProviderForm: View {
     }
 }
 
-/// A warning with a Dismiss, for `model.notice`.
+/// `model.notice` with a Dismiss: one line per message, each a success or a warning by itself.
 struct NoticeRow: View {
     private let model = AppModel.shared
     let text: String
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            let done = BackupTexts.isGood(text)
-            Label(text, systemImage: done ? "checkmark.circle.fill" : "exclamationmark.triangle.fill").foregroundStyle(done ? Ink.successText : Ink.failedText)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(BackupTexts.lines(text), id: \.text) { line in
+                    Label(line.text, systemImage: line.good ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                        .foregroundStyle(line.good ? Ink.successText : Ink.failedText)
+                }
+            }
             Spacer()
             Button("Dismiss") { model.notice = nil }
         }

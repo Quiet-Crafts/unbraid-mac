@@ -6,6 +6,12 @@ nonisolated enum BackupTexts {
     static let restored = "Settings restored."
     /// Notices that report something done rather than something wrong.
     static func isGood(_ notice: String) -> Bool { notice == saved || notice == restored || notice == restoredSignIn }
+    /// The messages a notice holds (they are added one per line), each said once and judged on its own, so a success
+    /// added beside a warning, or twice, still reads as one.
+    static func lines(_ notice: String) -> [(text: String, good: Bool)] {
+        var seen = Set<String>()
+        return notice.split(separator: "\n").map(String.init).filter { seen.insert($0).inserted }.map { ($0, isGood($0)) }
+    }
     static let restoredSignIn = "Settings restored. Sign in to your providers to use their routes."
 
     static let footer = "A backup is one file, locked with a passphrase you choose. Provider sign-ins, Tailscale and statistics are never in it."
