@@ -419,7 +419,7 @@ final class Store {
     var tsSuffix: String? {
         get {
             let h = setup.home
-            guard setup.tailscale else { return nil }
+            guard setup.tailnetCounts else { return nil }
             return Compiler.trustedStoredSuffix(h)
         }
         set {

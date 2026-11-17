@@ -75,7 +75,7 @@ nonisolated enum Sites {
 
     /// The tailnet domain `setup`'s websites are judged by: the one the setup has accepted while Tailscale runs, as
     /// `Store.tsSuffix` reads it and the engine is given it.
-    static func tailnet(of setup: Setup) -> String? { setup.tailscale ? Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) : nil }
+    static func tailnet(of setup: Setup) -> String? { setup.tailnetCounts ? Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) : nil }
 
     /// The websites blocked in `before` that `after` opens, whole or in part: no longer blocked itself, or a name under
     /// it given a route or Direct of its own there (the most specific rule wins, Block included). A name under it that

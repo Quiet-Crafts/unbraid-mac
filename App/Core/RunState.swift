@@ -18,7 +18,7 @@ nonisolated struct RunState: Equatable, Sendable {
     func protection(blocked: Set<String>) -> Bool? {
         guard standIn == .none, let setup = appliedSetup else { return nil }
         // A route only a website uses carries traffic too.
-        let used = Set(setup.apps.values).union(setup.sites.values).union([setup.defaultRoute])
+        let used = Set(setup.apps.values).union(Sites.applied(setup).values).union([setup.defaultRoute])
         return setup.activeRoutes.contains { used.contains($0.id) && !blocked.contains($0.id) }
     }
 

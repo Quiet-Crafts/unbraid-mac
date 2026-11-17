@@ -278,4 +278,38 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(state.protection(blocked: []), true)
         XCTAssertEqual(state.protection(blocked: ["us"]), false)
     }
+
+    /// A rule shown as not applied starts no tunnel and protects nothing; once it applies (the setting that answers its
+    /// name turned off) its route runs again. A block always counts. The tailnet's domain is judged without websites.
+    func testARuleNotAppliedStartsNoRouteAndProtectsNothing() {
+        var s = Setup(routes: [nl, us], defaultRoute: DIRECT)
+        s.sites = ["printer.lan": "us"]
+        s.prefs.lan = true
+        var state = RunState()
+        state.committed(revision: "s", setup: s, fresh: true)
+        XCTAssertEqual(s.activeRoutes.map(\.id), [])
+        XCTAssertEqual(state.protection(blocked: []), false)
+        s.prefs.lan = false
+        state.committed(revision: "t", setup: s, fresh: true)
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["us"])
+        XCTAssertEqual(state.protection(blocked: []), true)
+        // A Funnel site on a Tailscale exit: Tailscale runs for it, and its domain counts, whatever the site's rule.
+        var t = Setup(routes: [nl, Route(id: "ts", tsExit: "100.64.0.9")], defaultRoute: DIRECT)
+        t.home.tsControlUrl = "https://hs.example"
+        t.home.tsSuffix = "corp.example"
+        t.sites = ["nas.corp.example": "ts", "app.tail9.ts.net": "ts"]
+        XCTAssertTrue(t.tailnetCounts)
+        XCTAssertEqual(Sites.tailnet(of: t), "corp.example")
+        XCTAssertEqual(Sites.applied(t), ["app.tail9.ts.net": "ts"], "the tailnet's domain is unanswered while Reach your tailnet is off")
+        XCTAssertEqual(t.activeRoutes.map(\.id), ["ts"])
+        t.sites = ["nas.corp.example": "ts"]
+        XCTAssertEqual(t.activeRoutes.map(\.id), [])
+        XCTAssertFalse(t.tailscale)
+        XCTAssertTrue(t.tailnetCounts, "a saved website on the exit keeps the domain known")
+        // A block counts in every state.
+        var b = Setup(routes: [nl], defaultRoute: DIRECT)
+        b.sites = ["printer.lan": BLOCK]
+        b.prefs.lan = true
+        XCTAssertEqual(Sites.applied(b), ["printer.lan": BLOCK])
+    }
 }

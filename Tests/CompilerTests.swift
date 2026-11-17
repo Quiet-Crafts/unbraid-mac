@@ -3017,4 +3017,19 @@ extension CompilerTests {
         } } } }
         XCTAssertEqual(states, 72)
     }
+
+    /// A route only a not-applied rule uses gets no tunnel and no rule; once the rule applies it is back.
+    func testARouteOnlyANotAppliedRuleUsesIsNotCompiled() throws {
+        var s = example
+        s.apps = s.apps.filter { $0.value != "it" }
+        s.sites = ["printer.lan": "it"]
+        s.prefs.lan = true
+        let off = try compile(s)
+        XCTAssertFalse(endpointTags(off).contains("r-it"))
+        XCTAssertFalse(rules(off).contains { names($0)?.contains("printer.lan") == true })
+        s.prefs.lan = false
+        let on = try compile(s)
+        XCTAssertTrue(endpointTags(on).contains("r-it"))
+        XCTAssertEqual(rules(on).first { names($0) == ["printer.lan"] && outbound($0) != nil }.flatMap(outbound), "r-it")
+    }
 }

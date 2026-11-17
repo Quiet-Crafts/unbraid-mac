@@ -439,15 +439,23 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     /// Nothing is assigned: said of the setup a pause runs, which holds only what is blocked (apps and websites), it
     /// means the pause needs no engine.
     var assignsNothing: Bool { apps.isEmpty && sites.isEmpty }
-    /// Routes that carry traffic right now: the default plus any with apps or websites.
+    /// Routes that carry traffic right now: the default plus any with apps or websites whose rules apply
+    /// (`Sites.applied`): a rule shown as not applied starts no tunnel.
     var activeRoutes: [Route] {
-        let used = Set(apps.values).union(sites.values)
+        let used = Set(apps.values).union(Sites.applied(self).values)
         return routes.filter { $0.id == defaultRoute || used.contains($0.id) || testing.contains($0.id) }
     }
     /// The Tailscale exit node in use, if an active route goes out through one (Tailscale allows one at a time).
     var tsExit: String? { activeRoutes.lazy.compactMap(\.tsExit).first }
     /// Tailscale runs for home access or for an exit-node route.
     var tailscale: Bool { home.tailscale || tsExit != nil }
+    /// Whether the tailnet's domain counts (`Sites.tailnet(of:)`, `Store.tsSuffix`): Tailscale on for home access, or an
+    /// exit route the default, an app, a test or any saved website uses. Read from the saved websites, not the applied
+    /// ones, since whether a website's rule applies depends on this domain: `activeRoutes` (so `tailscale`) can't be.
+    var tailnetCounts: Bool {
+        let used = Set(apps.values).union(sites.values).union(testing).union([defaultRoute])
+        return home.tailscale || routes.contains { $0.tsExit != nil && used.contains($0.id) }
+    }
 }
 
 nonisolated enum ProfileGeneration {

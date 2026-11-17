@@ -1114,7 +1114,7 @@ final class Connection {
             let ids = Set(setup.activeRoutes.map(\.id))
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
-                                       tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, probe: nil, ownerless: .refusedWhileSplit)
+                                       tsSuffix: setup.tailnetCounts ? Compiler.trustedStoredSuffix(setup.home) : nil, probe: nil, ownerless: .refusedWhileSplit)
             return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input)), input)
         }
         // What holds now (`Lifecycle.sealAdmission`): the record read above, the setup and the accounts as they are.
