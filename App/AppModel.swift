@@ -85,6 +85,7 @@ final class AppModel {
         retryAirCleanup()
         refreshApps()
         watchProfileSwitch()
+        autoSwitch.start(self)
         NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main) { _ in
             // Also where a setup saved with apps blocked and no kill switch gets its question, once, when the user is here.
             MainActor.assumeIsolated { AppModel.shared.store.reloadHeld(); AppModel.shared.refreshApps(); AppModel.shared.askBlockScope() }
@@ -492,6 +493,7 @@ final class AppModel {
 
     func switchProfile(_ name: String, connectIfOff: Bool = false, offeredGeneration: String? = nil) {
         guard setup.profiles.contains(where: { $0.name == name }) else { return }
+        autoSwitch.pickedByHand()
         if setup.profile == name { if connectIfOff && vpn.state.phase != .on { connect() }; return }
         let id = UUID()
         profileSwitchID = id
@@ -508,6 +510,9 @@ final class AppModel {
             return offeredGeneration == nil || self.profileGeneration == offeredGeneration
         })
     }
+
+    /// Switches profile by network while connected (Profiles › Switch by Itself).
+    let autoSwitch = AutoSwitchWatch()
 
     @ObservationIgnored private var profileWatcher: ChangeObserver?
     @ObservationIgnored private var lastProfileError: String?

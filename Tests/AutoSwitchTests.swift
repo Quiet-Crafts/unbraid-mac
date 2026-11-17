@@ -24,13 +24,12 @@ final class AutoSwitchTests: XCTestCase {
     }
 
     func testAFingerprintIsStableAndMeansNothingElsewhere() {
-        let a = NetworkMark.mark(salt: "one", gateway: "192.0.2.1", hardware: "00:11:22:33:44:55")
-        XCTAssertEqual(a, NetworkMark.mark(salt: "one", gateway: "192.0.2.1", hardware: "00:11:22:33:44:55"))
+        let a = NetworkMark.mark(salt: "one", router: "v6 fe80000000000000021122fffe334455")
+        XCTAssertEqual(a, NetworkMark.mark(salt: "one", router: "v6 fe80000000000000021122fffe334455"))
         XCTAssertEqual(a.count, 32)
-        XCTAssertNotEqual(a, NetworkMark.mark(salt: "two", gateway: "192.0.2.1", hardware: "00:11:22:33:44:55"))
-        XCTAssertNotEqual(a, NetworkMark.mark(salt: "one", gateway: "192.0.2.2", hardware: "00:11:22:33:44:55"))
-        XCTAssertNotEqual(a, NetworkMark.mark(salt: "one", gateway: "192.0.2.1", hardware: "00:11:22:33:44:56"))
-        XCTAssertFalse(a.contains("192") || a.contains("44:55"))
+        XCTAssertNotEqual(a, NetworkMark.mark(salt: "two", router: "v6 fe80000000000000021122fffe334455"))
+        XCTAssertNotEqual(a, NetworkMark.mark(salt: "one", router: "v6 fe80000000000000021122fffe334456"))
+        XCTAssertFalse(a.contains("fe80") || a.contains("334455"))
     }
 
     func testAHardwareAddressIsReadFromArpsLine() {
@@ -40,6 +39,19 @@ final class AutoSwitchTests: XCTestCase {
                      "? (192.0.2.1) at ff:ff:ff:ff:ff:ff on en0", "? (192.0.2.1) at 1:2:3:4:5 on en0", "? (192.0.2.1) at 1:2:3:4:5:zz on en0", "? (192.0.2.1) at 111:2:3:4:5:6 on en0"] {
             XCTAssertNil(NetworkMark.parseArp(none), none)
         }
+        // An interface's whole table (what is read, since a lookup of one address goes into a running VPN's tunnel): the
+        // router's own line, never a neighbour's whose address starts the same.
+        let table = """
+        ? (192.0.2.10) at 0:aa:bb:cc:dd:1 on en0 ifscope [ethernet]
+        ? (192.0.2.7) at (incomplete) on en0 ifscope [ethernet]
+        ? (192.0.2.1) at a4:91:b1:0:0:2 on en0 ifscope [ethernet]
+        ? (192.0.2.255) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]
+        """
+        XCTAssertEqual(NetworkMark.parseArp(table, for: "192.0.2.1"), "a4:91:b1:00:00:02")
+        XCTAssertEqual(NetworkMark.parseArp(table, for: "192.0.2.10"), "00:aa:bb:cc:dd:01")
+        XCTAssertNil(NetworkMark.parseArp(table, for: "192.0.2.7"))
+        XCTAssertNil(NetworkMark.parseArp(table, for: "192.0.2.2"))
+        XCTAssertNil(NetworkMark.parseArp(table, for: "192.0.2.255"))
     }
 
     func testTheRouterIsTheDefaultRoutesOnThePreferredInterface() {
@@ -83,6 +95,42 @@ final class AutoSwitchTests: XCTestCase {
         XCTAssertTrue(NetworkMark.parse([UInt8](repeating: 0, count: 300)).isEmpty)
         // This Mac's own table reads without a crash; on a network it has a default route.
         _ = NetworkMark.routes()
+    }
+
+    /// On a network with IPv6 the router is who the default route goes through, told by its own link-local address:
+    /// read as the kernel writes it, whatever interface number it tucks in, and never one any router may have.
+    func testTheIPv6RouterIsReadFromTheRoutingTable() {
+        func in6(_ address: [UInt8]) -> [UInt8] { [28, UInt8(AF_INET6), 0, 0, 0, 0, 0, 0] + address + [0, 0, 0, 0] }
+        func message(_ dst: [UInt8], _ gateway: [UInt8], flags: Int32 = RTF_UP | RTF_GATEWAY) -> [UInt8] {
+            var h = rt_msghdr()
+            h.rtm_version = UInt8(RTM_VERSION); h.rtm_type = UInt8(RTM_GET); h.rtm_flags = flags
+            h.rtm_addrs = RTA_DST | RTA_GATEWAY; h.rtm_index = UInt16(if_nametoindex("lo0"))
+            h.rtm_msglen = UInt16(MemoryLayout<rt_msghdr>.size + dst.count + gateway.count)
+            return withUnsafeBytes(of: h) { Array($0) } + dst + gateway
+        }
+        let any = [UInt8](repeating: 0, count: 16)
+        func router(_ scope: UInt8) -> [UInt8] { [0xfe, 0x80, 0, scope, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55] }
+        let prefix: [UInt8] = [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+        let routes = NetworkMark.records(message(in6(prefix), in6(router(9))) + message(in6(any), in6(router(4))))
+        XCTAssertEqual(routes.count, 2)
+        let told = NetworkMark.router6(on: "lo0", routes: routes)
+        XCTAssertEqual(told, "fe80000000000000021122fffe334455")
+        // The same router whatever number the kernel gave the interface.
+        XCTAssertEqual(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(12))))), told)
+        XCTAssertNil(NetworkMark.router6(on: "en9", routes: routes), "another interface's router is not this one's")
+        // No default route, or a route that isn't through a router: nothing.
+        XCTAssertNil(NetworkMark.router6(on: "lo0", routes: Array(routes.prefix(1))))
+        XCTAssertNil(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(router(4)), flags: RTF_UP))))
+        // A router that calls itself "1" (or anything as short) is any router: no fingerprint. Nor is one named by a
+        // global address, which is the provider's to change.
+        for plain: [UInt8] in [[0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1], [0xfe, 0x80, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 1],
+                               [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0x02, 0x11, 0x22, 0xff, 0xfe, 0x33, 0x44, 0x55], any] {
+            XCTAssertNil(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message(in6(any), in6(plain)))))
+        }
+        // A default route whose destination is cut short, as the kernel may write it.
+        XCTAssertEqual(NetworkMark.router6(on: "lo0", routes: NetworkMark.records(message([0, 0, 0, 0], in6(router(4))))), told)
+        // This Mac's own table reads without a crash.
+        _ = NetworkMark.router6(on: "en0", routes: NetworkMark.table(AF_INET6, RTF_GATEWAY))
     }
 
     func testRulesFollowTheirProfilesAndNetworks() {

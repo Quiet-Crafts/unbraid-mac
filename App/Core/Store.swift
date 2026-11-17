@@ -77,6 +77,7 @@ final class Store {
             if s.home.tsSuffix == nil, let t = Compiler.tsSuffix(legacy), Compiler.officialTs(s.home), Compiler.tsSuffixIsTailscales(t) { update { $0.home.tsSuffix = t } }
             defaults.removeObject(forKey: "tsSuffix")
         }
+        loadNetworks(keyed: keyed, readable: readable("networks.bin"))
     }
 
     func update(_ f: (inout Setup) -> Void) {
@@ -153,6 +154,7 @@ final class Store {
     /// files reloaded, whose stand-in values must not be written after them.
     @discardableResult
     func reloadHeld() -> Set<String> {
+        reloadNetworks()
         guard !held.isEmpty, vault.keyAvailable else { return [] }
         // With the key read, a file that still won't open is kept as ".bad" before the stand-in may be written over it.
         var migrate = false, unkept: Set<String> = []
@@ -257,6 +259,45 @@ final class Store {
     private func written(_ name: String, _ epoch: Int) {
         guard epoch == forgetEpoch, forgetting.remove(name) != nil else { return }
         Self.persist(forgetting, defaults)
+    }
+
+    // MARK: Networks that switch profile by themselves (sealed: they say where this Mac goes)
+
+    /// The networks the user remembered and the profile for each. Kept apart from the setup, in its own sealed file: a
+    /// missing or unreadable one is no rules, with a new salt.
+    private(set) var networks = NetworkRules()
+    /// The file is there but the keychain wouldn't open it: what shows is a stand-in, never written over the real one,
+    /// read again once the key answers.
+    @ObservationIgnored private var networksHeld = false
+
+    func updateNetworks(_ f: (inout NetworkRules) -> Void) {
+        reloadNetworks()
+        var n = networks
+        f(&n)
+        guard n != networks else { return }
+        networks = n
+        guard !networksHeld else { Log.error("store: not saved, held", facts: "networks"); return }
+        let epoch = forgetEpoch, value = n
+        // Not through `save`: its unsaved flags belong to the setup and accounts. A failed write is tried with the next change.
+        FileWork.shared.submit { [vault, weak self] in
+            let ok = (try? JSONEncoder().encode(value)).map { vault.write("networks.bin", $0) } ?? false
+            if !ok { Log.error("store: not saved", facts: "networks") }
+            Task { @MainActor in if ok { self?.written("networks.bin", epoch) } }
+        }
+    }
+
+    /// The real rules, once the keychain answers for a file held at launch.
+    func reloadNetworks() {
+        guard networksHeld, vault.keyAvailable else { return }
+        loadNetworks(keyed: true, readable: !forgetting.contains("networks.bin"))
+    }
+
+    private func loadNetworks(keyed: Bool, readable: Bool) {
+        let exists = readable && FileManager.default.fileExists(atPath: dir.appending(path: "networks.bin").path)
+        var unkept: Set<String> = []
+        let loaded = readable ? Self.load(vault, "networks.bin", NetworkRules.self, dir, keyed: keyed, unkept: &unkept) : nil
+        networksHeld = loaded == nil && exists && (!keyed || !unkept.isEmpty)
+        if let loaded { networks = loaded }
     }
 
     // MARK: Server catalogues (public data, sealed so that nothing else can plant one)
@@ -479,6 +520,7 @@ final class Store {
         setupUnsaved = false; accountsUnsaved = false
         accounts = [:]
         setup = Setup(routes: [], defaultRoute: DIRECT)
+        networks = NetworkRules(); networksHeld = false
         tsSuffix = nil
         let all = forgetting
         linksVersion += 1
@@ -503,8 +545,9 @@ final class Store {
 
     private nonisolated static let forgettingKey = "forgetAllPending"
     /// Everything that holds credentials: the setup, accounts, cached tunnels, the running tunnel's state, the record of
-    /// what the extension sealed, copies kept of unreadable ones, and a newer unbraid's setup kept by Start Fresh.
-    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin"].flatMap { [$0, "\($0).bad"] } + ["setup.bin.newer"]
+    /// what the extension sealed, the remembered networks, copies kept of unreadable ones, and a newer unbraid's setup
+    /// kept by Start Fresh.
+    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin", "networks.bin"].flatMap { [$0, "\($0).bad"] } + ["setup.bin.newer"]
 
     /// The files a deletion still has to finish. Earlier versions kept only "something is pending" (true): all of them.
     private nonisolated static func pending(_ defaults: UserDefaults) -> Set<String> {

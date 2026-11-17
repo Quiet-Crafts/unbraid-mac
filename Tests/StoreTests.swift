@@ -242,6 +242,81 @@ final class StoreTests: XCTestCase {
         XCTAssertNil(store().setup.pendingSwitch)
     }
 
+    // MARK: Networks that switch profile by themselves
+
+    private func remembered() -> NetworkRules {
+        var r = NetworkRules()
+        r.remember("mark-home", name: "Home network", profile: "Home", now: Date(timeIntervalSince1970: 1_800_000_000))
+        r.elsewhere = "Travel"
+        return r
+    }
+
+    func testRememberedNetworksAreSealedInTheirOwnFileAndForgotten() async throws {
+        let s = store()
+        let rules = remembered()
+        s.updateNetworks { $0 = rules }
+        await settle()
+        XCTAssertTrue(exists("networks.bin"))
+        let bytes = try Data(contentsOf: dir.appending(path: "networks.bin"))
+        XCTAssertNil(bytes.range(of: Data("Home network".utf8)))
+        XCTAssertNil(bytes.range(of: Data(rules.salt.utf8)))
+        // Apart from the setup: neither changes the other.
+        XCTAssertEqual(s.setup, Setup())
+        XCTAssertFalse(exists("setup.bin"))
+        let relaunched = store()
+        XCTAssertEqual(relaunched.networks, rules)
+        // Sign Out of Everything takes them, from memory and disk.
+        XCTAssertTrue(Store.credentialFiles.contains("networks.bin"))
+        let forgotten = await relaunched.forgetAll()
+        XCTAssertTrue(forgotten)
+        XCTAssertTrue(relaunched.networks.known.isEmpty)
+        XCTAssertNotEqual(relaunched.networks.salt, rules.salt)
+        XCTAssertFalse(exists("networks.bin"))
+        XCTAssertTrue(store().networks.known.isEmpty)
+    }
+
+    func testMissingOrUnreadableNetworksAreNoRulesWithAFreshSalt() async throws {
+        let first = store(), second = store()
+        XCTAssertTrue(first.networks.known.isEmpty && first.networks.elsewhere == nil)
+        XCTAssertFalse(first.networks.salt.isEmpty)
+        XCTAssertNotEqual(first.networks.salt, second.networks.salt, "nothing saved: a salt of its own each time")
+        // Sealed with the store's key, but not rules: none, and the file is kept as ".bad" before it is written over.
+        let vault = Sealed(dir: dir, key: { [key] in key.withLock { $0 } })
+        XCTAssertTrue(vault.write("networks.bin", Data("[1, 2]".utf8)))
+        let s = store()
+        XCTAssertTrue(s.networks.known.isEmpty)
+        XCTAssertTrue(exists("networks.bin.bad"))
+        s.updateNetworks { $0.elsewhere = "Travel" }
+        await settle()
+        XCTAssertEqual(store().networks.elsewhere, "Travel")
+        // Not sealed at all (planted): never read.
+        try Data(#"{"salt":"x","known":[],"elsewhere":"Planted"}"#.utf8).write(to: dir.appending(path: "networks.bin"))
+        XCTAssertNil(store().networks.elsewhere)
+    }
+
+    func testHeldNetworksAreNeverWrittenOverAndComeBackOnceTheKeyAnswers() async throws {
+        let s = store()
+        let rules = remembered()
+        s.updateNetworks { $0 = rules }
+        await settle()
+        let savedKey = key.withLock { $0 }
+        key.withLock { $0 = nil }
+        let locked = store()
+        XCTAssertTrue(locked.networks.known.isEmpty, "a stand-in while the keychain won't answer")
+        locked.updateNetworks { $0.elsewhere = nil }
+        await settle()
+        key.withLock { $0 = savedKey }
+        XCTAssertEqual(store().networks, rules, "the real file was not written over")
+        // The next change, once the key answers, applies to the real rules.
+        locked.updateNetworks { $0.forget(network: "mark-home") }
+        XCTAssertEqual(locked.networks.salt, rules.salt)
+        XCTAssertEqual(locked.networks.elsewhere, "Travel")
+        XCTAssertTrue(locked.networks.known.isEmpty)
+        await settle()
+        XCTAssertEqual(store().networks.elsewhere, "Travel")
+        XCTAssertTrue(store().networks.known.isEmpty)
+    }
+
     func testTermsAcceptanceDoesNotChangeExistingDisclosureOrSetup() {
         defaults.set(true, forKey: "disclosed")
         let old = store()

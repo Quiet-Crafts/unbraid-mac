@@ -1,0 +1,170 @@
+import Foundation
+import Network
+import Observation
+
+/// Switches profile by network: watches which network the Mac is on with a path monitor of its own, reads that
+/// network's fingerprint (`NetworkMark`), lets `AutoSwitchRun` say when and `AutoSwitch.decide` what, and switches
+/// through `AppModel.switchProfile` as the menu bar does, so a switch the engine refuses rolls back the same way.
+/// Never connects or disconnects.
+@MainActor @Observable
+final class AutoSwitchWatch {
+    /// The fingerprint of the network the Mac is on now, for the Profiles page; nil with none, or while its router
+    /// hasn't answered.
+    private(set) var mark: String?
+    /// The Mac is on a network (Wi-Fi or a cable), whether or not it can be told apart from others.
+    private(set) var online = false
+
+    @ObservationIgnored private weak var model: AppModel?
+    @ObservationIgnored private var run = AutoSwitchRun(rules: NetworkRules())
+    @ObservationIgnored private let monitor = NWPathMonitor()
+    @ObservationIgnored private var path: (interface: String?, key: String)?
+    @ObservationIgnored private var probe: Task<Void, Never>?
+    @ObservationIgnored private var timer: Task<Void, Never>?
+    @ObservationIgnored private var observer: ChangeObserver?
+    /// Provider limits, read ahead for the accounts they were read for: deciding never waits.
+    @ObservationIgnored private var limits: [String: Limit] = [:]
+    @ObservationIgnored private var limitsFor: [String: String]?
+    @ObservationIgnored private var names: [String]?
+    @ObservationIgnored private var salt: String?
+    /// Set while this watcher's own switch is being asked for: not a profile picked by hand.
+    @ObservationIgnored private var switching = false
+    /// The profile this watcher switched to, until the switch is through or refused.
+    @ObservationIgnored private var own: String?
+    /// What was said, and on which network and rules: each only once.
+    @ObservationIgnored private var told: [(AutoSwitch.Acted?, String)] = []
+
+    func start(_ model: AppModel) {
+        self.model = model
+        // The test copy never reads this Mac's network (`perfShow` gives it one).
+        guard getenv("UNBRAID_PERF") == nil else { return }
+        observer = ChangeObserver(read: { [weak self] in
+            guard let m = self?.model else { return }
+            _ = m.vpn.state.phase; _ = m.store.networks; _ = m.store.setupStandIn; _ = m.setup.pendingSwitch
+            _ = m.setup.profiles; _ = m.setup.profile; _ = m.refusedProfile; _ = m.accounts
+        }, reconcile: { @MainActor [weak self] in self?.reconcile() })
+        observer?.start()
+        monitor.pathUpdateHandler = { [weak self] path in
+            // The Wi-Fi or cable macOS prefers, never a tunnel's; the rest of the path only says that something changed.
+            let interface = path.availableInterfaces.first { $0.type == .wifi || $0.type == .wiredEthernet }?.name
+            let key = "\(interface ?? "")|\(path.status)|\(path.gateways.map { "\($0)" }.sorted())"
+            Task { @MainActor in self?.pathChanged(interface, key) }
+        }
+        monitor.start(queue: DispatchQueue(label: "app.unbraid.autoswitch"))
+        // The connection's own network watch: one more reason to read the router again (a same-looking path).
+        let previous = model.vpn.onNetworkChange
+        model.vpn.onNetworkChange = { [weak self] in previous?(); self?.read() }
+    }
+
+    /// Any switch not made here: it counts as decided for the network it was picked on.
+    func pickedByHand() {
+        guard !switching else { return }
+        own = nil
+        apply(run.handle(.pickedByHand))
+    }
+
+    private func reconcile() {
+        guard let m = model else { return }
+        let store = m.store
+        // A rule never names a profile that isn't there (a restore, a file from another version). Not from a stand-in,
+        // whose profiles aren't the user's.
+        let profiles = m.setup.profiles.map(\.name)
+        if !store.setupStandIn, profiles != names { names = profiles; store.updateNetworks { $0.tidy(profiles: profiles) } }
+        if m.accounts != limitsFor { readLimits(m.accounts) }
+        if store.networks.salt != salt { salt = store.networks.salt; read() }
+        follow(m)
+        apply(run.handle([.connected(m.vpn.state.phase == .on), .rules(store.networks), .busy(store.setupStandIn || m.setup.pendingSwitch != nil)]))
+    }
+
+    private func readLimits(_ accounts: [String: String]) {
+        limitsFor = accounts
+        Task { [weak self] in
+            var read: [String: Limit] = [:]
+            for (p, a) in accounts { if let l = try? await Providers.get(p)?.limit(a) { read[p] = l } }
+            if self?.limitsFor == accounts { self?.limits = read }
+        }
+    }
+
+    private func pathChanged(_ interface: String?, _ key: String) {
+        guard key != path?.key else { return }
+        path = (interface, key)
+        if online != (interface != nil) { online = interface != nil }
+        read()
+    }
+
+    /// Reads the network's fingerprint now and, while its router hasn't answered (right after joining), once a second
+    /// through the settle time; then nothing until the next change.
+    private func read() {
+        probe?.cancel()
+        guard let interface = path?.interface, let salt = model?.store.networks.salt else { probe = nil; seen(nil); return }
+        probe = Task { [weak self] in
+            for attempt in 0...Int(AutoSwitch.settle.components.seconds) {
+                if attempt > 0 { try? await Task.sleep(for: .seconds(1)) }
+                guard !Task.isCancelled else { return }
+                let m = await NetworkMark.current(salt: salt, interface: interface)
+                guard !Task.isCancelled, let self else { return }
+                self.seen(m)
+                if m != nil { return }
+            }
+        }
+    }
+
+    private func seen(_ m: String?) {
+        if mark != m { mark = m }
+        apply(run.handle(.network(m)))
+    }
+
+    private func apply(_ action: AutoSwitchRun.Action) {
+        timer?.cancel(); timer = nil
+        switch action {
+        case .nothing: break
+        case .wait(let due):
+            timer = Task { [weak self] in
+                try? await Task.sleep(for: .seconds(max(0, due.timeIntervalSinceNow)))
+                guard !Task.isCancelled, let self else { return }
+                self.apply(self.run.handle(.timer))
+            }
+        case .decide(let mark, let acted): decide(mark, acted)
+        }
+    }
+
+    private func decide(_ mark: String, _ acted: AutoSwitch.Acted?) {
+        guard let m = model else { return }
+        let step = AutoSwitch.decide(m.setup, rules: run.rules, mark: mark, acted: acted) { [limits] in AutoSwitchRun.over($0) { limits[$0] } }
+        switch step {
+        case .none: break
+        case .to(let name):
+            own = name
+            switching = true
+            m.switchProfile(name)
+            switching = false
+        case .blocked(let why): tell(why, inWindow: true)
+        }
+    }
+
+    /// The engine refused this watcher's switch: the rollback has put back what it still runs (the window says so too).
+    /// The network stays decided, so it isn't tried again in a loop.
+    private func follow(_ m: AppModel) {
+        guard let name = own else { return }
+        if m.refusedProfile == name {
+            own = nil
+            tell("Couldn't switch to \(name). \(m.setup.profile ?? "Your previous setup") is still in use.", inWindow: false)
+        } else if m.setup.pendingSwitch == nil, m.setup.profile == name { own = nil }
+    }
+
+    /// One notification; in the window instead when notifications aren't allowed (a refusal already shows there).
+    private func tell(_ text: String, inWindow: Bool) {
+        let key = run.acted
+        guard !told.contains(where: { $0.0 == key && $0.1 == text }) else { return }
+        told = Array((told + [(key, text)]).suffix(20))
+        guard inWindow else { return Notifier.post(title: "Profile not switched", body: text) }
+        Notifier.post(title: "Profile not switched", body: text) { @MainActor [weak self] in
+            guard let m = self?.model else { return }
+            m.notice = [m.notice, text].compactMap { $0 }.joined(separator: "\n")
+        }
+    }
+
+    #if DEBUG
+    /// The test copy's pictures: a made-up network to be on.
+    func perfShow(_ mark: String?) { self.mark = mark }
+    #endif
+}

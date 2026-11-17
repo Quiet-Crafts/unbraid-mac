@@ -1,11 +1,13 @@
 @preconcurrency import UserNotifications
 
-/// User notifications for what must not pass unnoticed: the VPN stopping on its own. Nothing else is notified.
+/// User notifications for what must not pass unnoticed: the VPN stopping on its own, and a profile that didn't switch by
+/// itself. Nothing else is notified.
 enum Notifier {
-    static func post(title: String, body: String) {
+    /// `otherwise`: run on the main actor when notifications aren't allowed, to say it in the window instead.
+    static func post(title: String, body: String, otherwise: (@MainActor @Sendable () -> Void)? = nil) {
         let c = UNUserNotificationCenter.current()
         c.requestAuthorization(options: [.alert, .sound]) { granted, _ in
-            guard granted else { return }
+            guard granted else { if let otherwise { Task { @MainActor in otherwise() } }; return }
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body

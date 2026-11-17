@@ -331,6 +331,7 @@ private final class Meter: NSObject {
             closePanel()
             if !empty { await healthShots(dir, suffix) }
             await updateShots(dir, prefix, suffix, normal)
+            if !empty { await profileShots(dir, suffix) }
             if !empty { await settingsShots(dir, suffix) }
             window.makeKeyAndOrderFront(nil)
         }
@@ -402,6 +403,41 @@ private final class Meter: NSObject {
         Store.shared.update { $0.sites = [:] }; await meter.frames(60)
         await shoot(window, "\(dir)/empty-websites\(suffix).png")
         Store.shared.update { $0.sites = Self.shotSites }; await meter.frames(45)
+    }
+
+    /// Manage Profiles with Switch by Itself: two remembered networks (the Mac on the first) and any other network set;
+    /// then, in light only, none remembered yet. A made-up network: the copy never reads this Mac's own.
+    private func profileShots(_ dir: String, _ suffix: String) async {
+        let before = Store.shared.setup
+        Store.shared.update { s in
+            for (name, route) in [("Home", "nl"), ("Work", "us"), ("Travel", "jp")] { s.profile = nil; s.defaultRoute = route; s.saveAs(name) }
+            s.use("Home")
+        }
+        let day = { (d: Int) in Calendar.current.date(byAdding: .day, value: -d, to: .now) ?? .now }
+        Store.shared.updateNetworks { r in
+            r = NetworkRules()
+            r.remember("perf-home", name: "Home network", profile: "Home", now: day(5))
+            r.remember("perf-office", name: "Office", profile: "Work", now: day(14))
+            r.elsewhere = "Travel"
+        }
+        model.autoSwitch.perfShow("perf-home")
+        func shot(_ name: String) async {
+            let sheet = NSHostingController(rootView: ManageProfilesSheet())
+            window.contentViewController?.presentAsSheet(sheet); await meter.frames(90)
+            if let s = window.attachedSheet { s.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no profiles sheet"); shotsMissing += 1 }
+            await shoot(window, "\(dir)/\(name).png")
+            window.contentViewController?.dismiss(sheet); await meter.frames(45)
+        }
+        go("apps"); await meter.frames(30)
+        await shot("profiles-switch\(suffix)")
+        if suffix.isEmpty {
+            Store.shared.updateNetworks { $0 = NetworkRules() }
+            model.autoSwitch.perfShow("perf-cafe")
+            await shot("profiles-switch-empty")
+        }
+        Store.shared.updateNetworks { $0 = NetworkRules() }
+        model.autoSwitch.perfShow(nil)
+        Store.shared.update { $0 = before }; await meter.frames(30)
     }
 
     /// The update question answered with no, as the pictures start; and the check on with a newer release found.
