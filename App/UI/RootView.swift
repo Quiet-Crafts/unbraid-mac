@@ -320,7 +320,7 @@ private struct Sidebar: View {
 }
 
 /// A route in the sidebar: its slash and name, "Default" for the default, and how many apps leave through it ("5 · 2"
-/// with the websites that have it as their own).
+/// with the websites that have it as their own), or a red dot while its server isn't answering.
 private struct RouteSidebarRow: View {
     private let model = AppModel.shared
     let id: String
@@ -328,6 +328,7 @@ private struct RouteSidebarRow: View {
     var body: some View {
         let s = model.setup
         let apps = model.apps.count(on: id), sites = SiteEdits.on(id, in: s).count
+        let silent = model.vpn.state.health(id) == .silent
         Label {
             HStack(spacing: 8) {
                 Text(s.label(id)).lineLimit(1).layoutPriority(1)
@@ -339,12 +340,17 @@ private struct RouteSidebarRow: View {
                             .help("Default route").accessibilityLabel("Default")
                     }
                 }
+                if silent {
+                    Spacer(minLength: 4)
+                    StatusDot(color: Ink.failed).help(RouteHealth.status)
+                }
             }
         } icon: { Slash(color: s.color(id)).frame(width: Measure.slashColumn) }
-        .badge(sites == 0 ? Text("\(apps)") : Text("\(apps) · \(sites)"))
-        .help((s.route(id).map { place($0, model.vpn.state.servers) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
+        .badge(silent ? nil : sites == 0 ? Text("\(apps)") : Text("\(apps) · \(sites)"))
+        .help((silent ? RouteHealth.status + " · " : "") + (s.route(id).map { place($0, model.vpn.state.servers) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
               + (sites == 0 ? "" : " · " + Snapshot.count(apps: apps, sites: sites)))
-        .accessibilityLabel((id == s.defaultRoute ? "\(s.label(id)), default route" : s.label(id)) + (sites == 0 ? "" : ", " + Snapshot.count(apps: apps, sites: sites)))
+        .accessibilityLabel((id == s.defaultRoute ? "\(s.label(id)), default route" : s.label(id)) + (sites == 0 ? "" : ", " + Snapshot.count(apps: apps, sites: sites))
+                            + (silent ? ", " + RouteHealth.status : ""))
     }
 }
 

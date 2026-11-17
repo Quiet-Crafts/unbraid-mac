@@ -760,6 +760,9 @@ final class AppModel {
     }
 
     func setFilter(_ id: String, _ on: Bool?) { edit(id) { $0.filter = on } }
+    /// An own server's internet check, as the user chose it (no longer following its config). Nothing the engine runs
+    /// changes: the connection's health checks read it from the running setup once that has taken the edit.
+    func setCheckInternet(_ id: String, _ on: Bool) { edit(id) { if $0.imported && $0.tsExit == nil { $0.checkInternet = on } } }
 
     func setOpt(_ provider: String, _ key: String, _ value: String, offered: ProviderOption? = nil) {
         guard let option = offered ?? Providers.get(provider)?.option(key), option.key == key, option.accepts(value) else { return }

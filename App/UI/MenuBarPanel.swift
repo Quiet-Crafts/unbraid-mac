@@ -100,7 +100,11 @@ struct MenuBarPanel: View {
                             Text("Not working").font(.system(size: 11)).foregroundStyle(Ink.failedText).help(reason)
                         }
                         Spacer(minLength: 8)
-                        if showRate && v.blocked[id] == nil { RouteRate(route: id) }
+                        // A server that stopped answering says so where its speed would be.
+                        if v.health(id) == .silent {
+                            HStack(spacing: 6) { StatusDot(color: Ink.failed); Text(RouteHealth.status) }
+                                .font(.system(size: 11, weight: .semibold)).foregroundStyle(Ink.failedText).accessibilityElement(children: .combine)
+                        } else if showRate && v.blocked[id] == nil { RouteRate(route: id) }
                     }
                     .frame(height: Measure.tableRow).contentShape(.rect)
                 }

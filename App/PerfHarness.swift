@@ -1,6 +1,7 @@
 #if DEBUG
 import AppKit
 import SwiftUI
+import WidgetKit
 
 /// Debug builds only: the smoothness matrix. Times what a person does in the real window (switching pages, searching,
 /// scrolling, resizing, moving an app, a sheet, background updates) and prints it, so "snappy" is a number before and
@@ -207,11 +208,19 @@ private final class Meter: NSObject {
         "com.apple.Safari": "us", "com.apple.TV": "us", "com.apple.podcasts": "us", "com.apple.news": "us", "com.apple.stocks": "us",
         "com.apple.Maps": "it", "com.apple.weather": "it", "com.apple.Music": "jp", "com.apple.iBooksX": "jp",
         "com.apple.Photos": DIRECT, "com.apple.FaceTime": DIRECT,
+        "com.apple.Home": "home", "com.apple.Notes": "home", "com.apple.reminders": "home",
     ]
     /// Website → route.
     private static let shotSites: [String: String] = [
         "netflix.com": "us", "bbc.co.uk": "us", "rai.it": "it", "mybank.example": DIRECT, "tracker.example": BLOCK,
+        "nas.example": "home",
     ]
+    /// The user's own WireGuard server, the one shown not answering (`route-silent`, `panel-silent`, the widgets).
+    private static let shotHome: Route = {
+        var r = Route(id: "home", hue: 5)
+        r.wg = WgPeer(name: "Home server", privateKey: "a", address: ["10.0.0.2/32"], publicKey: "b", endpoint: "192.0.2.10:51820", allowedIps: ["0.0.0.0/0"])
+        return r
+    }()
     private static let shotCountries: [(code: String, name: String, cities: [String])] = [
         ("AU", "Australia", ["Sydney", "Melbourne"]), ("AT", "Austria", ["Vienna"]), ("BE", "Belgium", ["Brussels"]),
         ("BR", "Brazil", ["São Paulo"]), ("CA", "Canada", ["Toronto", "Montreal", "Vancouver"]), ("DK", "Denmark", ["Copenhagen"]),
@@ -241,7 +250,7 @@ private final class Meter: NSObject {
                 route.loc = Location(provider: r.provider, countryId: stableId("\(r.provider)-\(r.code)"), countryCode: r.code, country: r.country,
                                      cityId: stableId("\(r.provider)-\(r.code)-\(r.city)"), city: r.city, region: Self.cityKey(r.code, r.city))
                 return route
-            }
+            } + [Self.shotHome]
             s.defaultRoute = "nl"
             s.apps = Self.shotApps
             s.sites = Self.shotSites
@@ -260,7 +269,7 @@ private final class Meter: NSObject {
         let sites = Self.shotSites.keys.sorted().compactMap(StatsMath.siteKey)
         let keys = appKeys.filter { !heavy.contains($0) } + sites + heavy.reversed()
         let exits = keys.map { StatsMath.site($0).flatMap { Self.shotSites[$0] } ?? Self.shotApps[$0] ?? "nl" }
-        Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id), exits: exits)
+        Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id) + [Self.shotHome.id], exits: exits)
     }
 
     /// The Settings panes by the number the window takes to open one, in the order they are shot.
@@ -320,12 +329,67 @@ private final class Meter: NSObject {
             openPanel(solid: true); await meter.frames(50)
             if let panel { await shoot(panel, "\(dir)/\(prefix)panel\(suffix).png") }
             closePanel()
+            if !empty { await healthShots(dir, suffix) }
             await updateShots(dir, prefix, suffix, normal)
             if !empty { await settingsShots(dir, suffix) }
             window.makeKeyAndOrderFront(nil)
         }
         NSApp.appearance = nil
         report("[Perf] shots in \(dir)")
+    }
+
+    /// The own server not answering: its page with the card and the internet check, and the menu bar panel; then the
+    /// widget in its sizes, healthy and with that route failing, drawn from made-up snapshots.
+    private func healthShots(_ dir: String, _ suffix: String) async {
+        // Set again right before each picture: the copy drifting back to connecting clears it (nothing is known then).
+        func silent() async { Connection.shared.perfConnected(); Connection.shared.perfSilent(["home"]); await meter.frames(30) }
+        go("route:home"); await meter.frames(40)
+        await silent()
+        await shoot(window, "\(dir)/route-silent\(suffix).png")
+        await silent(); openPanel(solid: true); await meter.frames(50)
+        if let panel { await shoot(panel, "\(dir)/panel-silent\(suffix).png") }
+        closePanel()
+        Connection.shared.perfSilent([]); await meter.frames(20)
+        let ok = Self.widgetSnapshot(failing: false), failing = Self.widgetSnapshot(failing: true)
+        for (name, s, size) in [("small", ok, WidgetFamily.systemSmall), ("small-failing", failing, .systemSmall),
+                                ("medium-failing", failing, .systemMedium), ("large-failing", failing, .systemLarge)] {
+            openWidget(s, size); await meter.frames(30)
+            if let panel { await shoot(panel, "\(dir)/widget-\(name)\(suffix).png") }
+            closePanel()
+        }
+    }
+
+    /// What the widgets would read: the made-up routes connected, the home server working or not, a week of traffic.
+    private static func widgetSnapshot(failing: Bool) -> Snapshot {
+        let routes = shotRoutes.map { (r) -> Snapshot.Route in
+            Snapshot.Route(id: r.id, name: r.country, code: r.code, hue: r.hue, apps: shotApps.values.filter { $0 == r.id }.count, isDefault: r.id == "nl",
+                           country: r.code, sites: shotSites.values.filter { $0 == r.id }.count, ok: true)
+        } + [Snapshot.Route(id: "home", name: "Home server", code: "WG", hue: shotHome.hue, apps: 3, isDefault: false, sites: 1, ok: !failing)]
+        let today = Calendar.current.startOfDay(for: .now)
+        let week = (0..<7).map { (i: Int) -> Snapshot.Day in
+            var bytes: [String: Int64] = [:]
+            for (n, r) in routes.enumerated() { bytes[r.id] = Int64((i * 7 + n * 5) % 11 + 2) * 90_000_000 }
+            return Snapshot.Day(date: today.addingTimeInterval(Double(i - 6) * 86_400), bytes: bytes)
+        }
+        return Snapshot(phase: .on, since: .now, exits: routes.count, routes: routes, direct: 2, directSites: 1, week: week, updated: .now,
+                        profile: "Home", protected: true, tailscale: "TS on")
+    }
+
+    /// The widget at its real size (content margins included) in a window of its own, on the widget's rounded ground.
+    private func openWidget(_ s: Snapshot, _ size: WidgetFamily) {
+        let (w, h): (CGFloat, CGFloat) = size == .systemSmall ? (170, 170) : size == .systemMedium ? (364, 170) : (364, 382)
+        let face = WidgetView(s: s, live: true, size: size).padding(16).frame(width: w, height: h)
+            .background(Palette.surface, in: .rect(cornerRadius: 22, style: .continuous))
+            .padding(20)
+        let p = NSPanel(contentRect: NSRect(x: 0, y: 0, width: w + 40, height: h + 40), styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        let host = NSHostingView(rootView: face)
+        host.wantsLayer = true
+        p.appearance = NSApp.appearance
+        NSApp.effectiveAppearance.performAsCurrentDrawingAppearance { host.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor }
+        p.contentView = host
+        p.setFrameOrigin(NSPoint(x: window.frame.maxX - w - 60, y: window.frame.maxY - h - 80))
+        p.orderFrontRegardless()
+        panel = p
     }
 
     /// Add Website with a pasted link, over the Websites page; and the page with no websites.

@@ -118,6 +118,7 @@ targets:
       - Shared/AppGroup.swift
       - Shared/WidgetIntents.swift
       - Shared/Snapshot.swift
+      - Shared/WidgetView.swift
       - Shared/Palette.swift
       - Shared/Slash.swift
       - Shared/Units.swift

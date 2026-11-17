@@ -43,6 +43,7 @@ struct AppsView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Layout.gutter).padding(.bottom, 10).pageWidth()
             }
+            if let id = route, let r = s.route(id) { RouteHealthCards(route: r) }
             if let id = route, id == DIRECT || s.route(id) != nil {
                 LiveStrip(route: id, color: s.color(id), week: week)
             }
@@ -125,7 +126,8 @@ struct AppsView: View {
             let sites = SiteEdits.on(id, in: s).count
             let count = sites == 0 ? nil : Snapshot.count(apps: model.apps.count(on: id), sites: sites)
             let parts = id == DIRECT || id == BLOCK ? [count, about(id, s)] : [about(id, s), count]
-            PageHeader(title: s.label(id), subtitle: parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), slash: s.color(id))
+            PageHeader(title: s.label(id), subtitle: parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), slash: s.color(id),
+                       status: model.vpn.state.health(id) == .silent ? (RouteHealth.status, Ink.failed) : nil)
         } else {
             let custom = s.apps.keys.filter { model.apps.app($0) != nil }.count
             PageHeader(title: "All Apps", subtitle: "\(model.apps.listed.count) apps · " + (custom == 0 ? "all on the default route" : "\(custom) with their own route"))
@@ -384,6 +386,54 @@ struct MoveItems: View {
         Divider()
         Button("Follow Default") { move(nil) }.keyboardShortcut("0", modifiers: [.command, .option])
     }
+}
+
+/// Under a route's header: while its server isn't answering, what that means for its apps and websites; and for an
+/// own server, the switch for its internet check.
+private struct RouteHealthCards: View {
+    let route: Route
+    private let model = AppModel.shared
+
+    var body: some View {
+        let silent = model.vpn.state.health(route.id) == .silent
+        let check = RouteHealth.offersInternetCheck(route)
+        if silent || check {
+            VStack(spacing: 12) {
+                if silent {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(RouteHealth.title).font(.system(size: 13, weight: .semibold))
+                            Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id), sites: SiteEdits.on(route.id, in: model.setup).count))
+                                .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, Layout.inset).padding(.vertical, 14).card()
+                    .accessibilityElement(children: .combine)
+                }
+                if check {
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(RouteHealth.checkTitle).font(.system(size: 13))
+                            Text(RouteHealth.checkCaption).font(.system(size: 12)).foregroundStyle(Ink.dim).lineLimit(2).help(RouteHealth.checkCaption)
+                        }
+                        .layoutPriority(1)
+                        Spacer(minLength: 8)
+                        Toggle("", isOn: Binding(get: { route.checksInternet }, set: { model.setCheckInternet(route.id, $0) }))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            .accessibilityLabel(RouteHealth.checkTitle).accessibilityHint(RouteHealth.checkCaption)
+                    }
+                    .padding(.horizontal, Layout.inset).padding(.vertical, 8).frame(minHeight: Measure.listRow).card()
+                }
+            }
+            .padding(.horizontal, Layout.gutter).padding(.bottom, 14).pageWidth()
+        }
+    }
+}
+
+private extension View {
+    func card() -> some View { background(Ink.surface, in: .rect(cornerRadius: Corner.card, style: .continuous)) }
 }
 
 /// A route's speed now, its last minute and its week, under the page header while connected with statistics on.

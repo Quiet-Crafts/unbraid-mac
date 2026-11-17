@@ -79,6 +79,11 @@ struct HomeRow: View {
     }
 }
 
+extension VpnState {
+    /// The route's health now (`RouteHealth`); nil while not connected.
+    func health(_ id: String) -> RouteHealth? { RouteHealth(id, phase: phase, silent: silent, blocked: blocked) }
+}
+
 extension WgPeer {
     /// The endpoint's host for display: before the port's colon, an IPv6 address without its brackets.
     var endpointHost: String {

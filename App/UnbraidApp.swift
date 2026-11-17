@@ -294,9 +294,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    /// unbraid:// only opens the window: a link in a web page must never change the protection state. A backup file opened
+    /// unbraid:// only opens the window: a link in a web page must never change the protection state. A widget's View
+    /// Route (unbraid://route/<id>) also shows that route's page, when the setup has that route. A backup file opened
     /// in the Finder starts the restore flow: every step after it needs its passphrase and an explicit Restore.
     func application(_ application: NSApplication, open urls: [URL]) {
+        let ids = AppModel.shared.setup.routes.map(\.id)
+        if let id = urls.lazy.compactMap({ Snapshot.linkedRoute($0, routes: ids) }).first { Presentation.shared.page = .apps(id) }
         if urls.contains(where: { $0.scheme == "unbraid" }) { Self.openMain() }
         if !SingleCopy.outsideApplications, let file = urls.first(where: { $0.isFileURL && $0.pathExtension.lowercased() == BackupFile.fileExtension }) {
             // Refused (the terms not accepted yet, settings held): said in the window, never queued for later.

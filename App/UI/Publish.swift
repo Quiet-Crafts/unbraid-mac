@@ -79,6 +79,7 @@ extension Snapshot {
         let v = m.vpn.state
         return make(phase: v.phase, since: v.phase == .on ? v.since : nil, pausedUntil: v.pausedUntil, failed: v.error != nil,
                     edited: m.setup, running: m.vpn.running, exits: Set(m.vpn.tags.values).count, week: week, profileGeneration: m.profileGeneration,
-                    protection: v.phase == .on ? v.runState.protection(blocked: Set(v.blocked.keys)) : nil)
+                    protection: v.phase == .on ? v.runState.protection(blocked: Set(v.blocked.keys)) : nil,
+                    silent: v.silent, blocked: Set(v.blocked.keys), tsState: v.tsState)
     }
 }

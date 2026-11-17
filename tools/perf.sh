@@ -16,7 +16,10 @@
 #                                     every Settings pane (settings-general, -providers, -home, -tailscale, -protection,
 #                                     -statistics, -about, and -about-update with a newer release found), the update
 #                                     notice at both sizes (update-notice, min-update-notice) and the one-time update
-#                                     question at both sizes (update-ask, min-update-ask); dark ones end in -dark
+#                                     question at both sizes (update-ask, min-update-ask), the own server "Home server"
+#                                     not answering on its page and in the panel (route-silent, panel-silent), and the
+#                                     widget (widget-small, widget-small-failing, widget-medium-failing,
+#                                     widget-large-failing); dark ones end in -dark
 #   EMPTY=1 SHOTS=<folder> tools/perf.sh   the same pages and panel with no traffic at all, as on a first day
 #                                     (empty-apps, empty-route, ..., empty-min-*, empty-panel, with -dark too)
 #   CACHE=1 SHOTS=<folder> tools/perf.sh   the windows drawn by the app itself instead (works on a locked screen,

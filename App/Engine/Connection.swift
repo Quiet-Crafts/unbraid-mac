@@ -75,6 +75,8 @@ final class Connection {
         state.phase = .on; state.since = .now
         perfTags = Dictionary(uniqueKeysWithValues: store.setup.routes.map { ($0.id, "perf-\($0.id)") })
     }
+    /// The test copy's pictures of a route not answering.
+    func perfSilent(_ ids: [String]) { state.silent = ids }
     #endif
 
     private func recordRun(_ change: (inout RunState) -> Void) {

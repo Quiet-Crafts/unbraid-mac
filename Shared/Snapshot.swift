@@ -21,6 +21,9 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
         var country: String? = nil
         /// Websites with this route of their own; absent in older snapshots.
         var sites: Int? = nil
+        /// Whether its tunnel works, only while connected: false when blocked or not answering; nil when not known
+        /// (not connected, or an older snapshot).
+        var ok: Bool? = nil
     }
 
     /// One day of this week: bytes per route id.
@@ -52,6 +55,9 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     var profileGeneration: String? = nil
     /// Whether a confirmed running configuration has a VPN route. Absent in older snapshots.
     var protected: Bool? = nil
+    /// Tailscale as the widgets name it: "TS on", "TS off", or "HS" for a self-hosted control server; nil when it isn't
+    /// set up, and in older snapshots.
+    var tailscale: String? = nil
 
     /// How many apps and websites take a route: "5 apps · 2 websites", "2 websites", or the apps alone.
     static func count(apps: Int, sites: Int) -> String {
@@ -59,6 +65,43 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
         return sites == 0 ? a : apps == 0 ? w : "\(a) · \(w)"
     }
     static func websites(_ n: Int) -> String { "\(n) website\(n == 1 ? "" : "s")" }
+
+    /// Working routes of those whose health is known, only while connected: nil when there is nothing to vouch for, so
+    /// no green from an earlier connection is ever shown.
+    var health: (working: Int, total: Int)? {
+        guard phase == .on else { return nil }
+        let known = routes.compactMap(\.ok)
+        return known.isEmpty ? nil : (known.filter { $0 }.count, known.count)
+    }
+    /// The first route that doesn't work, the one View Route opens.
+    var failing: Route? { phase == .on ? routes.first { $0.ok == false } : nil }
+
+    /// Under the count: "routes working", or "1 route not answering".
+    static func healthLine(working: Int, total: Int) -> String {
+        let down = total - working
+        return down == 0 ? "route\(total == 1 ? "" : "s") working" : "\(down) route\(down == 1 ? "" : "s") not answering"
+    }
+
+    /// The profile in use and Tailscale, under the status: "Home · TS on". Nil when there is neither.
+    var statusLine: String? {
+        let line = [profile, tailscale].compactMap { $0 }.joined(separator: " · ")
+        return line.isEmpty ? nil : line
+    }
+
+    /// The link View Route opens: the app's window on that route's page, nothing else.
+    static func routeLink(_ id: String) -> URL {
+        var c = URLComponents()
+        c.scheme = "unbraid"; c.host = "route"; c.path = "/" + id
+        return c.url ?? URL(string: "unbraid://open")!
+    }
+    /// The route a link names, only when it is one of `routes`: a link can come from anywhere, so it only ever selects a
+    /// page that exists, and never changes the protection.
+    static func linkedRoute(_ url: URL, routes: [String]) -> String? {
+        guard url.scheme?.lowercased() == "unbraid", url.host?.lowercased() == "route",
+              let c = URLComponents(url: url, resolvingAgainstBaseURL: false), c.query == nil, c.fragment == nil else { return nil }
+        let id = String(c.path.dropFirst())
+        return c.path.hasPrefix("/") && !id.isEmpty && routes.contains(id) ? id : nil
+    }
 
     var connectionTitle: String {
         switch phase {

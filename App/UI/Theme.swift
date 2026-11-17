@@ -491,6 +491,8 @@ struct PageHeader<Trailing: View>: View {
     let title: String
     var subtitle = ""
     var slash: Color?
+    /// A problem after the facts, as a dot and red words (never colour alone): a route that isn't answering.
+    var status: (text: String, color: Color)? = nil
     @ViewBuilder var trailing: Trailing
 
     var body: some View {
@@ -500,7 +502,14 @@ struct PageHeader<Trailing: View>: View {
                     // A route's slash hangs in the gutter, so every page's title starts at the same place.
                     .overlay(alignment: .leading) { if let slash { Slash(color: slash, height: 24).offset(x: -16) } }
                 // The line is kept while a subtitle loads, so the page below doesn't move.
-                Text(subtitle.isEmpty ? " " : subtitle).font(.system(size: 13)).foregroundStyle(Ink.dim).lineLimit(1).help(subtitle)
+                HStack(spacing: 8) {
+                    Text(subtitle.isEmpty ? " " : subtitle).font(.system(size: 13)).foregroundStyle(Ink.dim).lineLimit(1).help(subtitle)
+                    if let status {
+                        HStack(spacing: 6) { StatusDot(color: status.color); Text(status.text) }
+                            .font(.system(size: 13, weight: .semibold)).foregroundStyle(Ink.failedText).fixedSize()
+                            .accessibilityElement(children: .combine)
+                    }
+                }
             }
             Spacer(minLength: 16)
             trailing
@@ -514,7 +523,7 @@ struct PageHeader<Trailing: View>: View {
 }
 
 extension PageHeader where Trailing == EmptyView {
-    init(title: String, subtitle: String = "", slash: Color? = nil) {
-        self.init(title: title, subtitle: subtitle, slash: slash) { EmptyView() }
+    init(title: String, subtitle: String = "", slash: Color? = nil, status: (text: String, color: Color)? = nil) {
+        self.init(title: title, subtitle: subtitle, slash: slash, status: status) { EmptyView() }
     }
 }

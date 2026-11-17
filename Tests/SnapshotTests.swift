@@ -336,6 +336,91 @@ final class SnapshotTests: XCTestCase {
         XCTAssertFalse(Snapshot(phase: .on, exits: 3).fresh(at: t0))
     }
 
+    // MARK: Route health on the widgets
+
+    /// A snapshot written before route health still decodes: no health, no Tailscale mark, nothing failing.
+    func testOldSnapshotHasNoHealth() throws {
+        let data = Data(#"{"phase":"on","exits":1,"routes":[{"id":"nl","name":"Netherlands","code":"NL","hue":0,"apps":1,"isDefault":true}],"direct":0,"blocked":0,"week":[],"updated":0}"#.utf8)
+        let s = try JSONDecoder().decode(Snapshot.self, from: data)
+        XCTAssertNil(s.routes.first?.ok)
+        XCTAssertNil(s.tailscale)
+        XCTAssertNil(s.health)
+        XCTAssertNil(s.failing)
+        XCTAssertNil(s.statusLine)
+    }
+
+    /// Connected: each route is ok unless blocked or not answering; off, paused or connecting nothing is vouched for.
+    func testHealthFilledOnlyWhileConnected() throws {
+        var home = Route(id: "home", hue: 3)
+        home.wg = WgPeer(name: "Home server", privateKey: "a", address: ["10.0.0.2/32"], publicKey: "b", endpoint: "192.0.2.10:51820", allowedIps: ["0.0.0.0/0"])
+        let setup = Setup(routes: [nl, us, home], defaultRoute: "nl", apps: ["a": "us", "b": "home"])
+        func snap(_ phase: Snapshot.Phase, silent: [String] = [], blocked: Set<String> = []) -> Snapshot {
+            Snapshot.make(phase: phase, since: nil, pausedUntil: nil, failed: false, edited: setup, running: setup, exits: 3, week: [],
+                          silent: silent, blocked: blocked)
+        }
+        let on = snap(.on, silent: ["home"], blocked: ["us"])
+        XCTAssertEqual(on.routes.map(\.ok), [true, false, false])
+        XCTAssertTrue(on.health! == (1, 3))
+        XCTAssertEqual(on.failing?.id, "us", "the first route that doesn't work, in route order")
+        let fine = snap(.on)
+        XCTAssertTrue(fine.health! == (3, 3))
+        XCTAssertNil(fine.failing)
+        for phase in [Snapshot.Phase.off, .connecting, .paused] {
+            let s = snap(phase, silent: ["home"], blocked: ["us"])
+            XCTAssertTrue(s.routes.allSatisfy { $0.ok == nil }, "\(phase)")
+            XCTAssertNil(s.health); XCTAssertNil(s.failing)
+        }
+        // A snapshot written while connected, read back as paused (a timed pause's own entry), shows no health either.
+        var paused = on
+        paused.phase = .paused
+        XCTAssertNil(paused.health); XCTAssertNil(paused.failing)
+        let decoded = try JSONDecoder().decode(Snapshot.self, from: JSONEncoder().encode(on))
+        XCTAssertEqual(decoded, on)
+    }
+
+    /// TS for Tailscale's own control server, HS for a self-hosted one; on only while connected and Tailscale runs.
+    func testTailscaleMark() {
+        var s = Setup(routes: [nl], defaultRoute: "nl", apps: [:])
+        func mark(_ phase: Snapshot.Phase, _ ts: String?) -> String? {
+            Snapshot.make(phase: phase, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 1, week: [], tsState: ts).tailscale
+        }
+        XCTAssertNil(mark(.on, "Running"), "not set up")
+        s.home.tailscale = true
+        XCTAssertEqual(mark(.on, "Running"), "TS on")
+        XCTAssertEqual(mark(.on, "NeedsLogin"), "TS off")
+        XCTAssertEqual(mark(.on, nil), "TS off")
+        XCTAssertEqual(mark(.paused, "Running"), "TS off")
+        s.home.tsControlUrl = "https://headscale.example.com"
+        XCTAssertEqual(mark(.on, "Running"), "HS on")
+        s.home.tsControlUrl = "https://controlplane.tailscale.com"
+        XCTAssertEqual(mark(.on, "Running"), "TS on")
+        var exitOnly = Setup(routes: [nl], defaultRoute: "nl", apps: ["a": "ts"])
+        exitOnly.routes.append({ var r = Route(id: "ts"); r.tsExit = "100.64.0.1"; return r }())
+        XCTAssertEqual(Snapshot.tailscale(exitOnly, on: false), "TS off", "an exit node is Tailscale set up too")
+        XCTAssertEqual(Snapshot(profile: "Home", tailscale: "TS on").statusLine, "Home · TS on")
+        XCTAssertEqual(Snapshot(tailscale: "HS off").statusLine, "HS off")
+        XCTAssertNil(Snapshot().statusLine)
+    }
+
+    func testHealthLine() {
+        XCTAssertEqual(Snapshot.healthLine(working: 4, total: 4), "routes working")
+        XCTAssertEqual(Snapshot.healthLine(working: 1, total: 1), "route working")
+        XCTAssertEqual(Snapshot.healthLine(working: 3, total: 4), "1 route not answering")
+        XCTAssertEqual(Snapshot.healthLine(working: 0, total: 2), "2 routes not answering")
+    }
+
+    /// View Route's link opens a route's page only for a route the setup has; anything else only opens the window.
+    func testRouteLinkParsing() {
+        let ids = ["nl", "r3"]
+        XCTAssertEqual(Snapshot.routeLink("r3").absoluteString, "unbraid://route/r3")
+        XCTAssertEqual(Snapshot.linkedRoute(Snapshot.routeLink("r3"), routes: ids), "r3")
+        XCTAssertEqual(Snapshot.linkedRoute(URL(string: "UNBRAID://ROUTE/nl")!, routes: ids), "nl")
+        for bad in ["unbraid://route/gone", "unbraid://route/", "unbraid://route", "unbraid://open", "unbraid://route/nl/extra",
+                    "unbraid://route/nl?connect=1", "unbraid://route/nl#x", "https://route/nl", "unbraid://pause/nl", "unbraid://route/NL"] {
+            XCTAssertNil(Snapshot.linkedRoute(URL(string: bad)!, routes: ids), bad)
+        }
+    }
+
     // MARK: Units
 
     /// Byte figures read the same as a number-and-unit pair and as one string, and halves round up.
