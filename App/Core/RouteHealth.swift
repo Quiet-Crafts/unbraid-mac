@@ -3,7 +3,7 @@ import Foundation
 /// Whether a route's tunnel works while connected, and every sentence the app says about one that stopped answering.
 /// Decided here, so the route's page, the sidebar and the menu bar panel only draw it.
 nonisolated enum RouteHealth: Equatable, Sendable {
-    /// Answers, or isn't checked.
+    /// Answers, or isn't checked (the widgets say working only after a check: `Snapshot.Route.ok`).
     case ok
     /// No usable tunnel (`VpnState.blocked`): each place keeps what it shows for that, with the reason.
     case blocked
@@ -18,7 +18,9 @@ nonisolated enum RouteHealth: Equatable, Sendable {
 
     /// The status after a route's facts, in the sidebar's help and in the menu bar panel.
     static let status = "Not answering"
-    static let title = "This server isn't answering"
+    /// Not "the server is down": every check goes through the network the Mac is on, which may be what fails (a hotel
+    /// network before its sign-in page, a line that dropped behind the Wi-Fi).
+    static let title = "This server can't be reached from this network"
 
     /// What a silent route means for what it carries, and why it stays where it is: "Its 3 apps and 1 website can't
     /// connect until it answers again. unbraid keeps checking. It never moves your own server's route somewhere else."
@@ -35,5 +37,5 @@ nonisolated enum RouteHealth: Equatable, Sendable {
     /// Tailscale exits never are.
     static func offersInternetCheck(_ r: Route) -> Bool { r.imported && r.tsExit == nil }
     static let checkTitle = "Check internet access"
-    static let checkCaption = "Tests every few minutes that this server reaches the internet. Turn it off for a server that only reaches your home network."
+    static let checkCaption = "Tests about once a minute that this server reaches the internet. Turn it off for a server that only reaches your home network."
 }

@@ -52,4 +52,12 @@ final class RouteHealthTests: XCTestCase {
         homeOnly.checkInternet = true
         XCTAssertTrue(homeOnly.checksInternet, "an explicit choice wins over the config")
     }
+
+    /// The words say what the checks do: about once a minute, and a server that may be fine behind a network that isn't.
+    func testTheWordsMatchTheChecks() {
+        XCTAssertTrue(RouteHealth.checkCaption.hasPrefix("Tests about once a minute"))
+        XCTAssertGreaterThanOrEqual(HealthSchedule.every.lowerBound, 40)
+        XCTAssertLessThanOrEqual(HealthSchedule.every.upperBound, 90)
+        XCTAssertTrue(RouteHealth.title.hasSuffix("from this network"))
+    }
 }
