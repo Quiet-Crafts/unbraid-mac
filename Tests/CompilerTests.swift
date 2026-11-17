@@ -2944,28 +2944,67 @@ extension CompilerTests {
 // MARK: Websites across states
 
 extension CompilerTests {
-    /// Seeded setups whose websites are all ordinary internet names, across the states that decide whether a name's own
-    /// resolver answers it (Reach your tailnet, Tailscale's server or Headscale, the tailnet's domain, devices on this
-    /// network): `Tests/Fixtures/sites-upgrade.txt` holds what the compiler wrote for each before those states were
-    /// taken into account (recorded once, on the compiler of 1.2.0's release candidate). Every config must stay the same.
-    func testSetupsWithOrdinaryWebsitesCompileAsBefore() throws {
-        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/sites-upgrade.txt")
-        var seed: UInt64 = 0x51_7e5
+    /// A seeded set of setups and states, with ordinary and private names among their websites.
+    func siteStates(_ count: Int) -> [(setup: Setup, suffix: String?)] {
+        var seed: UInt64 = 0x0c0_ffee
         func next(_ n: Int) -> Int { seed = seed &* 6364136223846793005 &+ 1442695040888963407; return Int(seed >> 33) % n }
-        let names = ["example.com", "api.example.com", "a.b.example.com", "netflix.com", "bank.example", "tracker.example", "cdn.tracker.example",
-                     "news.example.org", "video.example.net", "shop.example.co.uk", "go.co", "k12.ca.us", "xn--bcher-kva.de", "intranet.example"]
+        let names = ["example.com", "api.example.com", "netflix.com", "tracker.example", "cdn.tracker.example", "news.example.org", "example.org",
+                     "printer.lan", "router.home.arpa", "box.fritz.box", "svc.internal", "app.tail9999.ts.net", "nas.tail123.ts.net", "corp.example",
+                     "nas.corp.example", "tail123.ts.net", "168.192.in-addr.arpa", "go.co", "xn--bcher-kva.de"]
         let routes = ["nl", "us", "it", DIRECT, BLOCK]
-        var lines: [String] = []
-        for i in 0..<300 {
+        return (0..<count).map { _ in
             var s = example
-            s.defaultRoute = [ "nl", "us", DIRECT][next(3)]
+            s.defaultRoute = ["nl", "us", DIRECT][next(3)]
             s.prefs.lan = next(2) == 0
             s.home.tailscale = next(2) == 0
             if next(3) == 0 { s.home.tsControlUrl = "https://hs.example" }
-            s.sites = Dictionary((0..<next(9)).map { _ in (names[next(names.count)], routes[next(routes.count)]) }) { a, _ in a }
-            let suffix = [nil, "tail123.ts.net", "corp.example"][next(3)]
-            let config = try Compiler.compile(Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: suffix))
-            lines.append("\(i) \(SHA256.hash(data: Data(config.utf8)).map { String(format: "%02x", $0) }.joined())")
+            if next(2) == 0 { s.apps["com.b"] = nil }
+            s.sites = Dictionary((0..<next(10)).map { _ in (names[next(names.count)], routes[next(routes.count)]) }) { a, _ in a }
+            return (s, [nil, "tail123.ts.net", "corp.example"][next(3)])
+        }
+    }
+
+    /// The private zones a state's own resolvers answer, read from the state alone (not from the compiler or the app):
+    /// the tailnet's names and reverse zones while it is reached (all of ts.net on Tailscale's server until the tailnet's
+    /// own domain is known), its domain while it isn't, local names while devices on this network are reached, and
+    /// local reverse zones.
+    func privateZones(_ s: Setup, _ suffix: String?) -> [String] {
+        var zones = ["168.192.in-addr.arpa", "10.in-addr.arpa"]
+        if s.home.tailscale {
+            zones += [suffix, Compiler.officialTs(s.home) && suffix == nil ? "ts.net" : nil, "100.in-addr.arpa"].compactMap { $0 }
+        } else if let suffix { zones.append(suffix) }
+        if s.prefs.lan { zones += ["lan", "home.arpa", "fritz.box"] }
+        return zones
+    }
+
+    /// The names walked for `s`: each website's name and one under it, an ordinary name and one in each private zone.
+    func probes(_ s: Setup) -> [String] {
+        Array(Set(s.sites.keys.flatMap { [$0, "zz-check." + $0] } + ["unbraid-check.example", "nas.lan", "nas.tail123.ts.net", "nas.corp.example"])).sorted()
+    }
+
+    static let walkPrograms = ["/Applications/com.a.app/Contents/MacOS/main", "/Applications/com.x.app/Contents/MacOS/main", "/Applications/Other.app/Contents/MacOS/other"]
+
+    /// For 400 seeded setups and states, every name a website rule or a private zone touches, from an app on a route, a
+    /// Direct app and any other program, walked through the compiled config as the engine walks it: what a name outside
+    /// the state's private zones gets (its A and TXT answers, then where the connection goes and whose resolver it used)
+    /// is what the compiler of 1.2.0's release candidate gave (`Tests/Fixtures/sites-outcomes.txt`, one fingerprint per
+    /// setup).
+    func testOrdinaryNamesGoWhereTheyWentBefore() throws {
+        let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/sites-outcomes.txt")
+        var lines: [String] = []
+        for (i, state) in siteStates(400).enumerated() {
+            let s = state.setup
+            let input = Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: state.suffix)
+            let walk = try EngineWalk(try Compiler.compile(input))
+            let zones = privateZones(s, state.suffix)
+            var out: [String] = []
+            // Another tailnet's ts.net names while the tailnet's own domain is known on Tailscale's server: their rules
+            // now come before Tailscale's resolver (`testAnotherTailnetsFunnelSiteKeepsItsRule`), as they didn't.
+            let foreign = s.home.tailscale && Compiler.officialTs(s.home) && state.suffix != nil
+            for name in probes(s) where !zones.contains(where: { name == $0 || name.hasSuffix("." + $0) }) && !(foreign && (name == "ts.net" || name.hasSuffix(".ts.net"))) {
+                for p in Self.walkPrograms { out.append("\(name) \(p.split(separator: "/")[1]) \(walk.outcome(p, name))") }
+            }
+            lines.append("\(i) \(out.count) \(SHA256.hash(data: Data(out.joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined())")
         }
         guard let saved = try? String(contentsOf: file, encoding: .utf8) else {
             try (lines.joined(separator: "\n") + "\n").write(to: file, atomically: true, encoding: .utf8)
