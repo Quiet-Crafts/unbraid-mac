@@ -269,4 +269,48 @@ final class AppPresenceTests: XCTestCase {
         for _ in 0..<5 { records = scan(apps, records, at: t0 - 30 * day).0 }
         XCTAssertNotNil(records["com.foo"])
     }
+
+    // MARK: After a restore
+
+    /// Scans every day from `start` for `days`, with the app never on this Mac; the first day it was dropped, if any.
+    private func droppedOn(_ apps: [String: String], restored: Date?, from start: Date, days: Int, records: [String: AppPresence.Record] = [:]) -> Int? {
+        var records = records
+        for d in 0...days {
+            let r = AppPresence.reconcile(apps: apps, seen: [:], records: records, now: start + Double(d) * day, restored: restored)
+            if r.drop.contains("com.foo") { return d }
+            records = r.records
+        }
+        return nil
+    }
+
+    func testWithoutARestoreTheUsualWaitApplies() {
+        XCTAssertEqual(droppedOn(["com.foo": "r1"], restored: nil, from: t0, days: 40), 7)
+    }
+
+    func testAnAppNeverSeenHereKeepsARestoredChoiceForThirtyDaysFromTheRestore() {
+        XCTAssertEqual(droppedOn(["com.foo": "r1"], restored: t0, from: t0, days: 40), 30)
+        // The usual wait counts from the first scan that missed it: a restore long before changes nothing.
+        XCTAssertEqual(droppedOn(["com.foo": "r1"], restored: t0 - 60 * day, from: t0, days: 40), 7)
+        // Restored 25 days before the first scan: the month ends after the usual week would have.
+        XCTAssertEqual(droppedOn(["com.foo": "r1"], restored: t0 - 25 * day, from: t0, days: 40), 7)
+        XCTAssertEqual(droppedOn(["com.foo": "r1"], restored: t0 - 20 * day, from: t0, days: 40), 10)
+    }
+
+    func testAnAppSeenHereBeforeKeepsTheUsualWaitAfterARestore() {
+        let apps = ["com.foo": "r1"]
+        let seen = scan(apps, seen: ["com.foo": ("Foo", "/Applications/Foo.app")], [:], at: t0).0
+        XCTAssertEqual(droppedOn(apps, restored: t0, from: t0 + day, days: 40, records: seen), 7)
+        // Its place taken by another app since: still seen once, by name.
+        var retired = seen
+        retired["com.foo"]?.path = ""
+        XCTAssertEqual(droppedOn(apps, restored: t0, from: t0 + day, days: 40, records: retired), 7)
+    }
+
+    func testARestoredAppInstalledLaterIsAnOrdinaryChoice() {
+        let apps = ["com.foo": "r1"]
+        var records = scan(apps, [:], at: t0).0
+        records = AppPresence.reconcile(apps: apps, seen: ["com.foo": ("Foo", "/Applications/Foo.app")], records: records, now: t0 + 2 * day, restored: t0).records
+        // Uninstalled again: the usual week from then, not what is left of the month.
+        XCTAssertEqual(droppedOn(apps, restored: t0, from: t0 + 3 * day, days: 40, records: records), 7)
+    }
 }

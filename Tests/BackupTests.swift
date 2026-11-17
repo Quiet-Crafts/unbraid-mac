@@ -543,10 +543,137 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(Backup.Strength.hard.text, "Hard to guess")
         XCTAssertTrue(Backup.Strength.easy.text.hasPrefix("Easy to guess"))
     }
+
+    // MARK: The sheets' rules
+
+    func testSaveBackupWaitsForTwoMatchingPassphrases() {
+        let hard = "correct horse battery staple"
+        XCTAssertEqual(BackupTexts.saveCheck("", "", keys: false), .init(ready: false))
+        XCTAssertEqual(BackupTexts.saveCheck(hard, "", keys: false), .init(ready: false))
+        // Still typing the second: nothing said yet.
+        XCTAssertEqual(BackupTexts.saveCheck(hard, "correct", keys: false), .init(ready: false))
+        XCTAssertEqual(BackupTexts.saveCheck(hard, "correct horse battery stapel", keys: false), .init(ready: false, problem: "The passphrases don't match"))
+        XCTAssertEqual(BackupTexts.saveCheck(hard, hard + "s", keys: false), .init(ready: false, problem: "The passphrases don't match"))
+        XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: false), .init(ready: true))
+        // Easy to guess is only a hint, until keys go in the file.
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: false), .init(ready: true))
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "abc", keys: true), .init(ready: false, problem: "Choose a passphrase that is harder to guess to include keys"))
+        XCTAssertEqual(BackupTexts.saveCheck("abc", "", keys: true).ready, false)
+        XCTAssertEqual(BackupTexts.saveCheck("abcdefghijk1", "abcdefghijk1", keys: true), .init(ready: true))
+        XCTAssertEqual(BackupTexts.saveCheck(hard, hard, keys: true), .init(ready: true))
+        XCTAssertEqual([Backup.Strength.easy, .fair, .hard].map(BackupTexts.segments), [1, 2, 3])
+    }
+
+    func testTheSheetsWords() throws {
+        var utc = Calendar(identifier: .gregorian)
+        utc.timeZone = TimeZone(identifier: "UTC")!
+        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_794_960_000), calendar: utc), "unbraid-backup-2026-11-18.unbraidbackup")
+        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_767_225_600), calendar: utc), "unbraid-backup-2026-01-01.unbraidbackup")
+        let c = try read(full())
+        XCTAssertEqual(BackupTexts.restoreFacts(file: "b.unbraidbackup", c, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(identifier: "UTC")!),
+                       "b.unbraidbackup · saved 14 Nov 2023 with unbraid 1.2.0")
+        XCTAssertEqual(BackupTexts.openFailure(.wrongPassphrase), "That passphrase doesn't open this backup")
+        XCTAssertEqual(BackupTexts.openFailure(.damaged), "This backup is damaged and can't be opened")
+        XCTAssertEqual(BackupTexts.openFailure(.notABackup), "That isn't an unbraid backup")
+        // Every failure has its own sentence.
+        let all: [BackupFile.Failure] = [.tooLarge, .notABackup, .newer, .damaged, .wrongPassphrase, .memory]
+        XCTAssertEqual(Set(all.map(BackupTexts.openFailure)).count, all.count)
+        XCTAssertEqual(BackupTexts.saveFailure(BackupFile.Failure.tooLarge), "This setup is too large for a backup file")
+        XCTAssertEqual(BackupTexts.saveFailure(CocoaError(.fileWriteNoPermission)), "The backup couldn't be saved there. Choose another folder and try again.")
+        XCTAssertEqual(BackupTexts.keepTitle(nil), "Keep my current setup as the profile \"Previous\"")
+        XCTAssertEqual(BackupTexts.keepTitle("Previous 2"), "Keep my current setup as the profile \"Previous 2\"")
+        XCTAssertEqual(BackupTexts.wrongKind("OpenVPN", needs: "WireGuard"), "That is an OpenVPN config; this server needs a WireGuard one")
+        XCTAssertEqual(BackupTexts.wrongKind("Shadowsocks", needs: "OpenVPN"), "That is a Shadowsocks config; this server needs an OpenVPN one")
+        XCTAssertEqual(BackupTexts.restoredNotice(signedIn: true), "Settings restored.")
+        XCTAssertTrue(BackupTexts.isGood(BackupTexts.restoredNotice(signedIn: false)))
+        XCTAssertTrue(BackupTexts.isGood("Backup saved."))
+        XCTAssertFalse(BackupTexts.isGood("Backup saved.\nSomething else"))
+        // What the save sheet says the file holds follows the keys switch: the Home WireGuard tunnel only with keys.
+        XCTAssertTrue(BackupTexts.saveFacts(full(), keys: true).hasSuffix("3 own servers and the Home WireGuard tunnel."))
+        XCTAssertTrue(BackupTexts.saveFacts(full(), keys: false).hasSuffix("and 3 own servers."))
+        XCTAssertTrue(BackupTexts.saveFacts(full(), keys: false).hasPrefix("One file, locked with a passphrase you choose. It holds 6 routes"))
+    }
+
+    func testTheRestoreNotesSayOnlyWhatIsTrue() throws {
+        let mullvad = ["mullvad": "blob"]
+        // The backup without keys, onto this Mac with nothing set up: three servers wait, the provider route waits for a
+        // sign-in, and protection changes.
+        let c = try read(full(), keys: false)
+        let plan = Backup.plan(onto: Setup(), from: c, keepPrevious: true, now: .now)
+        XCTAssertEqual(BackupTexts.restoreNotes(plan, accounts: [:], tunnelUp: true), [
+            "\"Home box\", \"Office\" and \"Outline é\" need their config again before their apps can connect.",
+            "Routes on a provider you aren't signed in to stay blocked until you sign in.",
+            "The kill switch or Connect on Demand setting changes, so the VPN restarts.",
+        ])
+        // The "nl" route has no provider set: the default one, which has to be signed in to as well.
+        let nlProvider = try XCTUnwrap(c.setup.route("nl")).loc.provider
+        XCTAssertEqual(BackupTexts.restoreNotes(plan, accounts: [nlProvider: "a", "mullvad": "b"], tunnelUp: false).count, 1)
+        // With keys and the same protection, connected: only the reconnect.
+        var here = full()
+        here.prefs = c.setup.prefs
+        let same = Backup.plan(onto: here, from: try read(full()), keepPrevious: false, now: .now)
+        XCTAssertFalse(same.protectionChanges)
+        XCTAssertEqual(BackupTexts.restoreNotes(same, accounts: [nlProvider: "a"].merging(mullvad) { $1 }, tunnelUp: true), ["The VPN reconnects for a moment."])
+        XCTAssertEqual(BackupTexts.restoreNotes(same, accounts: [nlProvider: "a"].merging(mullvad) { $1 }, tunnelUp: false), [])
+        // One server: singular.
+        var one = full()
+        one.servers = [OwnServer(id: "s1", wg: wg)]; one.routes.removeAll { $0.id == "o1" || $0.id == "x1" }
+        one.apps = one.apps.filter { $0.value != "x1" && $0.value != "o1" }; one.sites = [:]; one.profiles = []; one.profile = nil
+        let single = Backup.plan(onto: Setup(), from: try read(one, keys: false), keepPrevious: false, now: .now)
+        XCTAssertEqual(BackupTexts.restoreNotes(single, accounts: [nlProvider: "a", "mullvad": "b"], tunnelUp: false),
+                       ["\"Home box\" needs its config again before its apps can connect."])
+    }
+
+    func testUnlockTellsAWrongPassphraseFromTheRest() throws {
+        let file = try BackupFile.seal(Backup.export(full(), app: "1.2.0", created: .now, keys: false), passphrase: "right one", logN: 10, r: 8, p: 1)
+        XCTAssertEqual(try Backup.unlock(file, passphrase: "right one").get().setup, Backup.contents(full(), keys: false))
+        XCTAssertEqual(Backup.unlock(file, passphrase: "wrong one").error, Backup.Refusal(message: "That passphrase doesn't open this backup", wrongPassphrase: true))
+        var cut = file; cut.removeLast()
+        XCTAssertEqual(Backup.unlock(cut, passphrase: "right one").error, Backup.Refusal(message: "This backup is damaged and can't be opened"))
+        // Opens, but what is inside isn't this Mac's.
+        let android = try BackupFile.seal(Data(#"{"format":1,"app":"2.9.1","created":1,"setup":{"version":2}}"#.utf8), passphrase: "p", logN: 10, r: 8, p: 1)
+        XCTAssertEqual(Backup.unlock(android, passphrase: "p").error?.message, Backup.Failure.otherPlatform.message)
+        XCTAssertEqual(Backup.unlock(android, passphrase: "p").error?.wrongPassphrase, false)
+    }
+
+    func testABackupIsWrittenInOneStepForTheUserOnly() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: "backup-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let url = dir.appending(path: BackupTexts.fileName(.now))
+        try BackupFile.save(full(), app: "1.2.0", keys: false, passphrase: "correct horse battery staple", to: url)
+        let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let data = try BackupFile.readChosen(url)
+        let c = try Backup.read(BackupFile.open(data, passphrase: "correct horse battery staple"))
+        XCTAssertEqual(c.setup, Backup.contents(full(), keys: false))
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains("Home box"))
+        // Saved again over it: replaced whole, nothing left beside it.
+        try BackupFile.write(Data("UNBRAID-BACKUP\nsecond".utf8), to: url)
+        XCTAssertEqual(try Data(contentsOf: url), Data("UNBRAID-BACKUP\nsecond".utf8))
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), [url.lastPathComponent])
+        XCTAssertTrue(BackupFile.looksLikeBackup(at: url))
+        // A folder that can't be written: an error, and nothing written.
+        XCTAssertThrowsError(try BackupFile.write(Data("x".utf8), to: dir.appending(path: "missing/file")))
+        // Chosen files that aren't backups, or are too large to be, are refused before being read whole.
+        let other = dir.appending(path: "other.conf")
+        try Data("[Interface]\n".utf8).write(to: other)
+        XCTAssertFalse(BackupFile.looksLikeBackup(at: other))
+        XCTAssertThrowsError(try BackupFile.readChosen(other)) { XCTAssertEqual($0 as? BackupFile.Failure, .notABackup) }
+        let big = dir.appending(path: "big.unbraidbackup")
+        FileManager.default.createFile(atPath: big.path, contents: nil)
+        let h = try FileHandle(forWritingTo: big)
+        try h.truncate(atOffset: UInt64(BackupFile.maxSize + 1)); try h.close()
+        XCTAssertThrowsError(try BackupFile.readChosen(big)) { XCTAssertEqual($0 as? BackupFile.Failure, .tooLarge) }
+    }
 }
 
 private extension Setup {
     func with(_ change: (inout Setup) -> Void) -> Setup { var s = self; change(&s); return s }
+}
+
+private extension Result {
+    var error: Failure? { if case .failure(let e) = self { e } else { nil } }
 }
 
 private extension Backup.Content {

@@ -8,6 +8,21 @@
 	<string>en</string>
 	<key>CFBundleDisplayName</key>
 	<string>unbraid</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>unbraid Backup</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>app.unbraid.backup</string>
+			</array>
+		</dict>
+	</array>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIconName</key>
@@ -41,6 +56,26 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>app.unbraid.backup</string>
+			<key>UTTypeDescription</key>
+			<string>unbraid Backup</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>unbraidbackup</string>
+				</array>
+			</dict>
+		</dict>
+	</array>
 	<key>UnbraidBundlePrefix</key>
 	<string>$(BUNDLE_PREFIX)</string>
 	<key>UnbraidTeam</key>

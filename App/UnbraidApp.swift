@@ -129,6 +129,12 @@ struct UnbraidCommands: Commands {
             // From any page of the window; a route's page starts it on that route.
             Button("Add Website…") { Presentation.shared.addSite = .fromPage }.disabled(goTo == nil)
         }
+        CommandGroup(after: .saveItem) {
+            Section {
+                Button("Back Up Settings…") { BackupFlow.shared.startSave() }
+                Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }
+            }
+        }
         CommandGroup(after: .textEditing) {
             Button("Find") { actions?.find?() }.keyboardShortcut("f").disabled(actions?.find == nil)
         }
@@ -288,9 +294,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
-    /// unbraid:// only opens the window: a link in a web page must never change the protection state.
+    /// unbraid:// only opens the window: a link in a web page must never change the protection state. A backup file opened
+    /// in the Finder starts the restore flow: every step after it needs its passphrase and an explicit Restore.
     func application(_ application: NSApplication, open urls: [URL]) {
         if urls.contains(where: { $0.scheme == "unbraid" }) { Self.openMain() }
+        if !SingleCopy.outsideApplications, let file = urls.first(where: { $0.isFileURL && $0.pathExtension.lowercased() == BackupFile.fileExtension }) {
+            // Refused (the terms not accepted yet, settings held): said in the window, never queued for later.
+            BackupFlow.shared.open(file) { BackupFlow.notice($0); Self.openMain() }
+        }
     }
 
     /// Settings, with the Dock icon and the app menu a window needs: from the menu bar panel the app may be an accessory.

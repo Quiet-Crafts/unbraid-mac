@@ -34,6 +34,8 @@ struct SignInView: View {
         .importFlow(importer, target: saveOnly ? nil : "") { if !first { dismiss() } }
         .frame(width: first ? nil : 520, height: first ? nil : 540)
         .background(CaptureExclusion())
+        // A backup picked here as a config is restored over this sheet; on first run the window shows it.
+        .modifier(SheetBackups(on: !first))
     }
 
     private var list: some View {
@@ -56,10 +58,13 @@ struct SignInView: View {
                         if model.store.unsaved && !model.store.unsavedDismissed { UnsavedRow() }
                     }
                 }
-                Section("VPN providers") {
+                Section {
                     ForEach(providers, id: \.id) { p in
                         row(p.name, p.fields.map(\.label).joined(separator: " · "), initial: String(p.name.prefix(1)), chevron: true) { choice = p.id }
                     }
+                } header: { Text("VPN providers") } footer: {
+                    // A new Mac can start from the setup of another one.
+                    if first { Button("Restore a Backup…") { BackupFlow.shared.chooseFile() }.buttonStyle(.link).font(.system(size: 12)) }
                 }
                 Section {
                     row("Import WireGuard or OpenVPN File…", ".conf or .ovpn, from any provider or your own server", symbol: "doc") { importer.file() }
@@ -97,6 +102,13 @@ struct SignInView: View {
             .frame(maxWidth: .infinity, minHeight: Measure.listRow, alignment: .leading).contentShape(.rect)
         }
         .buttonStyle(.plain).help("\(title)\n\(sub)").accessibilityLabel("\(title), \(sub)")
+    }
+}
+
+private struct SheetBackups: ViewModifier {
+    let on: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if on { content.backupSheets() } else { content }
     }
 }
 
@@ -289,7 +301,8 @@ struct NoticeRow: View {
     let text: String
     var body: some View {
         HStack(alignment: .firstTextBaseline) {
-            Label(text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Ink.failedText)
+            let done = BackupTexts.isGood(text)
+            Label(text, systemImage: done ? "checkmark.circle.fill" : "exclamationmark.triangle.fill").foregroundStyle(done ? Ink.successText : Ink.failedText)
             Spacer()
             Button("Dismiss") { model.notice = nil }
         }

@@ -207,6 +207,7 @@ struct RootView: View {
         .sheet(isPresented: Binding(get: { model.disclosure }, set: { if !$0 { model.cancelDisclosure() } })) {
             DisclosureSheet(model: model)
         }
+        .backupSheets(main: true)
         .alert("Show Tour?", isPresented: Binding(get: { model.signedIn && model.store.tourPending && !busy }, set: { _ in })) {
             Button("Show Tour") { model.store.tourPending = false; presentation.startTour() }
             Button("Not Now", role: .cancel) { model.store.tourPending = false }

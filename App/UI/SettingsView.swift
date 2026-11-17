@@ -82,6 +82,7 @@ struct SettingsView: View {
         .toolbar(removing: .title)
         .toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
         .frame(width: 860, height: 600)
+        .backupSheets()
         .onChange(of: Presentation.shared.settingsTab, initial: true) { _, target in
             if let target { if let value = Pane(rawValue: target) { pane = value }; Presentation.shared.settingsTab = nil }
         }
@@ -203,7 +204,8 @@ private struct GeneralTab: View {
         let allowed = Transparency.allowed(reduceTransparency: reduceTransparency, contrast: contrast)
         let pagePercent = Int((Transparency.bounded(pageClearness) * 100).rounded())
         let sidebarPercent = Int((Transparency.bounded(sidebarSolidity) * 100).rounded())
-        SettingsPage(title: "General", subtitle: "Appearance, transparency and startup") {
+        SettingsPage(title: "General", subtitle: "Appearance, transparency, startup and backup") {
+            if let n = model.notice { Section { NoticeRow(text: n) } }
             Section { AppearanceTiles() } header: { Text("Appearance") } footer: { Text("System follows the Mac's light and dark setting.") }
             Section {
                 TransparencyTiles(allowed: allowed)
@@ -237,6 +239,7 @@ private struct GeneralTab: View {
                     if case .failed = ext { Button("Try Again") { model.vpn.tunnel.installExtension() }.contentButton() }
                 }
             } header: { Text("Startup") } footer: { Text("macOS asks once to allow the extension. It runs the tunnel for every app.") }
+            BackupSection()
         }
     }
     /// A slider's end label: small and quiet, one width for both sliders so their tracks line up.
@@ -254,6 +257,22 @@ private struct GeneralTab: View {
     }
 }
 
+/// Back Up Settings and Restore Settings; neither while the setup on show is a stand-in for one that couldn't be read.
+private struct BackupSection: View {
+    private let model = AppModel.shared
+    var body: some View {
+        let held = model.store.setupStandIn
+        Section {
+            Button { BackupFlow.shared.startSave() } label: {
+                SettingsRow(title: "Back Up Settings…", caption: held ? BackupTexts.standIn : nil, symbol: "externaldrive") { EmptyView() }
+            }.buttonStyle(.plain).disabled(held)
+            Button { BackupFlow.shared.chooseFile() } label: {
+                SettingsRow(title: "Restore Settings…", caption: held ? BackupTexts.standIn : nil, symbol: "clock.arrow.circlepath") { EmptyView() }
+            }.buttonStyle(.plain).disabled(held)
+        } header: { Text("Backup") } footer: { Text(BackupTexts.footer) }
+    }
+}
+
 private struct SubToggle: View {
     let title: String, sub: String
     var symbol: String = "switch.2"
@@ -268,7 +287,7 @@ private struct SubToggle: View {
     }
 }
 
-private struct ErrorLine: View {
+struct ErrorLine: View {
     let text: String
     var body: some View { Label(text, systemImage: "exclamationmark.triangle.fill").foregroundStyle(Ink.failedText) }
 }
@@ -302,7 +321,7 @@ private struct ConnectionsTab: View {
                 }
             }
             Section("My Servers") {
-                ForEach(s.servers) { ServerRow(server: $0) }
+                ForEach(s.servers) { ServerRow(server: $0) { importer.refill($0) } }
                 Button { importer.file() } label: {
                     SettingsRow(title: "Import WireGuard or OpenVPN File…", symbol: "doc") { EmptyView() }
                 }.buttonStyle(.plain)
@@ -373,6 +392,8 @@ private func statusColor(_ tone: StatusTone) -> Color {
 /// A saved server: its kind and use, with rename and remove.
 private struct ServerRow: View {
     let server: OwnServer
+    /// Restored without its keys: import its config again.
+    let refill: (OwnServer) -> Void
     private let model = AppModel.shared
     @State private var renaming = false
     @State private var removing = false
@@ -392,8 +413,12 @@ private struct ServerRow: View {
 
     var body: some View {
         let n = model.setup.routes.filter { $0.own == server.id }.count
-        SettingsRow(title: server.name, caption: "\(server.kind) · " + (n == 0 ? "not in use" : "used by \(n) route\(n == 1 ? "" : "s")"), symbol: "server.rack", mark: server.code) {
+        let use = "\(server.kind) · " + (n == 0 ? "not in use" : "used by \(n) route\(n == 1 ? "" : "s")")
+        SettingsRow(title: server.name, caption: server.keyless ? "\(BackupTexts.needsConfig) · \(use)" : use, symbol: "server.rack", mark: server.code,
+                    captionDot: server.keyless ? Ink.warningText : nil) {
+            if server.keyless { Button("Add Its Config Again…") { refill(server) }.contentButton() }
             Menu {
+                if server.keyless { Button("Add Its Config Again…") { refill(server) } }
                 Button("Rename…") { name = server.name; renaming = true }
                 Button("Remove…", role: .destructive) { removing = true }
             } label: { Image(systemName: "ellipsis").foregroundStyle(.secondary).frame(width: 28, height: 28).contentShape(.rect) }

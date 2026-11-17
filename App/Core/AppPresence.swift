@@ -33,16 +33,21 @@ nonisolated enum AppPresence {
     /// wait: the disk may never be plugged in again, the leftovers of an uninstaller never go, and the route holds a
     /// tunnel. After that they count as missing for it. Block and Direct are never dropped, so they wait for good.
     static let unknownGrace: TimeInterval = 30 * 24 * 3600
+    /// After a restore, an app the backup routes that this Mac has never seen keeps its route this long from the restore,
+    /// so the user has time to install it on a new Mac. Once seen it is an ordinary choice.
+    static let restoreGrace: TimeInterval = 30 * 24 * 3600
+    /// Where the time of the last restore is kept, next to the records.
+    static let restoredKey = "appPresenceRestored"
 
     /// One scan's verdict. `seen` holds the routed apps found on this Mac (bundle id → name and path), `unknown` those
     /// whose absence this scan can't confirm (a folder it couldn't read, a disk not mounted): their scan count stands
     /// still, neither reset nor advanced, and none goes on such a scan, for `unknownGrace` at most. The wait counts from
     /// the first scan that counted the app missing, and its days keep running meanwhile: a scan that can tell after a
     /// long pause may end it at once. Returns the records to keep (routed bundle ids only) and the bundle ids whose route
-    /// goes.
+    /// goes. `restored` is when a backup was last restored here (see `restoreGrace`).
     static func reconcile(
         apps: [String: String], seen: [String: (name: String, path: String)], unknown: Set<String> = [],
-        records: [String: Record], now: Date
+        records: [String: Record], now: Date, restored: Date? = nil
     ) -> (records: [String: Record], drop: [String]) {
         var out: [String: Record] = [:]
         var drop: [String] = []
@@ -57,6 +62,9 @@ nonisolated enum AppPresence {
                 continue
             }
             var r = records[id] ?? Record(name: "", path: "")
+            // Nothing of it was ever read on this Mac: no name, no place.
+            let neverSeen = r.name.isEmpty && r.path.isEmpty && r.before == nil
+            let waiting = neverSeen && restored.map { now.timeIntervalSince($0) < restoreGrace } == true
             // On another route than when it went missing (or a scan first couldn't tell): the wait starts over.
             if r.route != route { (r.missingSince, r.missedScans, r.unavailableSince, r.route) = (nil, 0, nil, route) }
             if unknown.contains(id) {
@@ -70,7 +78,7 @@ nonisolated enum AppPresence {
             if r.missingSince == nil { (r.missingSince, r.missedScans) = (now, 0) }
             // Capped: past the threshold only time counts, and an unchanged record isn't written again.
             r.missedScans = min(r.missedScans + 1, graceScans)
-            if route != BLOCK, route != DIRECT, r.missedScans >= graceScans, let since = r.missingSince, now.timeIntervalSince(since) >= graceTime {
+            if route != BLOCK, route != DIRECT, r.missedScans >= graceScans, let since = r.missingSince, now.timeIntervalSince(since) >= graceTime, !waiting {
                 drop.append(id)
             } else {
                 out[id] = r

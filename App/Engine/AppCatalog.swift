@@ -167,7 +167,8 @@ final class AppCatalog {
         let unknown = Set(routed.filter { id in
             AppPresence.undecided((old[id]?.places ?? []) + (ours[id] ?? []), failed: scan.failed, unreadable: !scan.unreadable.isEmpty, doubt: Self.unconfirmed)
         })
-        let (kept, drop) = AppPresence.reconcile(apps: setup.apps, seen: seen, unknown: unknown, records: old, now: now)
+        let (kept, drop) = AppPresence.reconcile(apps: setup.apps, seen: seen, unknown: unknown, records: old, now: now,
+                                                   restored: UserDefaults.standard.object(forKey: AppPresence.restoredKey) as? Date)
         // A remembered place another app has taken is no longer this one's, even while that app updates.
         let records = AppPresence.retire(kept) { id, path in !claims(id, [path]).isEmpty }
         if records != old { Self.presence = records }

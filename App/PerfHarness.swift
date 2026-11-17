@@ -385,8 +385,58 @@ private final class Meter: NSObject {
             await shoot(w, "\(dir)/settings-about-update\(suffix).png")
             Updates.shared.setForTesting(Self.updatesAnswered)
         }
+        if let w = last { await backupShots(w, dir, suffix) }
         last?.close()
         await meter.frames(20)
+    }
+
+    /// Settings › General scrolled to its Backup section, then the three backup sheets over it: saving (with an own
+    /// server here, so the keys switch shows), the passphrase, and restoring a made-up backup saved without keys.
+    private func backupShots(_ w: NSWindow, _ dir: String, _ suffix: String) async {
+        Presentation.shared.settingsTab = 5; await meter.frames(60)
+        func scrolls(_ v: NSView) -> [NSScrollView] { (v as? NSScrollView).map { [$0] } ?? v.subviews.flatMap(scrolls) }
+        // The pane's form: the scroll view furthest right (the sidebar's list is the other one).
+        if let root = w.contentView, let form = scrolls(root).max(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX }), let doc = form.documentView {
+            form.contentView.scroll(to: NSPoint(x: 0, y: doc.isFlipped ? max(0, doc.bounds.height - form.contentView.bounds.height) : 0))
+            form.reflectScrolledClipView(form.contentView)
+            await meter.frames(30)
+            await shoot(w, "\(dir)/settings-general-backup\(suffix).png")
+        } else { report("[Perf] no settings form to scroll"); shotsMissing += 1 }
+        let before = Store.shared.setup
+        let key = String(repeating: "A", count: 42) + "E=", peer = String(repeating: "B", count: 42) + "E="
+        guard let wg = try? WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 10.0.0.2/32\n[Peer]\nPublicKey = \(peer)\nEndpoint = 192.0.2.10:51820\nAllowedIPs = 0.0.0.0/0\n", name: "Home server") else {
+            report("[Perf] no made-up server for the backup sheets"); shotsMissing += 3; return
+        }
+        let flow = BackupFlow.shared
+        func sheet(_ name: String) async {
+            await meter.frames(60)
+            if let sheet = w.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no \(name) sheet"); shotsMissing += 1 }
+            await shoot(w, "\(dir)/\(name)\(suffix).png")
+        }
+        // Restored without its keys: the save sheet's switch shows, and Providers says it needs its config again.
+        Store.shared.update { $0.servers = [OwnServer(id: "s1", wg: wg).withoutSecrets()] }
+        flow.perfPassphrase = "correct horse battery staple"
+        flow.perfShow(.save, in: w); await sheet("backup-save")
+        flow.perfPassphrase = nil
+        flow.perfShow(nil, in: w)
+        Presentation.shared.settingsTab = 0; await meter.frames(60)
+        await shoot(w, "\(dir)/settings-providers-keyless\(suffix).png")
+        Presentation.shared.settingsTab = 5; await meter.frames(30)
+        Store.shared.update { $0 = before }
+        let file = "unbraid-backup-2026-11-17.unbraidbackup"
+        flow.perfShow(.passphrase, in: w, fileName: file); await sheet("backup-passphrase")
+        // Another Mac's setup: some of the same routes, one on a provider not signed in to here, and an own server.
+        var other = before
+        other.routes = before.routes.filter { $0.id != "jp" } + [Route(id: "se", loc: Location(provider: "surfshark", countryCode: "SE", country: "Sweden"), hue: 5),
+                                                                 Route(id: "hs", wg: wg, hue: 6, own: "s1")]
+        other.servers = [OwnServer(id: "s1", wg: wg)]
+        other.apps = before.apps.filter { $0.value != "jp" }.merging(["com.apple.Music": "se", "com.apple.mail": "hs"]) { $1 }
+        other.profiles = [Profile(name: "Travel", defaultRoute: "us")]
+        do {
+            let content = try Backup.read(Backup.export(other, app: "1.2.0", created: Date(timeIntervalSince1970: 1_794_900_000), keys: false))
+            flow.perfShow(.restore, in: w, fileName: file, content: content); await sheet("backup-restore")
+        } catch { report("[Perf] made-up backup refused: \((error as? Backup.Failure)?.message ?? "\(error)")"); shotsMissing += 1 }
+        flow.perfShow(nil, in: w); await meter.frames(30)
     }
 
     /// With nothing really connected, the copy drifts back to connecting now and then: shown connected, with a fresh

@@ -1087,3 +1087,37 @@ final class AppModel {
         }
     }
 }
+
+// MARK: - Backup
+
+extension AppModel {
+    /// Replaces this Mac's setup with a backup's (`Backup.plan`), worked out again from the setup at that moment, as one
+    /// change through the same checks as any other; the engine follows it as it follows any change. Not undoable, and
+    /// moves waiting on Undo are dropped: they name the setup it replaces.
+    func restoreBackup(_ content: Backup.Content, keepPrevious: Bool) {
+        let now = Date.now
+        // Every route either setup has, and with the profile every assignment: no edit still under way lands on top.
+        let targets = Set([RouteEdits.Target.profile, .defaultRoute] + (setup.routes + content.setup.routes).map { .location($0.id) })
+        guarded({ s in s = Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now).setup }, targets: targets, after: { [weak self] _, _ in
+            // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
+            UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)
+            for w in NSApp.windows { w.undoManager?.removeAllActions() }
+            guard let self else { return }
+            refusedProfile = nil
+            notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n")
+        }, finished: { [weak self] applied in
+            if !applied { self?.warn("The backup wasn't restored. Nothing changed.") }
+        })
+    }
+
+    /// Gives own server `id`, restored without its keys, the config just imported (`Setup.refilled`), which unblocks its
+    /// routes. Nil when done; otherwise why not.
+    func refillServer(_ id: String, _ server: OwnServer, secrets: [String] = []) -> String? {
+        guard let old = setup.servers.first(where: { $0.id == id }), old.keyless else { return "This server already has its config" }
+        guard old.kind == server.kind else { return BackupTexts.wrongKind(server.kind, needs: old.kind) }
+        guard setup.refilled(id, with: server) != nil else { return "Couldn't read that config" }
+        store.update { s in if let r = s.refilled(id, with: server) { s = r } }
+        if !secrets.isEmpty { clearClipboardAfterSave(secrets) }
+        return nil
+    }
+}

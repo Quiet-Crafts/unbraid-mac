@@ -32,28 +32,41 @@ final class Importer {
     private var confirmation = Manual.WarningConfirmation()
     private var kind = Kind.any
     private var prefix: String?
+    /// The own server, restored without its keys, that this import gives its config back to (`refill`).
+    private var refilling: (id: String, kind: String)?
 
     /// Opens the file picker. `prefix` names the server "<prefix> · <file>" (provider guides).
     func file(_ kind: Kind = .any, prefix: String? = nil) {
         error = nil
+        refilling = nil
         self.kind = kind
         self.prefix = prefix
         picking = true
     }
 
-    func shadowsocks() { error = nil; clear(); prompt = .ss }
+    func shadowsocks() { error = nil; refilling = nil; clear(); prompt = .ss }
+
+    /// The normal import for `server`'s kind (a file, or the Shadowsocks link), saved into that server.
+    func refill(_ server: OwnServer) {
+        if server.ss != nil { shadowsocks(); name = server.name } else { file() }
+        refilling = (server.id, server.kind)
+    }
 
     func clear() { prompt = nil; name = ""; user = ""; pass = ""; link = ""; promptError = nil; confirmation.clear() }
 
     func picked(_ result: Result<URL, Error>) {
         guard case .success(let url) = result else { return }
+        // A backup goes to the restore flow, which asks for its passphrase; this picker's own errors show it refused.
+        if BackupFile.looksLikeBackup(at: url) { BackupFlow.shared.open(url) { [weak self] in self?.error = $0 }; return }
         let read = readConfig(url)
         guard case .success(let text) = read else { if case .failure(let f) = read { error = f.errorDescription }; return }
         let file = String(url.deletingPathExtension().lastPathComponent.prefix(40))
         let base = file.trimmingCharacters(in: .whitespaces).isEmpty ? "Imported" : file
         let named = prefix.map { "\($0) · \(base)" } ?? base
+        let got = WgConf.hasInterface(text) ? "WireGuard" : "OpenVPN"
+        if let r = refilling, r.kind != got { error = BackupTexts.wrongKind(got, needs: r.kind); return }
         clear()
-        name = named
+        name = refilling.flatMap { r in AppModel.shared.setup.servers.first { $0.id == r.id }?.name } ?? named
         // A broken config fails here, before the user is asked to name it.
         do {
             if kind == .wg || (kind == .any && WgConf.hasInterface(text)) {
@@ -103,7 +116,10 @@ final class Importer {
                 promptError = "Weak security: \(weakness) Import anyway?"
                 return false
             }
-            model.importServer(target, server, secrets: secrets)
+            if let r = refilling {
+                if let why = model.refillServer(r.id, server, secrets: secrets) { promptError = why; return false }
+                refilling = nil
+            } else { model.importServer(target, server, secrets: secrets) }
             clear()
             return true
         } catch {
