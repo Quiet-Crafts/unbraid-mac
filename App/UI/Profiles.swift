@@ -70,7 +70,9 @@ struct ManageProfilesSheet: View {
     /// As tall as its content wants where the window has room, else what fits under the window's toolbar (the
     /// smallest window included); the rest scrolls.
     private static func height() -> CGFloat {
-        min(680, max(400, ((NSApp.mainWindow ?? NSApp.keyWindow)?.contentLayoutRect.height ?? 530) - 30))
+        // The window it hangs from: the main one, else the frontmost visible titled window that isn't a sheet.
+        let window = NSApp.mainWindow ?? NSApp.orderedWindows.first { $0.isVisible && $0.styleMask.contains(.titled) && !$0.isSheet }
+        return min(680, max(400, (window?.contentLayoutRect.height ?? 530) - 30))
     }
 
     var body: some View {
