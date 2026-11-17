@@ -724,38 +724,74 @@ nonisolated enum Backup {
         }
     }
 
-    /// Counting only what adds to a guess, judged on the passphrase as the file's key is made from it (NFC): four or more
-    /// different words of three letters or more that share no stem, or enough bits for the characters that count
-    /// (`guessable`, with spaces and separators left out) and the kinds of character it uses. Length alone is no sign of a passphrase picked at random: however often a letter,
-    /// a word or a common password is repeated, the repeats add nothing.
+    /// How hard a passphrase is to guess, by a few rules that can be said in a sentence each. It is judged as the file's
+    /// key is made from it (NFC), in lower case, cut into words at spaces and ASCII punctuation:
+    /// - each word counts once: a word whose stem (the word without the number at its end) came before adds nothing,
+    ///   nor does the punctuation after it, so "pass1 pass2 pass3" is one word; spaces add nothing;
+    /// - a common password counts as one character;
+    /// - in what is left, a character adds nothing when it repeats the one before, starts a stretch of two or more
+    ///   that already appeared, or continues a walk: a step to a neighbouring plain letter or digit (abc, 321) or key
+    ///   on a keyboard (qaz, asd), after such a step, or the same with every other character (q1w2e3).
+    /// Hard: four or more different words of three characters or more that count for 12 characters together, or 72
+    /// bits from the counted characters and the kinds used (letters of either case, letters without case such as Han,
+    /// digits, ASCII symbols, other symbols such as emoji). Only plain letters and digits make walks.
     static func strength(_ passphrase: String) -> Strength {
         let p = passphrase.precomposedStringWithCanonicalMapping
         let kinds = [(26, p.contains(where: \.isLowercase)), (26, p.contains(where: \.isUppercase)), (10, p.contains(where: \.isNumber)),
-                     (33, p.contains { !$0.isLetter && !$0.isNumber })]
-        let pool = max(1, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) })
-        // Judged without separators, so a word with a counter ("pass1 pass2 pass3") counts its stem once.
-        let joined = String(p.filter { !$0.isWhitespace && !"-_.,".contains($0) })
-        let counted = guessable(joined)
+                     (2000, p.contains { $0.isLetter && !$0.isLowercase && !$0.isUppercase }), (33, p.contains { $0.isASCII && !$0.isLetter && !$0.isNumber && !$0.isWhitespace }),
+                     (1000, p.contains { !$0.isASCII && !$0.isLetter && !$0.isNumber })]
+        let pool = max(2, kinds.reduce(0) { $0 + ($1.1 ? $1.0 : 0) })
+        let (words, kept) = distinctWords(p)
+        let counted = guessable(kept)
         let bits = Double(counted) * log2(Double(pool))
-        let words = Set(p.lowercased().split(whereSeparator: \.isWhitespace).filter { $0.count >= 3 }.map(String.init))
-        return (words.count >= 4 && words.allSatisfy { guessable($0) >= 3 } && counted >= 12) || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
+        let fourWords = words.filter { $0.count >= 3 && guessable($0) >= 3 }.count >= 4 && counted >= 12
+        return fourWords || bits >= 72 ? .hard : bits >= 50 ? .fair : .easy
     }
 
     /// Passwords everyone tries first: each counts as one character wherever it appears.
     private static let common = ["password", "passw0rd", "qwerty", "azerty", "letmein", "welcome", "iloveyou", "admin", "unbraid", "monkey", "dragon", "123456"]
 
-    /// How many characters of `s` (as the user sees them) add to a guess: not one that repeats the one before or
-    /// continues a run (abc, 321), nor a stretch of two or more that already appeared; a common password counts once.
-    private static func guessable(_ s: String) -> Int {
-        var t = s.lowercased()
+    /// The words of `p` in lower case, each common password one character, each stem once (see `strength`), and the
+    /// text that counts: the words kept, each with the punctuation after it (spaces add nothing).
+    private static func distinctWords(_ p: String) -> (words: [String], kept: String) {
+        var t = p.lowercased()
         for w in common { t = t.replacingOccurrences(of: w, with: "\u{1}") }
-        // One number per character: its scalar when it is one (so runs can be told), else an id of its own.
-        var ids: [Character: Int] = [:]
-        var c: [Int] = []
-        for ch in t.prefix(256) {
-            if ch.unicodeScalars.count == 1, let v = ch.unicodeScalars.first?.value { c.append(Int(v)); continue }
-            if ids[ch] == nil { ids[ch] = 0x200000 + ids.count }
-            c.append(ids[ch] ?? 0)
+        func separator(_ c: Character) -> Bool { c.isWhitespace || (c.isASCII && !c.isLetter && !c.isNumber && c != "\u{1}") }
+        // Pieces: a word and the separators after it; what comes before the first word stands alone.
+        var pieces: [(word: String, after: String)] = [("", "")]
+        for c in t.prefix(4096) {
+            if separator(c) { pieces[pieces.count - 1].after.append(c) }
+            else if pieces[pieces.count - 1].after.isEmpty { pieces[pieces.count - 1].word.append(c) }
+            else { pieces.append((String(c), "")) }
+        }
+        var stems: Set<String> = [], words: [String] = [], kept = ""
+        for piece in pieces {
+            let stem = String(piece.word.reversed().drop(while: \.isNumber).reversed())
+            guard piece.word.isEmpty || stems.insert(stem.isEmpty ? piece.word : stem).inserted else { continue }
+            if !piece.word.isEmpty { words.append(piece.word) }
+            kept += piece.word + piece.after.filter { !$0.isWhitespace }
+        }
+        return (words, kept)
+    }
+
+    /// Plain letters and digits next to each other on a QWERTY, QWERTZ or AZERTY keyboard, both ways.
+    private static let keyboard: Set<String> = {
+        var pairs: Set<String> = []
+        for rows in [["1234567890", "qwertyuiop", "asdfghjkl", "zxcvbnm"], ["1234567890", "qwertzuiop", "asdfghjkl", "yxcvbnm"],
+                     ["1234567890", "azertyuiop", "qsdfghjklm", "wxcvbn"]] {
+            let keys = rows.enumerated().flatMap { r, row in row.enumerated().map { (ch: $0.element, x: Double($0.offset) + [0, 0.5, 0.75, 1.25][r], y: r) } }
+            for a in keys { for b in keys where a.ch != b.ch && abs(a.y - b.y) <= 1 && abs(a.x - b.x) <= 1 { pairs.insert("\(a.ch)\(b.ch)") } }
+        }
+        return pairs
+    }()
+
+    /// How many characters of `s` (as the user sees them) add to a guess (see `strength`).
+    private static func guessable(_ s: String) -> Int {
+        let c = Array(s.prefix(256))
+        /// A step between two plain letters or digits: next to each other in the alphabet or on a keyboard.
+        func step(_ a: Character, _ b: Character) -> Bool {
+            guard a.isASCII, b.isASCII, a.isLetter || a.isNumber, b.isLetter || b.isNumber, let x = a.asciiValue, let y = b.asciiValue else { return false }
+            return abs(Int(x) - Int(y)) == 1 || keyboard.contains("\(a)\(b)")
         }
         /// The longest stretch starting at `i` that already appeared before it.
         func seen(_ i: Int) -> Int {
@@ -771,8 +807,8 @@ nonisolated enum Backup {
         while i < c.count {
             let l = seen(i)
             if l >= 2 { i += l; continue }
-            let step = i > 0 ? c[i] - c[i - 1] : 99, before = i > 1 ? c[i - 1] - c[i - 2] : 99
-            if step != 0 && !(abs(step) == 1 && step == before) { n += 1 }
+            let walk = (i >= 2 && step(c[i - 2], c[i - 1]) && step(c[i - 1], c[i])) || (i >= 4 && step(c[i - 4], c[i - 2]) && step(c[i - 2], c[i]))
+            if (i == 0 || c[i] != c[i - 1]) && !walk { n += 1 }
             i += 1
         }
         return n

@@ -210,6 +210,7 @@
 		9F5232DCD7A84A5227A65B51 /* Units.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7B6154941CC2FAC4C16927 /* Units.swift */; };
 		9FAD09817C39AE167DE90E07 /* AutoSwitchRunTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B5D0B3FCCDDF2804629401 /* AutoSwitchRunTests.swift */; };
 		A0334B376022C2F529B6AA90 /* Sealed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62175C4168FC887F55A0FC1C /* Sealed.swift */; };
+		A072908FC85AC91E826B5CC0 /* BackupWeakensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D9283AAECFE0D84588DD42 /* BackupWeakensTests.swift */; };
 		A0923958EF2B852896B478C6 /* Windscribe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40089F2AF32B847A51B7520B /* Windscribe.swift */; };
 		A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DB22B20CCC8A1A75D50ABF /* Snapshot.swift */; };
 		A0B78BC1AF6E3BBD58A15B76 /* QRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBFF80940E76A337E1B5C0F /* QRTests.swift */; };
@@ -477,6 +478,7 @@
 		7AE71B0CFB30E8126AC1FC1C /* SiteEditsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SiteEditsTests.swift; sourceTree = "<group>"; };
 		7E8A8C13C5A5F8C5BF3B8421 /* Rescans.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Rescans.swift; sourceTree = "<group>"; };
 		80531678DA162154B27082E4 /* NudgesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NudgesTests.swift; sourceTree = "<group>"; };
+		80D9283AAECFE0D84588DD42 /* BackupWeakensTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupWeakensTests.swift; sourceTree = "<group>"; };
 		829DA2BB40B18AD9016F818A /* SetupSignOutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SetupSignOutTests.swift; sourceTree = "<group>"; };
 		835DB14ADF14FE71FA5A151B /* AutoSwitchWatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutoSwitchWatch.swift; sourceTree = "<group>"; };
 		8591ED5655491897B5E01B38 /* ProviderStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProviderStatus.swift; sourceTree = "<group>"; };
@@ -661,6 +663,7 @@
 				76B4086089CF98CC6726C4CE /* AutoSwitchTests.swift */,
 				B22DA31F6CBC5B95C2FB25F2 /* BackupFileTests.swift */,
 				A51AD7BD0990B95A8AD5C487 /* BackupTests.swift */,
+				80D9283AAECFE0D84588DD42 /* BackupWeakensTests.swift */,
 				CB126BA95FDBFAF351EF3B8D /* CatalogTests.swift */,
 				AAD68A0A3A7C2A37D56B3C04 /* CatalogTrustTests.swift */,
 				ED294231E10190BE3CF49FDD /* ChangeObserverTests.swift */,
@@ -1300,6 +1303,7 @@
 				F0C4FD27445DBC976122E1C3 /* BackupFileTests.swift in Sources */,
 				61EC83ED7C609E6EBE4AECD2 /* BackupTests.swift in Sources */,
 				D5CD952EEAE006C82ADBD184 /* BackupTexts.swift in Sources */,
+				A072908FC85AC91E826B5CC0 /* BackupWeakensTests.swift in Sources */,
 				57AF528D0BA8A5BD2B8D54F1 /* Bounded.swift in Sources */,
 				3FF20507BF0B0547705EAD22 /* Catalog.swift in Sources */,
 				26EB5012B6D4CF54162F9935 /* CatalogPin.swift in Sources */,
