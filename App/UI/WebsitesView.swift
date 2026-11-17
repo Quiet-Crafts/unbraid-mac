@@ -37,8 +37,11 @@ struct WebsitesView: View {
             }
         }
         .toolbar {
-            ToolbarItemGroup(placement: .principal) {
+            ToolbarItem(placement: .principal) {
                 SearchField(text: $query, prompt: "Search websites").frame(minWidth: 150, idealWidth: 260, maxWidth: 320)
+            }
+            // Its own item: grouped with the search field, the two are drawn as one control.
+            ToolbarItem(placement: .primaryAction) {
                 Button { Presentation.shared.addSite = SiteTarget() } label: { Label("Add Website…", systemImage: "plus") }
                     .help("Add a website")
             }

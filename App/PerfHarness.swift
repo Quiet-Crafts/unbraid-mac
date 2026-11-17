@@ -268,7 +268,8 @@ private final class Meter: NSObject {
     /// A month of traffic: video and music heaviest, each app through its own route, the websites through theirs.
     private func seedShotTraffic() {
         let heavy = ["com.apple.TV", "com.apple.Music", "com.apple.Safari", "com.apple.Photos", "com.apple.podcasts", "com.apple.Maps", "com.apple.news", "com.apple.AppStore", "com.apple.mail"]
-        let sites = Self.shotSites.keys.sorted().compactMap(StatsMath.siteKey)
+        // A blocked website carries nothing, so it gets no traffic here either.
+        let sites = Self.shotSites.filter { $0.value != BLOCK }.keys.sorted().compactMap(StatsMath.siteKey)
         let keys = appKeys.filter { !heavy.contains($0) } + sites + heavy.reversed()
         let exits = keys.map { StatsMath.site($0).flatMap { Self.shotSites[$0] } ?? Self.shotApps[$0] ?? "nl" }
         Stats.shared.seedForPerf(apps: keys, routes: Self.shotRoutes.map(\.id) + [Self.shotHome.id], exits: exits)

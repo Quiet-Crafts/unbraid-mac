@@ -165,7 +165,7 @@ struct AppsTable: NSViewRepresentable {
             switch cell {
             case let c as AppCell: c.show(row, site: sites)
             case let c as RouteCell: c.show(row.id, site: sites) { [weak self, weak c] in if let c { self?.openMenu(row.id, from: c) } }
-            case let c as WeekRowCell: c.show(row.id, bytes: week[row.id], peak: peak)
+            case let c as WeekRowCell: c.show(row.id, bytes: week[row.id], peak: peak, site: sites)
             default: break
             }
         }
@@ -687,11 +687,12 @@ private final class WeekRowCell: DrawnCell {
     private var selected = NSAttributedString()
     private var width: CGFloat = 56
 
-    func show(_ app: String, bytes: Int64?, peak: Int64) {
+    func show(_ app: String, bytes: Int64?, peak: Int64, site: Bool = false) {
         var new = Shows(text: bytes.map(Units.bytes) ?? "–")
         if let bytes, peak > 0 {
             let s = AppModel.shared.setup
-            let route = s.routeOf(app)
+            // A website's bar is in its own route's colour, not its app's.
+            let route = site ? s.sites[app] ?? s.defaultRoute : s.routeOf(app)
             new.fraction = CGFloat(bytes) / CGFloat(peak)
             new.color = bytes > 0 && route != BLOCK ? s.nsColor(route) : nil
         }
