@@ -1,8 +1,9 @@
 Changes to sing-box v1.14.4 (GNU GPL v3.0 or later), made by the unbraid authors, last on 2026-11-17:
 a stand-in (fake) address is never handed to a second name while the range is unchanged: once the range is used
 up, lookups of new names are answered with a server failure instead, an address that still names a domain is
-skipped even when the saved position is older (a start moves past such addresses), and libbox tells how many
-addresses can still be handed out (FakeIPRemaining), so the app can move to a fresh range in time.
+skipped even when the saved position is older (a start moves past such addresses), an address whose name could not
+be saved is not handed out (and the pool then counts as used up), and libbox tells how many addresses can still be
+handed out (FakeIPRemaining), so the app can move to a fresh range in time.
 Applied by tools/build-libbox.sh; git apply skips these lines.
 
 diff --git a/dns/transport/fakeip/fakeip.go b/dns/transport/fakeip/fakeip.go
@@ -30,7 +31,7 @@ index 03daeff..eecb92b 100644
  		return nil, err
  	}
 diff --git a/dns/transport/fakeip/store.go b/dns/transport/fakeip/store.go
-index b7c51df..95d4b31 100644
+index b7c51df..2204579 100644
 --- a/dns/transport/fakeip/store.go
 +++ b/dns/transport/fakeip/store.go
 @@ -2,8 +2,11 @@ package fakeip
@@ -45,7 +46,7 @@ index b7c51df..95d4b31 100644
  
  	"github.com/sagernet/sing-box/adapter"
  	E "github.com/sagernet/sing/common/exceptions"
-@@ -13,6 +16,47 @@ import (
+@@ -13,6 +16,50 @@ import (
  
  var _ adapter.FakeIPStore = (*Store)(nil)
  
@@ -66,6 +67,9 @@ index b7c51df..95d4b31 100644
 +	}
 +	s.addressAccess.Lock()
 +	defer s.addressAccess.Unlock()
++	if s.unsure {
++		return 0
++	}
 +	left := int64(math.MaxInt32)
 +	if s.inet4Current.IsValid() {
 +		left = min(left, addressesBetween(s.inet4Current, s.inet4Last))
@@ -93,7 +97,17 @@ index b7c51df..95d4b31 100644
  type Store struct {
  	ctx        context.Context
  	logger     logger.Logger
-@@ -82,14 +126,38 @@ func (s *Store) Start() error {
+@@ -25,6 +72,9 @@ type Store struct {
+ 	addressAccess sync.Mutex
+ 	inet4Current  netip.Addr
+ 	inet6Current  netip.Addr
++
++	// A mapping failed to save: what the cache holds may differ from what this store counted.
++	unsure bool
+ }
+ 
+ func NewStore(ctx context.Context, logger logger.Logger, inet4Range netip.Prefix, inet6Range netip.Prefix) *Store {
+@@ -82,14 +132,38 @@ func (s *Store) Start() error {
  		_ = storage.FakeIPReset()
  	}
  	s.storage = storage
@@ -132,7 +146,7 @@ index b7c51df..95d4b31 100644
  	if s.storage == nil {
  		return nil
  	}
-@@ -117,31 +185,34 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
+@@ -117,31 +191,38 @@ func (s *Store) Create(domain string, isIPv6 bool) (netip.Addr, error) {
  		return address, nil
  	}
  
@@ -178,24 +192,29 @@ index b7c51df..95d4b31 100644
 -		address = nextAddress
 +		address = address.Next()
  	}
-+	// An address whose name could not be saved is not handed out: after a reload it would look unused.
++	// An address whose name could not be saved is not handed out, and the position stays before it: no gap a later
++	// start would stop at (reconcile), with mapped addresses counted as free beyond it. The cache can't be trusted
++	// any more either, so the pool counts as used up and the app moves to a fresh range, which resets it.
  	err := s.storage.FakeIPStore(address, domain)
  	if err != nil {
 -		s.logger.Warn("save FakeIP cache: ", err)
++		*current = address.Prev()
++		s.unsure = true
 +		return netip.Addr{}, E.Cause(err, "save FakeIP cache")
  	}
  	s.storage.FakeIPSaveMetadataAsync(&adapter.FakeIPMetadata{
  		Inet4Range:   s.inet4Range,
 diff --git a/dns/transport/fakeip/store_test.go b/dns/transport/fakeip/store_test.go
 new file mode 100644
-index 0000000..4f004ef
+index 0000000..67092c9
 --- /dev/null
 +++ b/dns/transport/fakeip/store_test.go
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,158 @@
 +package fakeip
 +
 +import (
 +	"context"
++	"errors"
 +	"fmt"
 +	"net/netip"
 +	"testing"
@@ -297,6 +316,56 @@ index 0000000..4f004ef
 +	}
 +	if address, err := store.Create("n0.example", false); err != nil || address != netip.MustParseAddr("198.18.0.2") {
 +		t.Fatalf("n0.example now %s (%v), want 198.18.0.2", address, err)
++	}
++}
++
++type failingStorage struct {
++	*MemoryStorage
++	fail bool
++}
++
++func (s *failingStorage) FakeIPStore(address netip.Addr, domain string) error {
++	if s.fail {
++		return errors.New("disk full")
++	}
++	return s.MemoryStorage.FakeIPStore(address, domain)
++}
++
++func TestAFailedSaveLeavesNoGapAndCountsThePoolUsedUp(t *testing.T) {
++	prefix := netip.MustParsePrefix("198.18.0.0/28")
++	store := NewStore(context.Background(), logger.NOP(), prefix, netip.Prefix{})
++	if err := store.Start(); err != nil {
++		t.Fatal(err)
++	}
++	storage := &failingStorage{MemoryStorage: store.storage.(*MemoryStorage)}
++	store.storage = storage
++	store.Create("a.example", false)
++	storage.fail = true
++	if _, err := store.Create("b.example", false); err == nil {
++		t.Fatal("b.example given an address whose name wasn't saved")
++	}
++	if left := Remaining(); left != 0 {
++		t.Fatalf("remaining %d after a failed save, want 0", left)
++	}
++	storage.fail = false
++	for i := 0; i < 11; i++ {
++		store.Create(fmt.Sprint("n", i, ".example"), false)
++	}
++	if address, _ := store.Create("c.example", false); address != netip.MustParseAddr("198.18.0.14") {
++		t.Fatalf("c.example given %s, want 198.18.0.14 (no gap left at 198.18.0.3)", address)
++	}
++	store.Close()
++	// A start on the same cache from a position saved before all of it counts nothing free.
++	again := NewStore(context.Background(), logger.NOP(), prefix, netip.Prefix{})
++	again.storage, again.inet4Current, again.inet4Last = storage, netip.MustParseAddr("198.18.0.1"), store.inet4Last
++	again.reconcile()
++	running.Store(again)
++	defer running.CompareAndSwap(again, nil)
++	if left := Remaining(); left != 0 {
++		t.Fatalf("remaining %d after a restart on a full cache, want 0", left)
++	}
++	if _, err := again.Create("d.example", false); err != ErrExhausted {
++		t.Fatalf("d.example: %v, want ErrExhausted", err)
 +	}
 +}
 diff --git a/experimental/libbox/fakeip.go b/experimental/libbox/fakeip.go
