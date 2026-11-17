@@ -166,16 +166,15 @@ final class AutoSwitchWatch {
         } else if m.setup.pendingSwitch == nil, m.setup.profile == name { own = nil }
     }
 
-    /// One notification; in the window instead when notifications aren't allowed (a refusal already shows there).
+    /// One notification, and the same in the window, whether or not the notification shows (a refusal already shows
+    /// there).
     private func tell(_ text: String, inWindow: Bool) {
         let key = run.acted
         guard !told.contains(where: { $0.0 == key && $0.1 == text }) else { return }
         told = Array((told + [(key, text)]).suffix(20))
-        guard inWindow else { return Notifier.post(title: "Profile not switched", body: text) }
-        Notifier.post(title: "Profile not switched", body: text) { @MainActor [weak self] in
-            guard let m = self?.model else { return }
-            m.notice = [m.notice, text].compactMap { $0 }.joined(separator: "\n")
-        }
+        Notifier.post(title: "Profile not switched", body: text)
+        guard inWindow, let m = model else { return }
+        m.notice = [m.notice, text].compactMap { $0 }.joined(separator: "\n")
     }
 
     #if DEBUG
