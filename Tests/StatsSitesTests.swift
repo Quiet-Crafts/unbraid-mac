@@ -113,12 +113,40 @@ final class StatsSitesTests: XCTestCase {
         // counted: its name's traffic stays its app's. The counts and the widget go by the same.
         s.sites = ["nas.internal": DIRECT, "printer.lan": "us", "nas.corp.example": "us", "tracker.lan": BLOCK, "netflix.com": "us"]
         XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "netflix.com"])
-        XCTAssertEqual(StatsMath.countedSites(s, tailnet: "corp.example"), ["netflix.com"])
-        XCTAssertEqual(SiteEdits.applied("us", in: s, tailnet: "corp.example"), ["netflix.com"])
         XCTAssertEqual(SiteEdits.applied(BLOCK, in: s), ["tracker.lan"])
         XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), [])
+    }
+
+    /// One decision for every part of the app: with Headscale's own domain accepted, a rule under it is not applied for
+    /// the compiler, the statistics, the route counts, the rows and the widgets alike; with Tailscale off it is.
+    func testEveryPartJudgesAWebsiteByTheSameTailnetDomain() throws {
+        var s = Setup()
+        s.routes = [Route(id: "us")]
+        s.defaultRoute = DIRECT
+        s.sites = ["host.corp.example": DIRECT, "nas.corp.example": "us", "netflix.com": "us", "tracker.corp.example": BLOCK]
+        s.home.tailscale = true
+        s.home.tsControlUrl = "https://hs.example"
+        s.home.tsSuffix = "corp.example"
+        XCTAssertEqual(Sites.tailnet(of: s), "corp.example")
+        XCTAssertEqual(Sites.applied(s), ["netflix.com": "us", "tracker.corp.example": BLOCK])
+        XCTAssertEqual(StatsMath.countedSites(s), ["netflix.com"])
+        XCTAssertEqual(SiteEdits.applied("us", in: s), ["netflix.com"])
+        XCTAssertFalse(Sites.isApplied("host.corp.example", in: s))
         let widget = Snapshot.make(phase: .off, since: nil, pausedUntil: nil, failed: false, edited: s, running: nil, exits: 0, week: [])
         XCTAssertNil(widget.directSites)
+        XCTAssertEqual(widget.blockedSites, 1)
+        // The compiler, given the domain the app gives it, leaves the same rules out.
+        XCTAssertEqual(Sites.applied(s, tailnet: "Corp.Example."), Sites.applied(s))
+        // (Compiled without Tailscale's own engine parts, which need an account; the domain is handed in as the app does.)
+        var plain = s
+        plain.home.tailscale = false
+        plain.routes = []
+        let config = try Compiler.compile(Compiler.Input(setup: plain, links: [:], apps: [:], selfPattern: "^/x$", tsSuffix: Sites.tailnet(of: s)))
+        XCTAssertFalse(config.contains("host.corp.example"))
+        XCTAssertTrue(config.contains("tracker.corp.example"))
+        s.home.tailscale = false
+        XCTAssertNil(Sites.tailnet(of: s))
+        XCTAssertEqual(StatsMath.countedSites(s), ["host.corp.example", "nas.corp.example", "netflix.com"])
     }
 
     func testAWebsitesExitIsItsOwnRouteWhereRoutesShareATunnel() {

@@ -112,7 +112,7 @@ final class Stats {
 
     private func track() {
         let now = withObservationTracking {
-            (Connection.shared.state.phase, Store.shared.setup.prefs.stats, StatsMath.countedSites(Connection.shared.running ?? Store.shared.setup, tailnet: Compiler.tsSuffix(Store.shared.tsSuffix)))
+            (Connection.shared.state.phase, Store.shared.setup.prefs.stats, StatsMath.countedSites(Connection.shared.running ?? Store.shared.setup))
         } onChange: {
             Task { @MainActor [weak self] in self?.track() }
         }

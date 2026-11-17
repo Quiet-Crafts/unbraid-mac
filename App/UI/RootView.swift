@@ -371,7 +371,7 @@ private struct RouteSidebarRow: View {
 
     var body: some View {
         let s = model.setup
-        let apps = model.apps.count(on: id), sites = SiteEdits.applied(id, in: s, tailnet: model.store.tsSuffix).count
+        let apps = model.apps.count(on: id), sites = SiteEdits.applied(id, in: s).count
         let silent = model.vpn.state.health(id) == .silent
         Label {
             HStack(spacing: 8) {

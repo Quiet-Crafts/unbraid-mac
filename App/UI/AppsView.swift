@@ -152,14 +152,14 @@ struct AppsView: View {
     }
 
     /// The websites this route's page lists.
-    private var shownSites: [String] { route.map { SiteEdits.applied($0, in: model.setup, tailnet: model.store.tsSuffix) } ?? [] }
+    private var shownSites: [String] { route.map { SiteEdits.applied($0, in: model.setup) } ?? [] }
 
     // MARK: Header
 
     @ViewBuilder private func header(_ s: Setup) -> some View {
         if let id = route {
             // With websites on it, the line says how many of each: first on Direct and Blocked, whose line is a sentence.
-            let sites = SiteEdits.applied(id, in: s, tailnet: model.store.tsSuffix).count
+            let sites = SiteEdits.applied(id, in: s).count
             let count = sites == 0 ? nil : Snapshot.count(apps: model.apps.count(on: id), sites: sites)
             let parts = id == DIRECT || id == BLOCK ? [count, about(id, s)] : [about(id, s), count]
             PageHeader(title: s.label(id), subtitle: parts.compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), slash: s.color(id),
@@ -457,7 +457,7 @@ private struct RouteHealthCards: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(RouteHealth.title).font(.system(size: 13, weight: .semibold))
                             Text(RouteHealth.explanation(route, apps: model.apps.count(on: route.id),
-                                                        sites: SiteEdits.applied(route.id, in: model.setup, tailnet: model.store.tsSuffix).count,
+                                                        sites: SiteEdits.applied(route.id, in: model.setup).count,
                                                         othersAnswer: model.vpn.state.answering.contains { $0 != route.id }))
                                 .font(.system(size: 12)).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                         }
@@ -502,7 +502,7 @@ private struct LiveStrip: View {
     var body: some View {
         if model.vpn.state.phase == .on && model.setup.prefs.stats {
             let series = route == DIRECT ? Stats.shared.live.direct : Stats.shared.live.down[route] ?? []
-            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route), sites = SiteEdits.applied(route, in: model.setup, tailnet: model.store.tsSuffix).count
+            let week = self.week.routes[route] ?? 0, apps = model.apps.count(on: route), sites = SiteEdits.applied(route, in: model.setup).count
             let now = Units.rate(Double(series.last ?? 0))
             HStack(spacing: 24) {
                 VStack(alignment: .leading, spacing: 4) {

@@ -40,26 +40,40 @@ nonisolated enum Sites {
         return local.contains { under(name, $0) } ? "\(name) is a name on your own network: \(no)" : nil
     }
 
-    /// The websites whose rules apply: clean names, and for a route or Direct none on the own network or in the
-    /// tailnet (a setup saved before those were refused may hold one; a block of one stays a block). The compiler
-    /// writes rules for these only, and statistics and every count go by the same, so a rule shown as not applied
-    /// neither counts nor takes its app's traffic.
-    static func applied(_ sites: [String: String], tailnet: String? = nil) -> [String: String] {
-        sites.filter { isApplied($0.key, $0.value, tailnet: tailnet) }
+    /// The one decision of which of `setup`'s websites apply: clean names, and for a route or Direct none on the own
+    /// network or in the tailnet whose domain is `tailnet` (a setup saved before those were refused may hold one; a
+    /// block of one stays a block). The compiler writes rules for these only, and statistics, every count, the
+    /// widgets, the rows and restore's comparison go by the same, so a rule shown as not applied neither counts nor
+    /// takes its app's traffic. `tailnet` is normalised here, so the raw and the compiler's forms agree.
+    static func applied(_ setup: Setup, tailnet: String?) -> [String: String] {
+        let tailnet = Compiler.tsSuffix(tailnet)
+        return setup.sites.filter { isClean($0.key) && ($0.value == BLOCK || ownNetwork($0.key, tailnet: tailnet) == nil) }
     }
 
-    static func isApplied(_ name: String, _ route: String, tailnet: String? = nil) -> Bool {
-        isClean(name) && (route == BLOCK || ownNetwork(name, tailnet: tailnet) == nil)
-    }
+    /// `applied` with `setup`'s own tailnet domain (`tailnet(of:)`): what every part of the app but the compiler,
+    /// which is handed the same domain with its input, uses.
+    static func applied(_ setup: Setup) -> [String: String] { applied(setup, tailnet: tailnet(of: setup)) }
+
+    /// Whether `setup`'s rule for `name` applies (see `applied`).
+    static func isApplied(_ name: String, in setup: Setup) -> Bool { applied(setup)[name] != nil }
+
+    /// The tailnet domain `setup`'s websites are judged by: the one the setup has accepted while Tailscale runs, as
+    /// `Store.tsSuffix` reads it and the engine is given it.
+    static func tailnet(of setup: Setup) -> String? { setup.tailscale ? Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) : nil }
 
     /// The websites blocked in `before` that `after` opens, whole or in part: no longer blocked itself, or a name under
     /// it given a route or Direct of its own there (the most specific rule wins, Block included). A name under it that
     /// was open before already opens nothing new.
+    /// Given websites alone, judged without a tailnet domain; `opened(_:_:)` with the setups judges them as the app does.
     static func opened(_ before: [String: String], _ after: [String: String]) -> [String] {
+        opened(Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: before), Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: after))
+    }
+
+    static func opened(_ before: Setup, _ after: Setup) -> [String] {
         func gets(_ name: String, _ rules: [String: String]) -> String? { rules.filter { under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
         let was = applied(before), now = applied(after)
         let holes = now.filter { $0.value != BLOCK && gets($0.key, was) == BLOCK }.keys
-        return before.filter { b in b.value == BLOCK && (gets(b.key, now) != BLOCK || holes.contains { under($0, b.key) }) }.keys.sorted()
+        return before.sites.filter { b in b.value == BLOCK && (gets(b.key, now) != BLOCK || holes.contains { under($0, b.key) }) }.keys.sorted()
     }
 
     /// Whether `name` is `suffix` or a name under it.

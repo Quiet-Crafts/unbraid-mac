@@ -94,7 +94,7 @@ struct SitesTable: View {
     static func rows(_ s: Setup, route: String? = nil, sort: AppsSort, rank: [String: Int64]) -> [Row] {
         let week = Self.week(rank)
         // A route's page lists the websites whose rules put them there; the Websites page lists every one saved.
-        let listed = route == nil ? s.sites : Sites.applied(s.sites, tailnet: AppModel.shared.store.tsSuffix)
+        let listed = route == nil ? s.sites : Sites.applied(s)
         return listed.filter { route == nil || $0.value == route }
             .map { Row(id: $0.key, name: Sites.shown($0.key), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)
@@ -135,7 +135,7 @@ struct AddWebsiteSheet: View {
 
     var body: some View {
         let s = model.setup
-        let check = SiteEdits.check(address, in: s.sites, tailnet: model.store.tsSuffix)
+        let check = SiteEdits.check(address, in: s.sites, tailnet: Sites.tailnet(of: s))
         SheetFrame(title: "Add Website", subtitle: "The address and every address under it take the route you choose.") {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 6) {
@@ -220,7 +220,7 @@ struct AddWebsiteSheet: View {
     private func valid(_ check: SiteEdits.Check) -> Bool { if case .valid = check { return true }; return false }
 
     private func add() {
-        guard valid(SiteEdits.check(address, in: model.setup.sites, tailnet: model.store.tsSuffix)) else { return }
+        guard valid(SiteEdits.check(address, in: model.setup.sites, tailnet: Sites.tailnet(of: model.setup))) else { return }
         if model.addSite(address, to: choice, undo: undo) == nil { dismiss() }
     }
 }

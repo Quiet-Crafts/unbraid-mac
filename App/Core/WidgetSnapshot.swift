@@ -13,7 +13,7 @@ extension Snapshot {
                      silent: [String] = [], answering: Set<String> = [], blocked: Set<String> = [], tsState: String? = nil) -> Snapshot {
         let s = phase == .on ? running ?? edited : edited
         let counts = Dictionary(grouping: s.apps.values, by: { $0 }).mapValues(\.count)
-        let sites = Dictionary(grouping: Sites.applied(s.sites).values, by: { $0 }).mapValues(\.count)
+        let sites = Dictionary(grouping: Sites.applied(s).values, by: { $0 }).mapValues(\.count)
         let down = blocked.union(silent)
         // A route through a Tailscale exit node is only as well as Tailscale: not working while it is stopped or
         // waits for a sign-in or an approval, unknown while it hasn't said or is starting.

@@ -425,8 +425,8 @@ nonisolated enum StatsMath {
     /// The websites whose traffic the extension counts apart for `setup` (what the engine runs): those that carry
     /// traffic, so not Block, as rules keep them and never more than a profile holds.
     /// A rule that isn't applied (`Sites.applied`) is left out: its name's traffic stays its app's.
-    static func countedSites(_ setup: Setup, tailnet: String? = nil) -> [String] {
-        Array(Sites.applied(setup.sites, tailnet: tailnet).filter { $0.value != BLOCK }.keys.sorted().prefix(SiteMatch.max))
+    static func countedSites(_ setup: Setup) -> [String] {
+        Array(Sites.applied(setup).filter { $0.value != BLOCK }.keys.sorted().prefix(SiteMatch.max))
     }
 
     /// Bytes per website address, from totals per app key (`Stats.appTotals`).

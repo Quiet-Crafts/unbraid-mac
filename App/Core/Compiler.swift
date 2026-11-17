@@ -250,7 +250,7 @@ nonisolated enum Compiler {
             // such names were refused may hold one): its own resolver answers it, which a website's route would skip,
             // so it resolves and routes as if the rule weren't there. A block of one stays a block.
             let tailnet = Compiler.tsSuffix(i.tsSuffix)
-            sites = Sites.runs(Sites.applied(s.sites, tailnet: tailnet)).map { run in
+            sites = Sites.runs(Sites.applied(s, tailnet: tailnet)).map { run in
                 (id: run.id, match: ["domain": J.strings(run.names), "domain_suffix": J.strings(run.names.map { "." + $0 })])
             }
             // Tailscale even without an exit route (its nodes). Health checks distinguish failed exits from an offline Mac,
