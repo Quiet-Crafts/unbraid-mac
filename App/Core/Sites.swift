@@ -8,19 +8,31 @@ nonisolated enum Sites {
 
     /// The address in `raw` as a rule keeps it, from what people type or paste ("https://www.Example.com/page" →
     /// "example.com"): the name alone, lower case, without "www.", international names in their ASCII form. A rule
-    /// covers the name and every name under it. Nil when it names no website a rule can have (see `read`).
+    /// covers the name and every name under it. Nil when it names no website: no dot, an IP address, or characters no
+    /// name has. What a saved setup may hold; what a new one may be is `refusal`'s to say.
     static func clean(_ raw: String) -> String? { if case .name(let name) = read(raw) { name } else { nil } }
 
     /// Whether `name` is an address exactly as `clean` writes one: what a saved rule must be.
     static func isClean(_ name: String) -> Bool { clean(name) == name }
 
-    /// Why `raw` can't have a rule, in the Add Website sheet's words; nil when it can. `tailnet` is the tailnet's own
-    /// domain, when there is one: its names are the tailnet's, as those under ts.net are.
+    /// Why `raw` can't be added as a website, in the Add Website sheet's words; nil when it can. Beyond what `clean`
+    /// refuses: names on the own network or in the tailnet (`ownNetwork`), and names that only end others' names.
+    /// For what is typed only: a saved setup keeps what it holds (the compiler leaves out what can't work).
     static func refusal(_ raw: String, tailnet: String? = nil) -> String? {
         switch read(raw) {
         case .refused(let why): return why
-        case .name(let name): return tailnet.map { under(name, $0) } == true ? tailnetName(name) : nil
+        case .name(let name):
+            if let why = ownNetwork(name, tailnet: tailnet) { return why }
+            return sharedSuffix(name) ? "\(name) ends many websites' names: add one website under it" : nil
         }
+    }
+
+    /// Why a website rule can't work for `name`: it is on the own network or in the tailnet, whose own resolver
+    /// answers it, which a website's route would skip (and `.local` names are answered by multicast, which never passes
+    /// unbraid). Nil for any other name. `tailnet` is the tailnet's own domain, when there is one.
+    static func ownNetwork(_ name: String, tailnet: String? = nil) -> String? {
+        if tailnet.map({ under(name, $0) }) == true || under(name, "ts.net") { return "\(name) is a name in your tailnet: a rule can't route it" }
+        return local.contains { under(name, $0) } ? "\(name) is a name on your own network: a rule can't route it" : nil
     }
 
     /// Whether `name` is `suffix` or a name under it.
@@ -47,23 +59,14 @@ nonisolated enum Sites {
             return .refused(labels.count > 1 && !last.isEmpty ? address : notAName)
         }
         guard name.utf8.count <= 253, labels.allSatisfy(label) else { return .refused(notAName) }
-        if let suffix = ownNetwork.first(where: { under(name, $0) }) {
-            return .refused(suffix == "ts.net" ? tailnetName(name) : "\(name) is a name on your own network: a rule can't route it")
-        }
-        guard labels.count >= 2 else { return .refused("Add the whole name, such as \(name).com") }
-        if sharedSuffix(name) { return .refused("\(name) ends many websites' names: add one website under it") }
+        guard labels.count >= 2 else { return .refused(ownNetwork(name) ?? "Add the whole name, such as \(name).com") }
         return .name(name)
     }
 
     private static let notAName = "That isn't a website address"
     private static let address = "An IP address can't have a rule: add the website's name"
-    private static func tailnetName(_ name: String) -> String { "\(name) is a name in your tailnet: a rule can't route it" }
-
-    /// Names no rule can work for, by where they end. Names on the local network are answered by the Mac or the router
-    /// (and `.local` ones by multicast, which never passes unbraid, so a rule for one would do nothing); Tailscale's
-    /// by the tailnet's own resolver, which a website's route would skip. A rule would send the name to a resolver that
-    /// can't answer it, and take the device's name away from the network that has it.
-    static let ownNetwork = ["local", "lan", "arpa", "fritz.box", "localhost", "internal", "ts.net"]
+    /// Where names on the local network end: answered by the Mac or the router, never by a VPN's resolver.
+    private static let local = ["local", "lan", "arpa", "fritz.box", "localhost", "internal"]
 
     /// A name that is itself a public suffix: under it are many unrelated websites (every company's "co.uk"), which a
     /// rule would all cover. The common country forms and hosting platforms where everyone gets a name of their own.

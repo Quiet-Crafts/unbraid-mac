@@ -526,11 +526,15 @@ private final class AppCell: DrawnCell {
             // A website: a globe in the tile, its address, and its route said with it to VoiceOver.
             setAccessibilityElement(true)
             setAccessibilityRole(.staticText)
-            setAccessibilityLabel("\(row.name), \(row.routeName)")
-            let new = Shows(name: row.name)
+            // A route or Direct for a name on the own network or tailnet (saved before such names were refused) is
+            // not applied: the name keeps its own resolver and its app's route. Said on the row, with why.
+            let s = model.setup
+            let why = s.sites[row.id] == BLOCK ? nil : Sites.ownNetwork(row.id, tailnet: model.store.tsSuffix)
+            setAccessibilityLabel([row.name, row.routeName, why.map { _ in "Not applied" }].compactMap { $0 }.joined(separator: ", "))
+            let new = Shows(name: row.name, aside: why.map { _ in "Not applied" }, conflict: why)
             guard new != shows || !self.site else { return }
             shows = new; self.site = true
-            toolTip = nil
+            toolTip = why
             needsDisplay = true
             return
         }

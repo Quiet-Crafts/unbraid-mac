@@ -311,16 +311,20 @@ final class CompilerTests: XCTestCase {
     }
 
     /// A name on the local network or in the tailnet can't take a route (its own resolver answers it, which a website's
-    /// route would skip): a setup that holds one anyway compiles without its rule, so the name works as it did before.
+    /// route would skip): a setup saved with one on a route or Direct keeps it, but compiles without its rule, so the
+    /// name resolves and routes as it would without it. A block of one stays a block; a saved public suffix still works.
     func testANameOnTheOwnNetworkOrTailnetGetsNoWebsiteRule() throws {
         var s = withSites
-        s.sites = ["nas.lan": "it", "printer.local": BLOCK, "nas.tail123.ts.net": DIRECT, "nas.corp.example": "us", "bank.example": DIRECT]
+        s.sites = ["nas.lan": "it", "nas.tail123.ts.net": DIRECT, "nas.corp.example": "us", "bank.example": DIRECT,
+                   "tracker.lan": BLOCK, "co.uk": "us"]
         let c = try compile(s, tsSuffix: "corp.example")
-        for name in ["nas.lan", "printer.local", "nas.tail123.ts.net", "nas.corp.example"] {
+        for name in ["nas.lan", "nas.tail123.ts.net", "nas.corp.example"] {
             XCTAssertFalse(rules(c).contains { names($0)?.contains(name) == true }, name)
             XCTAssertFalse(dnsRules(c).contains { names($0)?.contains(name) == true }, name)
         }
         XCTAssertTrue(rules(c).contains { names($0) == ["bank.example"] })
+        XCTAssertEqual(action(try XCTUnwrap(rules(c).first { names($0) == ["tracker.lan"] })), "reject")
+        XCTAssertEqual(rules(c).first { names($0)?.contains("co.uk") == true && outbound($0) != nil }.flatMap(outbound), "r-us")
         // Without the tailnet's domain known, a name under it is an ordinary website.
         XCTAssertTrue(rules(try compile(s)).contains { names($0) == ["nas.corp.example"] })
     }

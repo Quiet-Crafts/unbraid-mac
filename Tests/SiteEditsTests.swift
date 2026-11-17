@@ -42,15 +42,15 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "corp.example"), .refused("nas.corp.example is a name in your tailnet: a rule can't route it"))
         XCTAssertEqual(SiteEdits.check("lan.example.com", in: [:]), .valid("lan.example.com"))
         XCTAssertEqual(SiteEdits.check("planet.com", in: [:]), .valid("planet.com"))
-        // Not something a saved setup or a backup keeps either: a setup holding one reads without it.
-        XCTAssertFalse(Sites.isClean("printer.lan"))
-        XCTAssertEqual(Setup.readable(["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "example.com": DIRECT]), ["example.com": DIRECT])
+        // For what is typed only: a saved setup or a backup keeps what it holds (the compiler leaves out what can't work).
+        let saved = ["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "tracker.lan": BLOCK, "co.uk": BLOCK, "example.com": DIRECT]
+        XCTAssertTrue(saved.keys.allSatisfy(Sites.isClean))
+        XCTAssertEqual(Setup.readable(saved), saved)
     }
 
     /// A name that only ends other websites' names (a country's "co.uk", a hosting platform) would cover all of them.
     func testAPublicSuffixIsNotAWebsite() {
         for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "github.io", "herokuapp.com"] {
-            XCTAssertNil(Sites.clean(name), name)
             let kept = name.hasPrefix("www.") ? String(name.dropFirst(4)) : name
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(kept) ends many websites' names: add one website under it"), name)
         }
