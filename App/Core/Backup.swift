@@ -346,23 +346,20 @@ nonisolated enum Backup {
         var weak: [String] = []
     }
 
-    /// Where `next` protects less than `current` (see `Plan.weakens`): the kill switch, Connect on Demand, the DNS filter
-    /// (its server and what it covers, app by app too), the local network, own servers that connect elsewhere under the
-    /// same name, the provider's own blocking settings, the
-    /// default route, and apps and websites that go out less protected. Only the setup in use is compared: a saved
-    /// profile runs nothing until it is chosen. On a Mac with nothing set up, only the preferences are.
+    /// Where `next` protects less than `current` (see `Plan.weakens`). Settings: the kill switch, Connect on Demand, the
+    /// DNS filter's server, the local network, the provider's own blocking settings, and own servers that connect
+    /// elsewhere under the same id or name. Traffic: what the default route, every app and every website name either
+    /// setup names effectively get (`traffic`, `lost`), said in a few sentences. Only the setup in use is compared: a
+    /// saved profile runs nothing until it is chosen. On a Mac with nothing set up, only the settings are.
     static func weakens(_ current: Setup, _ next: Setup) -> [String] {
         var out: [String] = []
         let levels: [KillLevel: (Int, String)] = [.off: (0, "Off"), .internet: (1, "Internet"), .home: (2, "Internet and home network")]
         if let was = levels[current.prefs.killLevel], let now = levels[next.prefs.killLevel], now.0 < was.0 { out.append("The kill switch goes from \(was.1) to \(now.1).") }
         if current.prefs.alwaysOn && !next.prefs.alwaysOn { out.append("Connect on demand is turned off.") }
         let was = current.prefs.effectiveFilter, now = next.prefs.effectiveFilter
-        if was.server != nil && now.server == nil { out.append("The DNS filter is turned off.") }
-        else if was.server != nil, was.server != now.server { out.append("The DNS filter changes to another server.") }
-        else if was.server != nil, (was.routes && !now.routes) || (was.direct && !now.direct) || (was.directApps && !now.directApps)
-                    || Set(was.apps.keys).union(now.apps.keys).contains(where: { was.through($0) && !now.through($0) }) {
-            out.append("The DNS filter covers less than it does now.")
-        }
+        let filterOff = was.server != nil && now.server == nil
+        if filterOff { out.append("The DNS filter is turned off.") }
+        else if was.server != nil, now.server != nil, was.server != now.server { out.append("The DNS filter changes to another server.") }
         if !current.prefs.lan && next.prefs.lan { out.append("Apps can reach the local network again.") }
         out += exitChanges(current, next)
         // Routes and choices a new install starts with aren't the user's: nothing to compare them with.
@@ -370,22 +367,7 @@ nonisolated enum Backup {
         // Said even while unbraid's filter takes the provider's place on VPN routes: the filter may be turned off later,
         // and then the provider's setting is what protects them.
         out += providerWeakens(current, next)
-        let vpn = { (id: String) in id != DIRECT && id != BLOCK }
-        if vpn(current.defaultRoute), next.defaultRoute == DIRECT {
-            out.append("The default route goes from \(current.route(current.defaultRoute)?.name ?? "a VPN") to Direct.")
-        }
-        let apps = Set(current.apps.keys).union(next.apps.keys).filter { vpn(current.routeOf($0)) && next.routeOf($0) == DIRECT }.count
-        let sites = current.sites.filter { vpn($0.value) && next.sites[$0.key] == DIRECT }.count
-        let direct = [count(apps, "app"), count(sites, "website")].filter { !$0.hasPrefix("0 ") }
-        if !direct.isEmpty { out.append("\(list(direct)) \(apps + sites == 1 ? "goes" : "go") from a VPN route to Direct.") }
-        out += blockingLost(current, next)
-        let blocked = current.apps.filter { $0.value == BLOCK && next.apps[$0.key] != BLOCK }.count
-        if blocked > 0 { out.append(blocked == 1 ? "1 app that is blocked now won't be." : "\(blocked) apps that are blocked now won't be.") }
-        // By what each name gets: a website under one blocked here, with a route of its own in the backup, opens that
-        // part of the block (the most specific website wins).
-        let unblocked = Sites.opened(current.sites, next.sites).count
-        if unblocked > 0 { out.append(unblocked == 1 ? "1 website that is blocked now won't be." : "\(unblocked) websites that are blocked now won't be.") }
-        return out
+        return out + traffic(lost(current, next), current: current, filterOff: filterOff)
     }
 
     /// An own server, a route through one or the Home WireGuard tunnel that keeps its id or name here but connects to
@@ -399,8 +381,9 @@ nonisolated enum Backup {
             guard let c = was.first(where: { $0.key == n.key }) ?? was.first(where: { $0.name == n.name }) else { continue }
             let who = n.key == homeKey ? "The Home WireGuard tunnel" : "\"\(n.name)\""
             var said: [String] = []
-            if let h = n.host, let o = c.host, h.lowercased() != o.lowercased() { said.append("\(who) connects to \(h) instead of \(o).") }
-            else if n.host != nil, n.port != c.port || n.peer != c.peer { said.append("\(who) connects to another server at \(n.host ?? "").") }
+            // Compared whole, shown shortened: two long names that differ only at the end are still two servers.
+            if let h = n.host, let o = c.host, h.lowercased() != o.lowercased(), shown(h) != shown(o) { said.append("\(who) connects to \(shown(h)) instead of \(shown(o)).") }
+            else if let h = n.host, n.host?.lowercased() != c.host?.lowercased() || n.port != c.port || n.peer != c.peer { said.append("\(who) connects to another server at \(shown(h)).") }
             if n.dns != c.dns { said.append(n.dns.isEmpty ? "\(who) no longer sets its own DNS servers." : "\(who) uses other DNS servers: \(n.dns.joined(separator: ", ")).") }
             for line in said where !out.contains(line) { out.append(line) }
         }
@@ -408,6 +391,8 @@ nonisolated enum Backup {
     }
 
     private static let homeKey = "\u{0}home"
+    /// A host as the sheet shows it: at most 60 characters, its end kept (where names differ most), never wrapped in the middle of a key.
+    private static func shown(_ host: String) -> String { host.count <= 60 ? host : "…" + host.suffix(59) }
 
     /// One exit the user set up: what it is (`key`: a server's or route's id), its name, where it connects (host and port,
     /// and a WireGuard server's public key) and the DNS servers it sets.
@@ -426,27 +411,111 @@ nonisolated enum Backup {
                     if words.count > 1, words[0] == "remote" { (host, port) = (String(words[1]), words.count > 2 ? String(words[2]) : nil); break }
                 }
             }
-            return Exit(key: key, name: name, host: host.map { String($0.prefix(80)) }, port: port, peer: wg?.publicKey, dns: wg?.dns ?? [])
+            return Exit(key: key, name: name, host: host, port: port, peer: wg?.publicKey, dns: wg?.dns ?? [])
         }
         return s.servers.map { exit("s:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
             + s.routes.filter { $0.imported && $0.tsExit == nil }.map { exit("r:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
             + (s.home.wg.map { [exit(homeKey, "", $0, nil, nil)] } ?? [])
     }
 
-    /// The default route, apps and websites that keep a VPN route but lose the provider's own blocking they get now:
-    /// each read in its own setup, as the engine would run it (`Setup.protects`). Those moved to Direct or Block are said
-    /// elsewhere.
-    private static func blockingLost(_ current: Setup, _ next: Setup) -> [String] {
-        let vpn = { (s: Setup, id: String) in id != DIRECT && id != BLOCK && s.route(id) != nil }
-        func lost(_ was: String, _ now: String) -> Bool {
-            vpn(current, was) && vpn(next, now) && current.route(was).map(current.protects) == true && next.route(now).map(next.protects) != true
+    /// How the engine treats one app, website or the default route of a setup: how its traffic leaves, and what answers
+    /// its lookups. Worked out as the compiler builds the config (`Compiler.Plan`), so what a restore is said to
+    /// weaken is what it changes in the traffic.
+    struct Treatment: Equatable, Sendable {
+        enum Exit: Equatable, Sendable { case blocked, refused, vpn, direct }
+        var exit: Exit
+        /// Its route, when it leaves by one.
+        var route: String? = nil
+        /// unbraid's DNS filter answers its lookups.
+        var filtered = false
+        /// The provider's own blocking answers them.
+        var providerBlocks = false
+        /// A website without a rule of its own: it goes as its app does, taken to be the default route.
+        var followsApp = false
+    }
+
+    /// What can be told of a setup's traffic without its apps: the default route, every app it (or the DNS filter)
+    /// names, and every website name it has a rule for that applies.
+    struct Traffic: Equatable, Sendable {
+        var defaultRoute: Treatment
+        var apps: [String: Treatment]
+        var sites: [String: Treatment]
+    }
+
+    /// The treatment of `apps` and `sites` (and the default) in `s`; names neither has get one too, as they go in `s`.
+    static func traffic(_ s: Setup, apps: Set<String>, sites: Set<String>) -> Traffic {
+        let f = s.prefs.effectiveFilter
+        func on(_ id: String, directFiltered: Bool) -> Treatment {
+            if id == DIRECT { return Treatment(exit: .direct, filtered: directFiltered) }
+            if id == BLOCK { return Treatment(exit: .blocked) }
+            // A route the setup doesn't have, or one waiting for its config: refused, never sent elsewhere.
+            guard let r = s.route(id), !LinkPicker.keyLeftOut(r, in: s) else { return Treatment(exit: .refused) }
+            return Treatment(exit: .vpn, route: id, filtered: f.coversRoutes, providerBlocks: !f.coversRoutes && s.protects(r))
         }
-        let apps = Set(current.apps.keys).union(next.apps.keys).filter { lost(current.routeOf($0), next.routeOf($0)) }.count
-        let sites = current.sites.filter { site in next.sites[site.key].map { lost(site.value, $0) } == true }.count
-        let parts = (lost(current.defaultRoute, next.defaultRoute) ? ["The default route"] : []) + [count(apps, "app"), count(sites, "website")].filter { !$0.hasPrefix("0 ") }
-        guard !parts.isEmpty else { return [] }
-        let one = parts.count == 1 && (parts[0].hasPrefix("The") || parts[0].hasPrefix("1 "))
-        return ["\(list(parts)) \(one ? "loses the provider's ad and tracker blocking it has" : "lose the provider's ad and tracker blocking they have") now."]
+        // The default's lookups use the filter where it covers Direct traffic; an app with a route of its own on Direct
+        // where it covers that app (`Filter.through`); a Direct website where it covers Direct traffic or Direct apps.
+        let byDefault = on(s.defaultRoute, directFiltered: f.server != nil && f.direct)
+        let rules = Sites.applied(s.sites, tailnet: Compiler.tsSuffix(s.home.tsSuffix))
+        func site(_ name: String) -> Treatment {
+            // Without a rule it goes as its app does: most apps follow the default.
+            guard let rule = rules.filter({ Sites.under(name, $0.key) }).max(by: { $0.key.count < $1.key.count }) else { var t = byDefault; t.followsApp = true; return t }
+            return on(rule.value, directFiltered: f.server != nil && (f.direct || f.directApps))
+        }
+        return Traffic(defaultRoute: byDefault,
+                       apps: Dictionary(uniqueKeysWithValues: apps.map { key in (key, s.apps[key].map { on($0, directFiltered: f.through(key)) } ?? byDefault) }),
+                       sites: Dictionary(uniqueKeysWithValues: sites.map { ($0, site($0)) }))
+    }
+
+    /// How a restore can make one app's or website's traffic less protected, in the order the sheet says them.
+    enum Loss: Equatable, Sendable { case unblocked, toDirect, ownRoute, filter, providerBlocking }
+
+    /// Where `now` protects less than `was`, or nil. One loss each, the first that applies: a block lifted, a VPN route
+    /// left for Direct, a website's own VPN route gone (it follows its app), the DNS filter, the provider's blocking.
+    static func loss(_ was: Treatment, _ now: Treatment) -> Loss? {
+        if was.exit == .blocked { return now.exit == .blocked ? nil : .unblocked }
+        // Both going as their app does: the default route's own change says it.
+        if was.followsApp && now.followsApp { return nil }
+        if now.followsApp { return was.exit == .vpn ? .ownRoute : nil }
+        if now.exit == .blocked || now.exit == .refused || was.exit == .refused { return nil }
+        if was.exit == .vpn, now.exit == .direct { return .toDirect }
+        if was.filtered, !now.filtered { return .filter }
+        if was.providerBlocks, !now.providerBlocks { return .providerBlocking }
+        return nil
+    }
+
+    /// Every loss from `current` to `next`: the default route, each app either names (or the DNS filter does), each
+    /// website name either has an applied rule for.
+    static func lost(_ current: Setup, _ next: Setup) -> (defaultRoute: Loss?, apps: [Loss], sites: [Loss]) {
+        let apps = Set(current.apps.keys).union(next.apps.keys).union(current.prefs.effectiveFilter.apps.keys).union(next.prefs.effectiveFilter.apps.keys)
+        let tailnet = Compiler.tsSuffix(current.home.tsSuffix)
+        let sites = Set(Sites.applied(current.sites, tailnet: tailnet).keys).union(Sites.applied(next.sites, tailnet: Compiler.tsSuffix(next.home.tsSuffix)).keys)
+        let was = traffic(current, apps: apps, sites: sites), now = traffic(next, apps: apps, sites: sites)
+        return (loss(was.defaultRoute, now.defaultRoute), apps.sorted().compactMap { a in loss(was.apps[a]!, now.apps[a]!) },
+                sites.sorted().compactMap { n in loss(was.sites[n]!, now.sites[n]!) })
+    }
+
+    /// The losses, in the sheet's few sentences.
+    private static func traffic(_ l: (defaultRoute: Loss?, apps: [Loss], sites: [Loss]), current: Setup, filterOff: Bool) -> [String] {
+        func n(_ list: [Loss], _ kind: Loss) -> Int { list.filter { $0 == kind }.count }
+        func parts(_ kind: Loss) -> [String] {
+            (l.defaultRoute == kind ? ["The default route"] : []) + [count(n(l.apps, kind), "app"), count(n(l.sites, kind), "website")].filter { !$0.hasPrefix("0 ") }
+        }
+        func one(_ p: [String]) -> Bool { p.count == 1 && (p[0].hasPrefix("The") || p[0].hasPrefix("1 ")) }
+        var out: [String] = []
+        if l.defaultRoute == .toDirect { out.append("The default route goes from \(current.route(current.defaultRoute)?.name ?? "a VPN") to Direct.") }
+        let direct = parts(.toDirect).filter { !$0.hasPrefix("The") }
+        if !direct.isEmpty { out.append("\(list(direct)) \(one(direct) ? "goes" : "go") from a VPN route to Direct.") }
+        let own = n(l.sites, .ownRoute)
+        if own > 0 { out.append(own == 1 ? "1 website loses its own VPN route and goes as its app does." : "\(own) websites lose their own VPN route and go as their apps do.") }
+        // Said once for all when the filter is turned off.
+        let filter = parts(.filter)
+        if !filter.isEmpty, !filterOff { out.append("\(list(filter)) \(one(filter) ? "loses" : "lose") the DNS filter.") }
+        let blocking = parts(.providerBlocking)
+        if !blocking.isEmpty { out.append("\(list(blocking)) \(one(blocking) ? "loses the provider's ad and tracker blocking it has" : "lose the provider's ad and tracker blocking they have") now.") }
+        let apps = n(l.apps, .unblocked), sites = n(l.sites, .unblocked)
+        if apps > 0 { out.append(apps == 1 ? "1 app that is blocked now won't be." : "\(apps) apps that are blocked now won't be.") }
+        if sites > 0 { out.append(sites == 1 ? "1 website that is blocked now won't be." : "\(sites) websites that are blocked now won't be.") }
+        return out
     }
 
     /// The provider settings that block or choose more carefully, turned off for a provider `next` has routes on; the

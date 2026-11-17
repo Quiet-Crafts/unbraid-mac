@@ -431,11 +431,11 @@ final class BackupTests: XCTestCase {
         filter.prefs.filter = Filter(id: "quad9", routes: true)
         XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter changes to another server."])
         filter.prefs.filter = Filter(id: "adguard", routes: false, direct: true)
-        XCTAssertEqual(Backup.weakens(here, filter), ["The DNS filter covers less than it does now."])
+        XCTAssertEqual(Backup.weakens(here, filter), ["The default route, 3 apps and 1 website lose the DNS filter."])
         // App by app: a Direct app the filter covers now, and won't.
         var perApp = here
         perApp.prefs.filter.apps = ["org.example.b": true]
-        XCTAssertEqual(Backup.weakens(perApp, here), ["The DNS filter covers less than it does now."])
+        XCTAssertEqual(Backup.weakens(perApp, here), ["1 app loses the DNS filter."])
         XCTAssertEqual(Backup.weakens(here, perApp), [])
         // Apps that follow a default going to Direct count as well; one following a VPN default the backup sets on Direct too.
         var follow = here
@@ -506,7 +506,7 @@ final class BackupTests: XCTestCase {
         here.routes = [nl(), Route(id: "r0", wg: wg, own: "s0"),
                        Route(id: "m1", loc: Location(provider: "mullvad", countryCode: "SE", country: "Sweden"), filter: true)]
         here.servers = [OwnServer(id: "s0", wg: wg)]
-        here.apps = ["org.example.a": "r0", "org.example.b": BLOCK]
+        here.apps = ["org.example.a": "r0", "org.example.b": BLOCK, "org.example.c": DIRECT, "org.example.z": DIRECT]
         here.sites = ["example.com": "r0", "tracker.example": BLOCK]
         here.prefs.killLevel = .home; here.prefs.alwaysOn = true; here.prefs.lan = false
         here.prefs.filter = Filter(id: "quad9", routes: true, direct: true, directApps: true, apps: ["org.example.c": true])
@@ -517,7 +517,7 @@ final class BackupTests: XCTestCase {
             ("kill switch off", { $0.prefs.killLevel = .off }), ("kill switch home to internet", { $0.prefs.killLevel = .internet }),
             ("connect on demand off", { $0.prefs.alwaysOn = false }), ("filter off", { $0.prefs.filter = Filter() }),
             ("filter another server", { $0.prefs.filter.id = "adguard" }), ("filter no longer on routes", { $0.prefs.filter.routes = false }),
-            ("filter no longer on Direct", { $0.prefs.filter.direct = false }), ("filter no longer for Direct apps", { $0.prefs.filter.directApps = false }),
+            ("filter no longer for Direct apps", { $0.prefs.filter.directApps = false }),
             ("filter no longer for one app", { $0.prefs.filter.apps = ["org.example.c": false] }),
             ("filter off for an app that inherited it", { $0.prefs.filter.apps["org.example.z"] = false }),
             ("local network allowed", { $0.prefs.lan = true }),
@@ -532,6 +532,11 @@ final class BackupTests: XCTestCase {
         ]
         let unsaid = cases.filter { name, change in Backup.weakens(here, here.with(change)).isEmpty }.map(\.0)
         XCTAssertEqual(unsaid, [])
+        // The filter's Direct switch covers the default route when that is Direct: no traffic here goes so, so turning it
+        // off changes nothing; with a Direct default it is said.
+        XCTAssertEqual(Backup.weakens(here, here.with { $0.prefs.filter.direct = false }), [])
+        let direct = here.with { $0.defaultRoute = DIRECT }
+        XCTAssertEqual(Backup.weakens(direct, direct.with { $0.prefs.filter.direct = false }), ["The default route loses the DNS filter."])
     }
 
     /// The most specific website wins, Block included: a backup that puts a website under one blocked here on a route
