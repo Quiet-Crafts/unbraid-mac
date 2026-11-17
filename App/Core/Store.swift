@@ -128,20 +128,16 @@ final class Store {
     var setupStandIn: Bool { isHeld || newerSetup }
 
     /// Leaves a setup saved by a newer unbraid: it is kept as "setup.bin.newer", and the default setup is saved in its
-    /// place. Provider sign-ins (accounts.bin) stay. False, with nothing changed, when the copy couldn't be made: the
-    /// newer setup is never replaced without one.
+    /// place. The remembered networks are kept beside it as "networks.bin.newer": once its profiles are gone, every
+    /// network's profile here is cleared. Provider sign-ins (accounts.bin) stay. False, with nothing replaced, when a
+    /// copy couldn't be made: the newer setup is never replaced without one.
     @discardableResult
     func startFresh() -> Bool {
         guard newerSetup else { return true }
-        let file = dir.appending(path: "setup.bin"), copy = dir.appending(path: "setup.bin.newer")
-        // Made beside it first and checked, then moved into place: an earlier copy gives way only to a whole new one.
-        let staged = dir.appending(path: "setup.bin.newer.\(UUID().uuidString)")
         do {
-            try FileManager.default.copyItem(at: file, to: staged)
-            guard FileManager.default.contentsEqual(atPath: file.path, andPath: staged.path) else { throw CocoaError(.fileWriteUnknown) }
-            _ = try FileManager.default.replaceItemAt(copy, withItemAt: staged)
+            try keepCopy("setup.bin")
+            if FileManager.default.fileExists(atPath: dir.appending(path: "networks.bin").path) { try keepCopy("networks.bin") }
         } catch {
-            try? FileManager.default.removeItem(at: staged)
             Log.error("store: newer setup not kept, nothing replaced", error: error)
             return false
         }
@@ -152,6 +148,21 @@ final class Store {
         setup = s
         save("setup", s)
         return true
+    }
+
+    /// Copies `name` to "<name>.newer": made beside it first and checked, then moved into place, so an earlier copy gives
+    /// way only to a whole new one.
+    private func keepCopy(_ name: String) throws {
+        let file = dir.appending(path: name), copy = dir.appending(path: "\(name).newer")
+        let staged = dir.appending(path: "\(name).newer.\(UUID().uuidString)")
+        do {
+            try FileManager.default.copyItem(at: file, to: staged)
+            guard FileManager.default.contentsEqual(atPath: file.path, andPath: staged.path) else { throw CocoaError(.fileWriteUnknown) }
+            _ = try FileManager.default.replaceItemAt(copy, withItemAt: staged)
+        } catch {
+            try? FileManager.default.removeItem(at: staged)
+            throw error
+        }
     }
 
     /// Opens held files once the keychain answers: their contents come back in place of the stand-ins. Returns the
@@ -556,8 +567,8 @@ final class Store {
     private nonisolated static let forgettingKey = "forgetAllPending"
     /// Everything that holds credentials: the setup, accounts, cached tunnels, the running tunnel's state, the record of
     /// what the extension sealed, the remembered networks, copies kept of unreadable ones, and a newer unbraid's setup
-    /// kept by Start Fresh.
-    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin", "networks.bin"].flatMap { [$0, "\($0).bad"] } + ["setup.bin.newer"]
+    /// and networks kept by Start Fresh.
+    nonisolated static let credentialFiles = ["accounts.bin", "setup.bin", "links.bin", "running.bin", "sealed.bin", "airvpn-devices.bin", "networks.bin"].flatMap { [$0, "\($0).bad"] } + ["setup.bin.newer", "networks.bin.newer"]
 
     /// The files a deletion still has to finish. Earlier versions kept only "something is pending" (true): all of them.
     private nonisolated static func pending(_ defaults: UserDefaults) -> Set<String> {

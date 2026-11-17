@@ -881,7 +881,11 @@ final class StoreTests: XCTestCase {
         let newer = Data(#"{"version":99,"routes":[{"id":"main"}],"defaultRoute":"main","apps":{"mail":"BLOCK"},"sites":{"example.com":"BLOCK"},"opts":{}}"#.utf8)
         XCTAssertTrue(vault.write("setup.bin", newer))
         XCTAssertTrue(vault.write("accounts.bin", try JSONEncoder().encode(["mullvad": "A"])))
-        let original = try Data(contentsOf: dir.appending(path: "setup.bin"))
+        var rules = NetworkRules(salt: "salt")
+        rules.remember("home", name: "Home network", profile: "Newer profile")
+        rules.elsewhere = "Newer profile"
+        XCTAssertTrue(vault.write("networks.bin", try JSONEncoder().encode(rules)))
+        let original = try Data(contentsOf: dir.appending(path: "setup.bin")), networks = try Data(contentsOf: dir.appending(path: "networks.bin"))
         let s = store()
         XCTAssertTrue(s.newerSetup)
         XCTAssertTrue(s.setupStandIn)
@@ -918,6 +922,12 @@ final class StoreTests: XCTestCase {
         await settle()
         XCTAssertFalse(s.unsaved)
         XCTAssertEqual(try Data(contentsOf: dir.appending(path: "setup.bin.newer")), original)
+        // The remembered networks are kept beside it, as they were, before any rule is cleared for the default setup.
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "networks.bin.newer")), networks)
+        s.updateNetworks { $0.tidy(profiles: []) }
+        await settle()
+        XCTAssertNil(store().networks.elsewhere)
+        XCTAssertEqual(try Data(contentsOf: dir.appending(path: "networks.bin.newer")), networks)
         let fresh = store()
         XCTAssertFalse(fresh.newerSetup)
         XCTAssertEqual(fresh.setup, Setup())
@@ -926,6 +936,7 @@ final class StoreTests: XCTestCase {
         let forgotten = await fresh.forgetAll()
         XCTAssertTrue(forgotten)
         XCTAssertFalse(exists("setup.bin.newer"))
+        XCTAssertFalse(exists("networks.bin.newer"))
     }
 
     /// Held at launch (keychain locked), then found newer once the key answers: flagged, not copied, not replaced.
