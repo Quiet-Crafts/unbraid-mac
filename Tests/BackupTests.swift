@@ -557,6 +557,35 @@ final class BackupTests: XCTestCase {
         XCTAssertEqual(same.profiles.last, Profile(name: "Previous", defaultRoute: "nl", apps: full().apps, sites: full().sites))
     }
 
+    /// This Mac's own backup restored with its setup kept: every route and server is the same one, shared rather than
+    /// copied, a pinned provider server and an own server an older build saved (an MTU the import now reads otherwise)
+    /// included. Restored again, still no copies.
+    func testRestoringThisMacsOwnBackupMakesNoCopies() throws {
+        var here = full()
+        here.routes[4].loc.pinned = Server(name: "se-got-wg-001", host: "se-got-wg-001.relays.example", ip: "203.0.113.66", publicKey: peerKey, load: 12)
+        var old = wg; old.mtu = 1600
+        here.routes[1].wg = old; here.servers[0].wg = old
+        let b = try read(here)
+        XCTAssertNotEqual(b.setup.routes[1].wg, old)
+        let once = Backup.plan(onto: here, from: b, keepPrevious: true, now: .now)
+        XCTAssertEqual(once.keptAs, "Previous")
+        XCTAssertEqual(once.setup.routes, b.setup.routes)
+        XCTAssertEqual(once.setup.servers, b.setup.servers)
+        XCTAssertEqual(once.setup.profiles.last, Profile(name: "Previous", defaultRoute: "nl", apps: here.apps, sites: here.sites))
+        XCTAssertNoThrow(try Backup.valid(once.setup))
+        // Again, onto what that restore left, once the provider's list has named the pinned server's address again.
+        var after = once.setup
+        after.routes[4].loc.pinned?.ip = "203.0.113.66"; after.routes[4].loc.pinned?.load = 30
+        let twice = Backup.plan(onto: after, from: b, keepPrevious: true, now: .now)
+        XCTAssertEqual(twice.setup.routes, b.setup.routes)
+        XCTAssertEqual(twice.setup.servers, b.setup.servers)
+        XCTAssertEqual(twice.setup.profiles.map(\.name), ["Work", "Home", "Previous"])
+        // Saved without keys: the same.
+        let keyless = Backup.plan(onto: here, from: try read(here, keys: false), keepPrevious: true, now: .now)
+        XCTAssertEqual(keyless.setup.routes.map(\.id), b.setup.routes.map(\.id))
+        XCTAssertEqual(keyless.setup.servers.map(\.id), b.setup.servers.map(\.id))
+    }
+
     func testARestoredSetupCompilesAndPassesTheEnginesCheck() throws {
         let r = Backup.restored(onto: Setup(), from: try read(full(), keys: false), keepPrevious: false, now: .now)
         var links: [String: Link] = [:]

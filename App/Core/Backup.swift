@@ -95,11 +95,6 @@ nonisolated enum Backup {
     /// while that list can't be read. A backup must never be what names the server a provider's tunnel is made to,
     /// so a restored pin waits for the provider's list instead (written this way, and read this way whatever was written).
     static func named(_ s: Setup) -> Setup {
-        func bare(_ l: Location) -> Location {
-            var l = l
-            l.pinned = l.pinned.map { Server(name: $0.name, host: $0.host, ip: "", publicKey: "", load: -1, city: $0.city, country: $0.country) }
-            return l
-        }
         var s = s
         for i in s.routes.indices { s.routes[i].loc = bare(s.routes[i].loc) }
         s.favorites = s.favorites.map(bare)
@@ -107,6 +102,13 @@ nonisolated enum Backup {
         // it starts again from the provider's standard one, and is chosen again from the provider's own list.
         s.opts["ivpn"]?["list"] = nil
         return s
+    }
+
+    /// `l` with its pinned server kept by name and host only (see `named`).
+    private static func bare(_ l: Location) -> Location {
+        var l = l
+        l.pinned = l.pinned.map { Server(name: $0.name, host: $0.host, ip: "", publicKey: "", load: -1, city: $0.city, country: $0.country) }
+        return l
     }
 
     /// `s` with every imported route tied to an own server, so one saved without keys has a way to get them back.
@@ -400,7 +402,7 @@ nonisolated enum Backup {
         var serverIds = Set(r.servers.map(\.id) + current.servers.map(\.id)), sv: [String: String] = [:]
         for s in current.servers {
             if let there = r.servers.first(where: { $0.id == s.id }) {
-                if there == s { sv[s.id] = s.id; continue }
+                if filed(there) == filed(s) { sv[s.id] = s.id; continue }
                 let id = fresh("s", serverIds)
                 var moved = s
                 moved.id = id
@@ -410,9 +412,10 @@ nonisolated enum Backup {
         var routeIds = Set(r.routes.map(\.id) + current.routes.map(\.id)), rt: [String: String] = [:]
         for x in current.routes {
             var c = x
-            c.own = x.own.map { sv[$0] ?? $0 }
+            // Tied to a server this Mac no longer has: untied, as a backup's reader unties it.
+            c.own = x.own.flatMap { sv[$0] }
             if let there = r.route(x.id) {
-                if there == c { rt[x.id] = x.id; continue }
+                if filed(there) == filed(c) { rt[x.id] = x.id; continue }
                 c.id = fresh("r", routeIds)
             }
             r.routes.append(c); routeIds.insert(c.id); rt[x.id] = c.id
@@ -430,6 +433,20 @@ nonisolated enum Backup {
     }
 
     private static func needConfig(_ s: Setup) -> [String] { s.servers.filter(\.keyless).map(\.name) }
+
+    /// A route or server as a backup of it reads back (pin by name and host, WireGuard config as the import reads it),
+    /// so this Mac's own one is known for the same when the backup was made here.
+    private static func filed(_ r: Route) -> Route {
+        var r = r
+        r.loc = bare(r.loc)
+        if !r.keyless { r.wg = r.wg.map { asRead($0) ?? $0 } }
+        return r
+    }
+    private static func filed(_ s: OwnServer) -> OwnServer {
+        var s = s
+        if !s.keyless { s.wg = s.wg.map { asRead($0) ?? $0 } }
+        return s
+    }
 
     private static func fresh(_ prefix: String, _ taken: Set<String>) -> String {
         while true {
