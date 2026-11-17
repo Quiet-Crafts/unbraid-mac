@@ -94,7 +94,7 @@ final class AutoSwitchRunTests: XCTestCase {
         for gap: Double in [2, 60, 600, 28_800] {
             var run = settled()
             XCTAssertEqual(drive(&run, [(10, [offline]), (10 + gap, [pending()])], until: 10 + gap + 200), [unrecognised], "\(gap)")
-            XCTAssertEqual(run.here(at: at(10 + gap + 85)), unrecognised)
+            XCTAssertEqual(run.here(at: at(10 + gap + 120)), unrecognised)
         }
     }
 
@@ -135,8 +135,9 @@ final class AutoSwitchRunTests: XCTestCase {
     /// watcher's read times: nothing switches, and a hand pick stays.
     func testAWakeAtHomeNeverSwitchesAwayAndBack() {
         for gap: Double in [1, 30, 119, 600, 28_800] {
-            for answer: Double in [0.5, 3, 10, 19, 21, 25, 30, 45, 60, 75, 80] {
-                for heard in ["a", "b", "a,b"] {
+            for answer: Double in [0.5, 3, 10, 19, 21, 25, 30, 45, 60, 75, 90, 105, 115] {
+                // After more than a moment, the reading must name home on its own: b alone fits the office too.
+                for heard in gap <= 10 ? ["a", "b", "a,b"] : ["a", "a,b"] {
                     for sleeps in [false, true] {
                         var run = settled()
                         _ = run.handle(.pickedByHand, now: at(50))
@@ -162,6 +163,24 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&re, [(100, [.connected(false)]), (100.5, [pending()]), (103, [.connected(true)]), (104, [on("b")])], until: 300), [])
         var roam = settled()
         XCTAssertEqual(drive(&roam, [(100, [pending()]), (160, [on("a")])], until: 300), [])
+    }
+
+    /// T3-1: home reached again after being somewhere else (an arrival), the router late: home was last read at this
+    /// place, so the wait is the long one. A place where no remembered network answered in time waits the short one
+    /// next time.
+    func testAPlaceWhereHomeWasReadWaitsLongerForItsRouter() {
+        var run = settled()
+        XCTAssertEqual(drive(&run, [(10, [offline]), (20, [on("x", Self.cafe)]), (60, [offline]), (4000, [pending()]), (4050, [on("a,b")])], until: 4200),
+                       ["x", "a,b"])
+        // Another network at home's place, never answering: unrecognised at the long limit, and the place forgotten.
+        XCTAssertEqual(drive(&run, [(4300, [offline]), (4400, [pending("en0|192.168.1.1")])], until: 4519), [])
+        XCTAssertEqual(drive(&run, [(4521, [.timer])], until: 4530), [unrecognised])
+        var other = settled()
+        XCTAssertEqual(drive(&other, [(10, [offline]), (20, [on("x", Self.cafe)]), (60, [offline]), (4000, [pending()])], until: 4119), ["x"])
+        XCTAssertEqual(drive(&other, [(4121, [.timer])], until: 4130), [unrecognised])
+        XCTAssertEqual(drive(&other, [(4200, [offline]), (4300, [pending()])], until: 4319), [])
+        XCTAssertEqual(drive(&other, [(4321, [.timer])], until: 4330), [unrecognised], "left while awake: decided again, after the short wait")
+        XCTAssertNil(other.seen[Self.home])
     }
 
     /// The limit of the wait: a router answering after the last read comes after the network counted as unrecognised,
@@ -190,14 +209,20 @@ final class AutoSwitchRunTests: XCTestCase {
     }
 
     /// X-2: after leaving home, a network reached another way whose only router is the shared one is neither home nor
-    /// the office. Back at home's place, it is home read again: the shared router alone stays home.
+    /// the office. Back at home's place after more than a moment, it takes a fresh reading that names home on its own:
+    /// the shared router alone is in doubt, so any other network; home's own router keeps home.
     func testAPreferenceNeverOutlivesLeavingTheNetwork() {
         var run = settled()
         XCTAssertEqual(drive(&run, [(10, [offline]), (200, [on("b", "en0|192.168.50.1")])], until: 300), ["b"])
         var cable = settled()
         XCTAssertEqual(drive(&cable, [(10, [on("b", "en5|192.168.1.1")])], until: 300), ["b"], "another interface")
         var back = settled()
-        XCTAssertEqual(drive(&back, [(10, [offline]), (200, [on("b")])], until: 300), [])
+        XCTAssertEqual(drive(&back, [(10, [offline]), (200, [on("b")])], until: 300), ["b"])
+        var own = settled()
+        XCTAssertEqual(drive(&own, [(10, [offline]), (200, [on("a")]), (220, [on("b")])], until: 300), [])
+        // A router not known yet never bridges two different ones: home's address, nothing, then another address.
+        var bridge = settled()
+        XCTAssertEqual(drive(&bridge, [(10, [pending("en0|")]), (12, [pending("en0|10.9.9.1")])], until: 100), [unrecognised])
     }
 
     // MARK: Switches the app couldn't make (X-3)
@@ -206,21 +231,20 @@ final class AutoSwitchRunTests: XCTestCase {
     /// a hand pick made since.
     func testASwitchNotMadeIsOwedAgain() {
         var run = settled()
-        let decided = run.acted!
-        XCTAssertEqual(run.handle(.unapplied(decided), now: at(7)), .wait(at(12)))
+        XCTAssertEqual(run.handle(.unapplied(run.generation), now: at(7)), .wait(at(12)))
         XCTAssertEqual(run.handle(.timer, now: at(12)), .decide(mark: "a,b", acted: nil))
         // Not made while disconnected: owed once connected again.
         _ = run.handle(.connected(false), now: at(20))
-        _ = run.handle(.unapplied(run.acted!), now: at(21))
+        _ = run.handle(.unapplied(run.generation), now: at(21))
         XCTAssertEqual(drive(&run, [(30, [.connected(true)])], until: 100), ["a,b"])
-        // A hand pick since: the pick stands.
-        let again = run.acted!
+        // A hand pick since, even one that happens to name the same network and profile: the report is stale.
+        let decided = run.generation
         _ = run.handle(.pickedByHand, now: at(101))
-        _ = run.handle(.pickedByHand, now: at(102))
-        var picked = run
-        _ = picked.handle([.network(.mark("a", place: Self.home))], now: at(103))
-        XCTAssertEqual(drive(&picked, [(104, [.unapplied(Acted(mark: "x", rules: rules))])], until: 200), [], "another decision's report")
-        XCTAssertEqual(again, run.acted)
+        let picked = run.acted
+        XCTAssertEqual(drive(&run, [(104, [.unapplied(decided)])], until: 200), [])
+        XCTAssertEqual(run.acted, picked)
+        // A report about an older decision after a newer one: ignored.
+        XCTAssertEqual(drive(&run, [(210, [on("b,c", Self.office)]), (230, [.unapplied(decided)])], until: 300), ["b,c"])
     }
 
     // MARK: Hand picks and rules (P-2, P-5, R-5, T-3, T-4)
@@ -311,7 +335,7 @@ final class AutoSwitchRunTests: XCTestCase {
                 case 6: events.append(.busy(g.int(3) == 0))
                 case 7: events.append(.pickedByHand)
                 case 8: events.append(.sleep(g.int(2) == 0))
-                default: if let a = run.acted { events.append(.unapplied(a)) }
+                default: events.append(.unapplied(g.int(3) == 0 ? run.generation - 1 : run.generation))
                 }
                 feed(events, at(now))
             }
@@ -338,10 +362,11 @@ final class AutoSwitchRunTests: XCTestCase {
                 case 1: // A moment offline, or a sleep of any length; then a reread answered within the read times.
                     let sleeps = g.int(2) == 0, gap = sleeps ? g.pick([30.0, 600, 30_000]) : g.pick([0.5, 3, 9])
                     steps.append((now, sleeps ? [.sleep(true), offline] : [offline])); now += gap
-                    steps.append((now, sleeps ? [.sleep(false), pending()] : [pending()])); now += g.pick([0.5, 10, 21, 45, 75])
-                    steps.append((now, [on(g.pick(["a", "b", "a,b"]))]))
+                    steps.append((now, sleeps ? [.sleep(false), pending()] : [pending()])); now += g.pick([0.5, 10, 21, 45, 75, 105])
+                    // After more than a moment the first reading must name home on its own (b alone fits the office).
+                    steps.append((now, [on(g.pick(sleeps ? ["a", "a,b"] : ["a", "b", "a,b"]))]))
                 case 2: steps.append((now, [.connected(false)])); now += 2; steps.append((now, [.connected(true)]))
-                case 3: steps.append((now, [pending()])); now += g.pick([1.0, 30, 70]); steps.append((now, [on("a,b")]))
+                case 3: steps.append((now, [pending()])); now += g.pick([1.0, 30, 70, 110]); steps.append((now, [on("a,b")]))
                 case 4: steps.append((now, [.busy(true)])); now += 3; steps.append((now, [.busy(false)]))
                 default: steps.append((now, [.timer]))
                 }

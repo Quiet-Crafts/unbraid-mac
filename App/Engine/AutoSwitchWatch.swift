@@ -112,10 +112,10 @@ final class AutoSwitchWatch {
     }
 
     /// When the fingerprint is read again while the router hasn't answered: each second through the settle time, every
-    /// few seconds until a network just reached counts as unrecognised (20 s), then every 15 s until 75 s and once at 80 s, the last read
+    /// few seconds until a network just reached counts as unrecognised (20 s), then every 15 s until 105 s and once at 115 s, the last read
     /// before the network the Mac was already on counts as unrecognised (`AutoSwitch.lateRouter`); then nothing until the
     /// next change or wake.
-    private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 15, 15, 15, 5].map { .seconds($0) }
+    private static let readings: [Duration] = [0, 1, 1, 1, 1, 1, 3, 3, 3, 3, 3, 10, 15, 15, 15, 15, 15, 10].map { .seconds($0) }
 
     private func read() {
         probe?.cancel()
@@ -169,14 +169,16 @@ final class AutoSwitchWatch {
             own = name
             switching = true
             // Still what the rules say for this network, still connected, still the user's own setup, when it is made.
-            let decided = run.acted
+            let decided = run.generation
             m.switchProfile(name, wanted: { [weak self, weak m] in
                 guard let self, let m else { return false }
                 return m.vpn.state.phase == .on && !m.store.setupStandIn && self.run.here(at: .now) == mark && m.store.networks.profile(on: mark) == name
             }, finished: { [weak self] made in
-                // Not made (the connection or the network changed while it waited): owed again once they settle.
-                guard !made, let self, let decided else { return }
-                if self.own == name { self.own = nil }
+                // Not made (the connection or the network changed while it waited): owed again once they settle. Not
+                // when a profile picked by hand took its place (`own` cleared); the run also ignores a report about
+                // anything but its latest decision.
+                guard !made, let self, self.own == name else { return }
+                self.own = nil
                 self.apply(self.run.handle(.unapplied(decided)))
             })
             switching = false

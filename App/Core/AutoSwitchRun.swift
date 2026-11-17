@@ -43,8 +43,8 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         case profiles([String])
         /// A profile was chosen by hand (the menu bar, the window, Control Center, Shortcuts).
         case pickedByHand
-        /// The switch asked for this decision wasn't made (the connection or the network changed meanwhile).
-        case unapplied(AutoSwitch.Acted)
+        /// The switch asked for decision `generation` wasn't made (the connection or the network changed meanwhile).
+        case unapplied(Int)
         /// Nothing may be decided now: a profile switch is still pending, or the setup is a stand-in.
         case busy(Bool)
         /// The time asked for has passed.
@@ -70,26 +70,50 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
     /// Since when this network has been read without an acceptable reading, and how long it may last.
     private(set) var waiting: Instant
     private(set) var grace = AutoSwitch.unrecognisedAfter
-    /// Where the Mac last was, while offline: when it went, and whether it slept since.
-    struct Left: Equatable, Sendable { var place: String, at: Instant, slept: Bool }
-    private(set) var left: Left?
-    /// This network has given an acceptable reading since it was reached.
-    private(set) var read = false
-    /// The remembered network the last reading on this network named on its own: a reading that two remembered
-    /// networks would fit (a shared router, the other away) stays this one. Forgotten on an arrival.
-    private(set) var resolved: String?
+    /// Where the Mac is: its interface and the last IPv4 router seen on it on this network (a router not known yet
+    /// never stands in for a different one).
+    struct Place: Equatable, Sendable {
+        var interface: String
+        var router: String?
+        /// Whether a reading at `p` may be this place.
+        func admits(_ p: String) -> Bool {
+            let (i, r) = Self.split(p)
+            return i == interface && (r == nil || router == nil || r == router)
+        }
+        static func split(_ p: String) -> (String, String?) {
+            let parts = p.split(separator: "|", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+            let r = parts.count > 1 && !parts[1].isEmpty ? parts[1] : nil
+            return (parts.first ?? "", r)
+        }
+        var key: String? { router.map { interface + "|" + $0 } }
+    }
+    private(set) var place: Place?
+    /// While offline: when the Mac went, and whether it slept since.
+    private(set) var offlineAt: Instant?
+    private(set) var slept = false
     /// The Mac went to sleep while online: the next reading is compared, not taken as an arrival.
     private(set) var asleep = false
+    /// This network has given an acceptable reading since it was reached.
+    private(set) var read = false
+    /// The remembered network a fresh reading on this network named on its own: a reading that two remembered networks
+    /// would fit (a shared router, the other away) stays this one. Needs a reading again after more than a moment
+    /// offline.
+    private(set) var resolved: String?
+    /// The remembered network last read at each place (interface and IPv4 router), in memory only: a network reached
+    /// there again waits longer for its router before it counts as unrecognised.
+    private(set) var seen: [String: String] = [:]
     /// What was last decided on for this network (nil after an arrival: nothing yet).
     private(set) var acted: AutoSwitch.Acted?
+    /// Counts decisions and hand picks: a report of a switch not made is about the decision it names only.
+    private(set) var generation = 0
     /// A profile was picked by hand while this network was still being read.
     private(set) var byHand = false
 
     init(rules: NetworkRules, now: Instant = .now) { self.rules = rules; since = now; waiting = now }
 
-    /// The network decisions are about: a remembered network by its own name (the one already decided on here, while its
-    /// routers come and go), else the reading, `AutoSwitch.unrecognised` once a reading has waited too long; nil while
-    /// offline or still waiting.
+    /// The network decisions are about: a remembered network by its own name (the one a fresh reading here named, while
+    /// its routers come and go), else the reading, `AutoSwitch.unrecognised` once a reading has waited too long; nil
+    /// while offline or still waiting.
     func here(at now: Instant) -> String? {
         switch reading {
         case .offline: nil
@@ -109,7 +133,7 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
             case .network(let r): network(r, now)
             case .sleep(let s):
                 asleep = s
-                if s { left?.slept = true }
+                if s, offlineAt != nil { slept = true }
             case .connected(let c): if c != connected { connected = c; since = now }
             case .rules(let r):
                 guard r != rules else { break }
@@ -125,10 +149,11 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
                 rules = r
                 byHand = false
             case .pickedByHand:
+                generation += 1
                 if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) } else { byHand = reading != .offline }
-            case .unapplied(let a):
+            case .unapplied(let g):
                 // Owed again, after the settle time, unless something newer was decided or picked meanwhile.
-                if acted == a { acted = nil; since = now }
+                if g == generation, acted != nil { acted = nil; since = now }
             case .busy(let b): busy = b
             case .profiles(let p): profiles = p
             case .timer: break
@@ -138,48 +163,51 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         return next(now)
     }
 
-    /// A reading. Online throughout, the same place is the same network. Back from offline at the same place, it is the
-    /// same network after a moment or a sleep, or when the last decision was on routers' fingerprints (read again and
-    /// compared, waiting at most `AutoSwitch.lateRouter`): a network without a fingerprint has nothing else to tell it
-    /// by, so going offline otherwise leaves it. Anything else is an arrival, which forgets what was decided.
+    /// A reading (see the type's principles): the same network or an arrival, and how long a missing reading may wait.
     private mutating func network(_ r: Reading, _ now: Instant) {
         guard r != reading else { return }
         let before = reading
         reading = r
         since = now
-        guard let place = r.place else {
-            if let p = before.place { left = Left(place: p, at: now, slept: asleep) }
+        guard let p = r.place else {
+            if before != .offline { offlineAt = now; slept = asleep }
             return
         }
         // A network decided on by its routers is compared by them after any time offline; one without is left by it.
         let identified = acted.map { $0.mark != AutoSwitch.unrecognised } ?? false
-        let same = if let was = before.place { Self.same(was, place) }
-            else if let l = left { Self.same(l.place, place) && (l.slept || asleep || now - l.at <= AutoSwitch.blip || identified) }
-            else { false }
-        left = nil
-        if !same { acted = nil; byHand = false; read = false; resolved = nil }
+        let gap = offlineAt.map { now - $0 }
+        let moment = gap.map { $0 <= AutoSwitch.blip } ?? true
+        let same = place.map { $0.admits(p) && (moment || slept || asleep || identified) } ?? false
+        offlineAt = nil; slept = false
+        let (interface, router) = Place.split(p)
+        if !same {
+            acted = nil; byHand = false; read = false; resolved = nil
+            place = Place(interface: interface, router: router)
+        } else if let router { place?.router = router }
+        // Back after more than a moment: what was decided stays to compare with, but which remembered network this is
+        // takes a fresh reading.
+        if !moment { resolved = nil; read = false }
         switch r {
         case .mark(let m, _):
             read = true
-            if let n = rules.network(m) { resolved = n.id }
+            if let n = rules.network(m) { resolved = n.id; if let k = place?.key { remember(k, n.id) } }
             // Taken for a network unbraid couldn't recognise, and its routers answer at last for none remembered: the
             // same network still, by its own reading now.
             let id = rules.identity(m, preferring: resolved)
             if same, case .reading = before, acted?.mark == AutoSwitch.unrecognised, !rules.known.contains(where: { $0.id == id }) { acted?.mark = id }
-        // A wait for an acceptable reading: the short one for a network just reached, the long one for this network
-        // read again.
-        case .reading: waiting = now; grace = same && (read || acted != nil) ? AutoSwitch.lateRouter : AutoSwitch.unrecognisedAfter
+        // A wait for an acceptable reading: the long one where a remembered network was read before (this network
+        // read again, or its place reached again), the short one for anything else.
+        case .reading:
+            waiting = now
+            let known = (same && (identified || read)) || (place?.key.flatMap { seen[$0] } != nil)
+            grace = known ? AutoSwitch.lateRouter : AutoSwitch.unrecognisedAfter
         case .offline: break
         }
     }
 
-    /// Two places are one: the same interface, and the same IPv4 router where both have one (right after joining, the
-    /// router may not be known yet).
-    static func same(_ a: String, _ b: String) -> Bool {
-        let x = a.split(separator: "|", omittingEmptySubsequences: false), y = b.split(separator: "|", omittingEmptySubsequences: false)
-        guard x.first == y.first else { return false }
-        let g = x.count > 1 ? x[1] : "", h = y.count > 1 ? y[1] : ""
-        return g == h || g.isEmpty || h.isEmpty
+    private mutating func remember(_ key: String, _ id: String) {
+        seen[key] = id
+        if seen.count > 20, let first = seen.keys.first(where: { $0 != key }) { seen[first] = nil }
     }
 
     /// A pick made while the network was being read counts as decided for the network the reading gives.
@@ -200,9 +228,13 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         if now < due { return .wait(due) }
         // Decided once it settles (`busy(false)` comes back here).
         guard !busy, let here = here(at: now) else { return .nothing }
+        // A place where no remembered network answered in time is no longer one to wait for.
+        if here == AutoSwitch.unrecognised, let k = place?.key { seen[k] = nil }
         let decided = AutoSwitch.Acted(mark: here, rules: rules), was = acted
         acted = decided
-        return was == decided ? .nothing : .decide(mark: here, acted: was)
+        guard was != decided else { return .nothing }
+        generation += 1
+        return .decide(mark: here, acted: was)
     }
 }
 
