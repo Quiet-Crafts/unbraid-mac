@@ -118,7 +118,10 @@ nonisolated enum UpdateCheck {
     private static let key = "updateCheck"
 
     /// Its own session: no cookies, caches or stored credentials, redirects refused (to another host or not), short
-    /// timeouts, and headers that say only "unbraid".
+    /// timeouts, and headers that say only "unbraid" and its version ("unbraid/1.2.0"), so the site can tell how many
+    /// installs run each version.
+    static let agent = "unbraid/" + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
+
     static let session: URLSession = {
         let c = URLSessionConfiguration.ephemeral
         c.timeoutIntervalForRequest = 10
@@ -129,7 +132,7 @@ nonisolated enum UpdateCheck {
         c.urlCredentialStorage = nil
         c.urlCache = nil
         c.requestCachePolicy = .reloadIgnoringLocalCacheData
-        c.httpAdditionalHeaders = ["Accept": "application/json", "User-Agent": "unbraid", "Accept-Language": "en"]
+        c.httpAdditionalHeaders = ["Accept": "application/json", "User-Agent": agent, "Accept-Language": "en"]
         return URLSession(configuration: c, delegate: Http.NoRedirect(), delegateQueue: nil)
     }()
 
