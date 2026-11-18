@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 /// Websites with a route of their own (`Setup.sites`): how an address is written, and how many a profile holds.
@@ -24,6 +25,7 @@ nonisolated enum Sites {
         case .refused(let why): return why
         case .name(let name):
             if let why = never(name) { return why }
+            guard suffixes != nil else { return damaged }
             return shared(name) ? "\(name) ends many websites' names: add one website under it" : nil
         }
     }
@@ -123,7 +125,8 @@ nonisolated enum Sites {
         if let port = host.range(of: ":") { host = host[..<port.lowerBound] }
         guard var name = ascii(String(host).trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return .refused(notAName) }
         // Every leading "www." goes while a name is left, so what is kept reads back as itself.
-        while name.hasPrefix("www."), name.dropFirst(4).contains(".") { name.removeFirst(4) }
+        // A leading "www." stays when what is left would be a shared ending: www.gob.mx is a website, gob.mx all of Mexico's.
+        while name.hasPrefix("www."), name.dropFirst(4).contains("."), !shared(String(name.dropFirst(4))) { name.removeFirst(4) }
         let labels = name.split(separator: ".", omittingEmptySubsequences: false)
         // A last label that reads as a number (digits, or 0x and hex digits) makes it an IP address to a browser, which
         // connects to it without a lookup: nothing a rule could match, and nothing a name ends in.
@@ -138,20 +141,31 @@ nonisolated enum Sites {
 
     private static let notAName = "That isn't a website address"
     private static let address = "An IP address can't have a rule: add the website's name"
-    /// A name that is itself an ending many unrelated websites share ("co.uk"): a rule would cover them all. The
-    /// Public Suffix List's ICANN section as `Resources/shared_suffixes.txt` holds it (its wildcard and exception rules
-    /// included), and hosting platforms where everyone gets a name of their own (the list's private section, kept short).
+    /// A name that is itself an ending many unrelated websites share ("co.uk"), or the base of one ("sch.uk", above
+    /// every "*.sch.uk"): a rule would cover them all. The Public Suffix List's ICANN section as
+    /// `Resources/shared_suffixes.txt` holds it (its wildcard and exception rules included), and hosting platforms where
+    /// everyone gets a name of their own (the list's private section, kept short). Without a sound list only those.
     static func shared(_ name: String) -> Bool {
+        if platforms.contains(name) { return true }
+        guard let suffixes else { return false }
         let parent = name.split(separator: ".", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
-        return suffixes.contains(name) || platforms.contains(name) || suffixes.contains("*." + parent) && !suffixes.contains("!" + name)
+        return suffixes.contains(name) || suffixes.contains("*." + name) || suffixes.contains("*." + parent) && !suffixes.contains("!" + name)
     }
 
-    /// The bundled list's rules, read once.
-    static let suffixes: Set<String> = {
+    /// The bundled list's rules, read once; nil when the file isn't the one this build ships (missing, cut short or
+    /// changed): Add Website then takes no new website (`damaged`), rather than one a sound list would refuse.
+    static let suffixes: Set<String>? = {
         guard let url = Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt"),
-              let text = try? String(contentsOf: url, encoding: .utf8) else { return [] }
+              let data = try? Data(contentsOf: url), SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == suffixesDigest,
+              let text = String(data: data, encoding: .utf8) else { return nil }
         return Set(text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") })
     }()
+
+    /// SHA-256 of `Resources/shared_suffixes.txt` as shipped.
+    static let suffixesDigest = "f29b2747d562a0eaa907af6fee2b35805789121f9a19dfad9d6b3561be465e47"
+
+    /// Why no website can be added while the list is unsound.
+    static let damaged = "unbraid's list of shared name endings is damaged, so no website can be added: install unbraid again"
 
     private final class BundleToken {}
 

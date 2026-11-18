@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 
 /// Adding, moving and removing websites, and how they are counted where apps are.
@@ -84,17 +85,35 @@ final class SiteEditsTests: XCTestCase {
         for name in ["printer.lan", "nas.local", "app.tail9999.ts.net", "168.192.in-addr.arpa"] { XCTAssertNil(reason(name, BLOCK, tailscale: true, lan: true), name) }
     }
 
-    /// A name that only ends other websites' names (a country's "co.uk", a shared zone such as "k12.ca.us", a hosting
-    /// platform) would cover all of them: the Public Suffix List's ICANN section decides, with its wildcards and exceptions.
-    func testAPublicSuffixIsNotAWebsite() {
-        XCTAssertGreaterThan(Sites.suffixes.count, 1600, "the bundled list is read")
-        for name in ["co.uk", "www.co.uk", "com.au", "co.jp", "org.uk", "k12.ca.us", "github.io", "herokuapp.com", "ts.net", "anything.ck", "foo.kawasaki.jp"] {
-            let kept = name.hasPrefix("www.") ? String(name.dropFirst(4)) : name
-            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(kept) ends many websites' names: add one website under it"), name)
+    /// A name that only ends other websites' names (a country's "co.uk", a shared zone such as "k12.ca.us" or
+    /// "police.uk", the base of a wildcard such as "sch.uk", a hosting platform) would cover all of them: the Public
+    /// Suffix List's whole ICANN section decides, with its wildcards and exceptions. "www." stays on a name whose rest is
+    /// such an ending: www.gob.mx is Mexico's portal, gob.mx all of Mexico's government.
+    func testAPublicSuffixIsNotAWebsite() throws {
+        let list = try XCTUnwrap(Sites.suffixes, "the bundled list is read and sound")
+        XCTAssertEqual(list.count, 5512)
+        for name in ["co.uk", "com.au", "co.jp", "org.uk", "k12.ca.us", "police.uk", "nhs.uk", "asn.au", "gob.mx", "sch.uk", "github.io",
+                     "herokuapp.com", "ts.net", "anything.ck", "foo.kawasaki.jp", "school.sch.uk"] {
+            XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) ends many websites' names: add one website under it"), name)
         }
-        for name in ["bbc.co.uk", "example.com.au", "user.github.io", "github.com", "go.co", "co.com", "uk.com", "www.ck", "city.kawasaki.jp", "school.k12.ca.us"] {
-            XCTAssertEqual(SiteEdits.check(name, in: [:]), .valid(name == "www.ck" ? "www.ck" : name), name)
+        for (raw, kept) in [("bbc.co.uk", "bbc.co.uk"), ("example.com.au", "example.com.au"), ("user.github.io", "user.github.io"), ("github.com", "github.com"),
+                            ("go.co", "go.co"), ("co.com", "co.com"), ("uk.com", "uk.com"), ("www.ck", "www.ck"), ("city.kawasaki.jp", "city.kawasaki.jp"),
+                            ("school.k12.ca.us", "school.k12.ca.us"), ("https://www.gob.mx/", "www.gob.mx"), ("www.police.uk", "www.police.uk"),
+                            ("www.www.gob.mx", "www.gob.mx"), ("www.example.com", "example.com")] {
+            XCTAssertEqual(SiteEdits.check(raw, in: [:]), .valid(kept), raw)
+            XCTAssertTrue(Sites.isClean(kept), kept)
         }
+        // A name kept with its "www." reads back as itself, so a saved one and a restored one stay.
+        XCTAssertEqual(Setup.readable(["www.gob.mx": DIRECT]), ["www.gob.mx": DIRECT])
+    }
+
+    /// The list is the file this build ships, checked by its digest: a missing, cut or changed file takes no new
+    /// website, with why, rather than one a sound list would refuse.
+    func testADamagedListTakesNoNewWebsite() throws {
+        let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "shared_suffixes", withExtension: "txt"))
+        let data = try Data(contentsOf: url)
+        XCTAssertEqual(SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(), Sites.suffixesDigest)
+        XCTAssertTrue(Sites.damaged.contains("no website can be added"))
     }
 
     /// An international name is saved in its ASCII form and shown in its own letters.
