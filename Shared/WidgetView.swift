@@ -228,7 +228,7 @@ struct WidgetView: View {
         case .on: "\(s.exits) VPN route\(s.exits == 1 ? "" : "s")"
         case .connecting: "Setting up routes"
         case .paused: s.pausedUntil.map { "Resumes at \($0.formatted(date: .omitted, time: .shortened))" } ?? "Until resumed"
-        case .off: "Own connection"
+        case .off: "Normal connection"
         }
     }
 }

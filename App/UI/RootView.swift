@@ -295,8 +295,8 @@ private struct DisclosureSheet: View {
                 }
                 Toggle("I accept the Terms of Use and have read the Privacy Policy", isOn: $accepted).toggleStyle(.checkbox)
                 HStack {
-                    SwiftUI.Link("Terms of Use", destination: URL(string: "https://unbraid.app/terms")!)
-                    SwiftUI.Link("Privacy Policy", destination: URL(string: "https://unbraid.app/privacy")!)
+                    SwiftUI.Link("Terms of Use", destination: URL(string: Site.terms)!)
+                    SwiftUI.Link("Privacy Policy", destination: URL(string: Site.privacy)!)
                 }
             }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, Layout.gutter).padding(.bottom, Layout.inset)
         } actions: {

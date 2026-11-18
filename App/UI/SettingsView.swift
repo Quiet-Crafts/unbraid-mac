@@ -1025,10 +1025,10 @@ private struct StatisticsTab: View {
             Section {
                 SubToggle("Record usage statistics", "Only on this Mac, never uploaded. Turning it off keeps what's saved.", symbol: "chart.bar",
                           isOn: Binding(get: { on }, set: { if $0 { consent = true } else { model.setStats(false) } }))
-                SettingsRow(title: "Saved history", caption: "Hourly for a week, daily for about a year", symbol: "clock") {
+                SettingsRow(title: "Saved history", caption: "Hourly for 9 days, daily for about 13 months", symbol: "clock") {
                     Text(amount).monospacedDigit().foregroundStyle(.secondary)
                 }
-            } header: { Text("Recording") } footer: { Text("Apps and programs (by their location on this Mac, home folder as ~; temporary and cache folders grouped as \"Other programs\"), routes, bytes, times, speeds and speed-test exit IPs. unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.") }
+            } header: { Text("Recording") } footer: { Text("Apps (by identifier), tools you added (by full path) and other programs (by location on this Mac, home folder as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Other programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as \"Other programs\". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.") }
             Section {
                 SubToggle("Test all routes at once", "Adds \u{201C}All\u{201D} to the Speed Test page: test 2 to 10 routes together.", symbol: "speedometer",
                           isOn: Binding(get: { model.setup.prefs.testAllRoutes }, set: { value in model.setPrefs { $0.testAllRoutes = value } }))
@@ -1047,8 +1047,8 @@ private struct StatisticsTab: View {
         .sheet(isPresented: $consent) {
             ConsentSheet(title: Text("Keep statistics?").font(.title2.bold()), rows: [
                 ("desktopcomputer", "Statistics stay on this Mac. They are never uploaded."),
-                ("clock", "Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests."),
-                ("nosign", "Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as \"Other programs\". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded."),
+                ("clock", "Kept as hourly sums for today and the previous 8 days, daily sums for about 13 months, when the VPN was on or paused for 400 days, and your last 100 speed-test runs (routes tested together count as one) for up to 400 days."),
+                ("nosign", "Only apps (by identifier), tools you added (by full path) and other programs (by their location on this Mac, with your home folder shown as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Other programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as \"Other programs\". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded."),
                 ("trash", "Turn off or delete everything in Settings at any time."),
             ], action: "Turn On", accept: { model.setStats(true) }) {}
         }
@@ -1110,7 +1110,7 @@ private struct AboutTab: View {
                 LinkRow("Terms of use", "unbraid.app/terms", Site.terms, symbol: "doc.text")
             }
             Section("Privacy") {
-                Text("No analytics, no ads, no accounts with us and no servers of our own. Provider logins, keys and your setup are stored on this Mac, sealed with keys kept in the Keychain.")
+                Text("No analytics, no ads, no accounts with us and no servers of our own that we send data to. Provider logins, keys and your setup are stored on this Mac, encrypted with keys kept in the Keychain.")
                 Text("Windows where you paste keys or sign in ask macOS to keep them out of screen sharing and captures. macOS may not always honour this.")
                 Text(Disclosure.text).font(.callout).foregroundStyle(.secondary)
             }

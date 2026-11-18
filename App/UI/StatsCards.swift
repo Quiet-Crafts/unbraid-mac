@@ -124,8 +124,8 @@ struct StatsOff: View {
 /// The Android consent sheet, for a Mac.
 let consentText = """
 Statistics stay on this Mac. They are never uploaded.
-Kept as hourly sums for a week and daily sums for about a year, with your last 100 speed tests.
-Only apps and programs (by their location on this Mac, with your home folder shown as ~), routes, bytes, times, speeds and speed-test exit IPs. Programs that run from temporary or cache folders are grouped as "Other programs". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.
+Kept as hourly sums for today and the previous 8 days, daily sums for about 13 months, when the VPN was on or paused for 400 days, and your last 100 speed-test runs (routes tested together count as one) for up to 400 days.
+Only apps (by identifier), tools you added (by full path) and other programs (by their location on this Mac, with your home folder shown as ~), routes, the VPN server used each day, bytes, times, when the VPN was on or paused, speeds and speed-test exit IPs. Other programs in temporary or cache folders, and traffic macOS does not attribute to a program, are grouped as "Other programs". unbraid also counts how much data goes to the websites you gave a route of their own. Nothing else about where you browse is recorded.
 Turn off or delete everything in Settings at any time.
 """
 
