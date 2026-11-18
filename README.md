@@ -127,7 +127,8 @@ that opens it, apps set to *Direct* included. A rule covers the address and ever
 www.example.com); a service that uses other addresses needs each one added. unbraid knows a website by the name an app
 looks up through macOS, never by a name read off the connection, so a browser set to its own secure DNS keeps its
 app's route. Website routes apply while unbraid is connected; a blocked website stays blocked during a pause too. A
-blocked website does not turn the kill switch on.
+blocked website does not turn the kill switch on. A name on your own network or in a Tailscale network (a printer's
+.local name, a ts.net name) can't take a website rule: the *Home access* and *Tailscale* settings look after those.
 
 ### Can I use it without a VPN subscription?
 
