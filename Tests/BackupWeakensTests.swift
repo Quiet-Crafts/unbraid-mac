@@ -108,6 +108,37 @@ final class BackupWeakensTests: XCTestCase {
 
     // MARK: Cases missed before
 
+    /// A default route going from a VPN to Direct is said even when a website saved on both sides happens to be the
+    /// name the check would use: it walks a name no saved website covers.
+    func testADefaultGoingDirectIsSaidWhateverWebsitesAreSaved() throws {
+        var here = base()
+        here.defaultRoute = "nl"
+        here.sites = [RestoreTraffic.otherName: BLOCK]
+        var next = here
+        next.defaultRoute = DIRECT
+        XCTAssertNotEqual(RestoreTraffic.outsideName([here, next]), RestoreTraffic.otherName)
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertEqual(l.defaultRoute, .toDirect)
+    }
+
+    /// The tailnet's subtree under saved websites is probed by its apex and a name no saved website in it covers, and
+    /// said once, for the closest website above it: a block saved at the usual probe name doesn't hide it, and two
+    /// websites above it don't say it twice.
+    func testATailnetSubtreeOpeningIsSaidOnceForTheClosestWebsite() throws {
+        var here = base()
+        here.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        here.home.tsControlUrl = "https://hs.example"
+        here.home.tsSuffix = "a.corp.example.org"
+        here.home.tsSuffixConfirmed = true
+        here.defaultRoute = DIRECT
+        here.sites = ["example.org": DIRECT, "corp.example.org": DIRECT, "zz-check.a.corp.example.org": BLOCK, "video.example": "ts"]
+        var next = here
+        next.sites["video.example"] = "nl"
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertEqual(l.sites["corp.example.org"], .unblocked)
+        XCTAssertNil(l.sites["example.org"] ?? nil)
+    }
+
     /// The tailnet's own domain under a saved Direct website gets no answer now (Tailscale runs for an exit, with Reach
     /// your tailnet off), and would go Direct by that website after a restore that leaves the exit unused: said for the
     /// website.

@@ -74,6 +74,16 @@ nonisolated enum RestoreTraffic {
     static let otherProgram = "/Applications/Another Program (unbraid check).app/Contents/MacOS/another"
     /// A name no website rule covers, and the address its lookup gets on a VPN: an ordinary site on the internet.
     static let otherName = "unbraid-check.example", publicAddress = "203.0.113.80"
+
+    /// A name like `otherName` that no website saved in `setups` covers, nor a name on the own network or in a Tailscale
+    /// network: one that takes the default route (or its app's) on both sides, whatever websites are saved.
+    static func outsideName(_ setups: [Setup]) -> String {
+        let keys = setups.flatMap(\.sites.keys)
+        func free(_ n: String) -> Bool {
+            !keys.contains { Sites.under(n, $0) } && setups.allSatisfy { Sites.ownNetwork(n, tailnet: Sites.tailnet(of: $0)) == nil }
+        }
+        return ([otherName] + (1...200).map { "unbraid-check-\($0).example" }).first(where: free) ?? otherName
+    }
     /// The address the fake resolver hands out for a name (the first stand-in range).
     static let fakeAddress = "198.18.0.5"
 
@@ -281,7 +291,8 @@ nonisolated enum RestoreTraffic {
             return (a, b)
         }
         var out = Losses()
-        guard let d = pair(otherProgram, otherName) else { return nil }
+        let other = outsideName([current, next])
+        guard let d = pair(otherProgram, other) else { return nil }
         out.defaultRoute = loss(d.0, d.1)
         // Every copy of every app (a bundle can be installed in more than one place, or inside another), the worst kept.
         // Copies that go the same way before and after are one kind of app, for the websites below.
@@ -292,7 +303,7 @@ nonisolated enum RestoreTraffic {
         for (key, patterns) in apps.sorted(by: { $0.key < $1.key }) {
             var worst: Loss?
             for path in Set(patterns.compactMap(samplePath)).sorted() {
-                guard let o = pair(path, otherName) else { continue }
+                guard let o = pair(path, other) else { continue }
                 let l = loss(o.0, o.1)
                 if rank(l) > rank(worst) { worst = l }
                 if kinds["\(o.0)|\(o.1)"] == nil { kinds["\(o.0)|\(o.1)"] = path; own[path] = l }
@@ -306,12 +317,19 @@ nonisolated enum RestoreTraffic {
         let names = Set(current.sites.keys).union(next.sites.keys).filter(Sites.isClean).sorted()
         let programs = [otherProgram] + kinds.values.filter { $0 != otherProgram }.sorted()
         let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [otherProgram]
-        // A tailnet's own domain under a saved website (example.org above corp.example.org) is probed too, said for that
-        // website: whether its names get an answer of their own can change with the restore while the website doesn't.
-        let domains = Set([Sites.tailnet(of: current), Sites.tailnet(of: next)].compactMap { $0 })
+        // A tailnet's own domain under a saved website (example.org above corp.example.org) is probed too: whether its
+        // names get an answer of their own can change with the restore while the website doesn't. Its apex and a name in
+        // it no saved website covers, said once, for the closest website above it.
+        var subtrees: [String: [String]] = [:]
+        for domain in Set([Sites.tailnet(of: current), Sites.tailnet(of: next)].compactMap { $0 }) {
+            guard let closest = names.filter({ $0 != domain && Sites.under(domain, $0) }).max(by: { $0.count < $1.count }) else { continue }
+            let inside = names.filter { Sites.under($0, domain) }
+            let child = (0...200).map { "zz-check\($0 == 0 ? "" : String($0)).\(domain)" }.first { c in !inside.contains { Sites.under(c, $0) } }
+            subtrees[closest, default: []] += (names.contains(domain) ? [] : [domain]) + [child].compactMap { $0 }
+        }
         for name in names {
             var worst: Loss?
-            for probe in [name, "zz-check." + name] + domains.filter({ $0 != name && Sites.under($0, name) }).sorted().map({ "zz-check." + $0 }) {
+            for probe in [name, "zz-check." + name] + (subtrees[name] ?? []) {
                 for program in fromApps {
                     guard let o = pair(program, probe) else { continue }
                     let l = loss(o.0, o.1)
