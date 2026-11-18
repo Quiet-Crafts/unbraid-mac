@@ -20,6 +20,8 @@ nonisolated enum RestoreTraffic {
     /// A compiled config, read for walking.
     final class Config {
         let rules: [[String: Any]]
+        /// The lookup rules, and the resolver of what none claims.
+        var dns: [[String: Any]] = [], dnsFinal = "local"
         let final: String
         let servers: [String: [String: Any]]
         let defaultResolver: String
@@ -92,14 +94,17 @@ nonisolated enum RestoreTraffic {
             else { links[r.id] = standIn(r, n) }
         }
         let input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
-                                   tsSuffix: s.tailnetCounts ? Compiler.trustedStoredSuffix(s.home) : nil)
+                                   tsSuffix: Sites.tailnet(of: s))
         guard let text = try? Compiler.compile(input), let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let route = o["route"] as? [String: Any], let rules = route["rules"] as? [[String: Any]], let final = route["final"] as? String,
               let dns = o["dns"] as? [String: Any] else { return nil }
         let servers = Dictionary(((dns["servers"] as? [[String: Any]]) ?? []).compactMap { d in (d["tag"] as? String).map { ($0, d) } }) { a, _ in a }
         let blocking = Set(["nord", "mullvad", "pia", "ivpn"].compactMap { p in Providers.get(p)?.blockingDns { s.opt(p, $0) } })
-        return Config(rules: rules, final: final, servers: servers,
-                      defaultResolver: (route["default_domain_resolver"] as? String) ?? (dns["final"] as? String) ?? "local", blocking: blocking)
+        let c = Config(rules: rules, final: final, servers: servers,
+                       defaultResolver: (route["default_domain_resolver"] as? String) ?? (dns["final"] as? String) ?? "local", blocking: blocking)
+        c.dns = (dns["rules"] as? [[String: Any]]) ?? []
+        c.dnsFinal = dns["final"] as? String ?? "local"
+        return c
     }
 
     /// A WireGuard tunnel of its own for provider route `r`, made up: distinct per route, so no two share one.
@@ -111,11 +116,15 @@ nonisolated enum RestoreTraffic {
         return .wg(Server(name: r.name, host: host, ip: host, publicKey: peer.publicKey, load: 0), peer)
     }
 
-    /// A TCP connection to port 443 from `process` (nil: none found) to `name` (looked up through the fake resolver,
-    /// as every name is) or to `address`. Nil when a rule holds something this walk doesn't know.
-    static func connect(_ c: Config, process: String?, name: String?, address: String = publicAddress) -> Outcome? {
-        var ip = name == nil ? address : fakeAddress
+    /// A TCP connection to port 443 from `process` (nil: none found) to `name` or to `address`. The name is first looked
+    /// up as the system resolver asks for every app (with no program to match): refused or not found, nothing connects
+    /// (rejected); a stand-in address, and the connection carries the name to the website rules; a real one from a
+    /// resolver of its own (the tailnet's, the local network's), and it goes to that address by no name. Nil when a rule
+    /// holds something this walk doesn't know.
+    static func connect(_ c: Config, process given: String?, name looked: String?, address: String = publicAddress) -> Outcome? {
+        var ip = looked == nil ? address : fakeAddress
         var resolver: String?
+        var qtype: String?, process = given, name = looked
         func strings(_ v: Any?) -> [String] { (v as? [String]) ?? ((v as? String).map { [$0] } ?? []) }
         /// Whether `r` matches; nil when it holds a condition this walk can't judge.
         func matches(_ r: [String: Any]) -> Bool? {
@@ -136,6 +145,7 @@ nonisolated enum RestoreTraffic {
                     for sub in subs { guard let m = matches(sub) else { return nil }; results.append(m) }
                     hit = hit && (r["mode"] as? String == "or" ? results.contains(true) : results.allSatisfy { $0 })
                 case "inbound": hit = hit && strings(v).contains("tun")
+                case "query_type": hit = hit && qtype.map { strings(v).contains($0) } == true
                 case "auth_user", "protocol": hit = false
                 case "ip_version": hit = hit && (v as? Int) == 4
                 case "network": hit = hit && strings(v).contains("tcp")
@@ -151,7 +161,25 @@ nonisolated enum RestoreTraffic {
         }
         func outcome(_ tag: String) -> Outcome {
             let exit: Outcome.Exit = tag == "direct" ? .direct : tag == "home-wg" ? .home : .tunnel(tag)
-            return Outcome(exit: exit, resolver: name == nil ? nil : kind(c, resolver ?? c.defaultResolver))
+            return Outcome(exit: exit, resolver: looked == nil ? nil : kind(c, resolver ?? c.defaultResolver))
+        }
+        if looked != nil {
+            qtype = "A"
+            var answer: String? = nil
+            process = nil
+            for r in c.dns {
+                guard let hit = matches(r) else { return nil }
+                guard hit else { continue }
+                answer = r["action"] as? String == "predefined" ? "" : r["server"] as? String ?? ""
+                break
+            }
+            process = given
+            qtype = nil
+            switch answer ?? c.dnsFinal {
+            case "": return Outcome(exit: .rejected)
+            case "fake": break
+            case let server: resolver = server; name = nil; ip = publicAddress
+            }
         }
         for r in c.rules {
             guard let hit = matches(r) else { return nil }
@@ -274,7 +302,8 @@ nonisolated enum RestoreTraffic {
         for (key, stand) in stands where stand != key { out.apps[key] = out.apps[stand] }
         // Every name with a website rule on either side, and one under it, from every kind of app: a website rule
         // comes before its app's route, so a name given Direct takes an app on a VPN there too.
-        let names = Set(Sites.applied(current).keys).union(Sites.applied(next).keys).sorted()
+        // Every saved one, applied or not: whether its name's own resolver comes first is the walk's to find.
+        let names = Set(current.sites.keys).union(next.sites.keys).filter(Sites.isClean).sorted()
         let programs = [otherProgram] + kinds.values.filter { $0 != otherProgram }.sorted()
         let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [otherProgram]
         for name in names {

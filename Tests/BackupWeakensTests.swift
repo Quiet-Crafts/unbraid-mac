@@ -108,6 +108,23 @@ final class BackupWeakensTests: XCTestCase {
 
     // MARK: Cases missed before
 
+    /// A name that gets no answer now (the tailnet's domain, refused while Tailscale runs only for an exit) and would be
+    /// looked up Direct after the restore: the walk looks names up first, so this counts as opening it.
+    func testANameRefusedNowThatGoesDirectAfterIsSaid() throws {
+        var here = base()
+        here.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        here.home.tsControlUrl = "https://hs.example"
+        here.home.tsSuffix = "corp.example"
+        here.defaultRoute = DIRECT
+        here.sites = ["portal.corp.example": DIRECT, "video.example": "ts"]
+        var next = here
+        next.sites["video.example"] = "nl"
+        XCTAssertEqual(Sites.tailnet(of: here), "corp.example")
+        XCTAssertNil(Sites.tailnet(of: next))
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertEqual(l.sites["portal.corp.example"], .unblocked)
+    }
+
     func testWebsitesByWhatTheyEffectivelyGet() {
         var here = base()
         here.defaultRoute = "nl"

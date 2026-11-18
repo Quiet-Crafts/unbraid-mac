@@ -727,6 +727,10 @@ final class ConfigVetTests: XCTestCase {
         XCTAssertFalse(try dns(["domain_keyword": ["x"], "server": "local"]))
         XCTAssertFalse(try dns(["domain_regex": ["x"], "server": "local"]))
         XCTAssertFalse(try dns(["type": "logical", "mode": "or", "rules": [["domain_suffix": ["x"]]], "server": "local"]))
+        // A blocked website's lookups but those of a name under it with a rule of its own: "and", with the inverse.
+        XCTAssertTrue(try dns(["type": "logical", "mode": "and", "rules": [["domain": ["x.example"], "domain_suffix": [".x.example"], "query_type": ["A"]],
+                                                                         ["domain": ["y.x.example"], "domain_suffix": [".y.x.example"], "invert": true]], "server": "local"]))
+        XCTAssertFalse(try dns(["type": "logical", "mode": "and", "rules": [["domain_regex": ["x"]]], "server": "local"]))
         // A tunnel's resolver asks through an endpoint of its own kind.
         XCTAssertFalse(passes(try item("example", "dns.servers", "tailscale") { $0["endpoint"] = "direct" }))
         XCTAssertFalse(passes(try item("openvpn", "dns.servers", "openvpn") { $0["endpoint"] = "home-ts" }))

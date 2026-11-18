@@ -389,9 +389,18 @@ nonisolated enum ConfigVet {
 
     /// A DNS rule: its matches, then a resolver (with how long its answers are kept) or a fixed refusal.
     private static func dnsRule(_ rule: [String: Any]) -> Bool {
+        // A logical rule (a website's lookups but those of a name under it with a rule of its own): matches only in its
+        // own rules, each one of the matches below (or its inverse).
+        var match = dnsMatch
+        if let t = rule["type"] {
+            guard t as? String == "logical", rule["mode"] as? String == "and", let own = rule["rules"] as? [Any], !own.isEmpty,
+                  own.allSatisfy({ fits($0, .object(dnsMatch.merging(["invert": .value]) { $1 })) })
+            else { return false }
+            match = ["type": .value, "mode": .value, "rules": .list]
+        }
         let action = rule["action"] as? String ?? "route"
         guard rule["action"] == nil || rule["action"] is String, let extra = dnsActions[action],
-              fits(rule, dnsMatch.merging(fields("action")) { $1 }.merging(extra.map { ($0, Field.value) }) { $1 }) else { return false }
+              fits(rule, match.merging(fields("action")) { $1 }.merging(extra.map { ($0, Field.value) }) { $1 }) else { return false }
         return action == "route" ? rule["server"] != nil : ["REFUSED", "NXDOMAIN", "NOERROR"].contains(rule["rcode"] as? String ?? "")
     }
 

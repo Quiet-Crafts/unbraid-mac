@@ -58,11 +58,11 @@ nonisolated enum Compiler {
     enum Ownerless: Sendable { case followsDefault, refusedWhileBlocking, refusedWhileSplit }
 
     /// Route id → the tunnel tag it runs on: routes that resolve to one server with one login share a tunnel.
-    static func shared(_ s: Setup, _ links: [String: Link], blocked: Set<String> = []) throws -> [String: String] {
+    static func shared(_ s: Setup, _ links: [String: Link], blocked: Set<String> = [], tailnet: String? = nil) throws -> [String: String] {
         guard clashes(s, links.filter { !blocked.contains($0.key) }).isEmpty else { throw Refused(clashMessage) }
         var owners: [String: String] = [:]
         var out: [String: String] = [:]
-        for r in s.activeRoutes where r.tsExit == nil && !blocked.contains(r.id) {
+        for r in s.activeRoutes(tailnet: tailnet) where r.tsExit == nil && !blocked.contains(r.id) {
             guard let link = links[r.id] else { throw Fail("No server for \(r.name)") }
             let key = linkKey(r, link)
             if owners[key] == nil { owners[key] = "r-\(r.id)" }
@@ -198,7 +198,7 @@ nonisolated enum Compiler {
         let deny: Bool
 
         init(_ i: Input, deny: Bool = false) throws {
-            let s = i.setup, active = s.activeRoutes.filter { !i.blocked.contains($0.id) }
+            let s = i.setup, active = s.activeRoutes(tailnet: i.tsSuffix).filter { !i.blocked.contains($0.id) }
             self.s = s; self.i = i; self.active = active; self.deny = deny
             // Block is an app's choice, not a default: everything else would go Direct, or to tunnels that don't exist.
             guard s.defaultRoute != BLOCK else { throw Fail("Block can't be the default route. Make Direct or a VPN route the default.") }
@@ -213,7 +213,7 @@ nonisolated enum Compiler {
             }
             // Tailscale-exit routes ride the Tailscale endpoint, whose exit node is set there. Routes that resolve to the
             // same server with the same credentials share one tunnel: two with one key would fight over it.
-            shared = try Compiler.shared(s, i.links, blocked: i.blocked)
+            shared = try Compiler.shared(s, i.links, blocked: i.blocked, tailnet: i.tsSuffix)
             var byRoute: [(id: String, patterns: [String])] = []
             // An app with no entry follows the default route (one the user chose for it is an entry, even when it is the
             // default); a follower nested in a bundle routed elsewhere is grouped with the default route here (`nestedDefaults`).
@@ -246,11 +246,12 @@ nonisolated enum Compiler {
             appsOnExits = liveRoutes.contains { $0 != DIRECT && $0 != Compiler.filteredDirect && $0 != BLOCK }
             home = (s.home.tailscale ? homeSubnets(s) : []) + (s.home.wg.map(homeCidrs) ?? [])
             defaultDns = s.defaultRoute == DIRECT && s.prefs.effectiveFilter.server != nil && s.prefs.effectiveFilter.direct && !deny ? "dns-filter" : s.defaultRoute == DIRECT || active.isEmpty || i.blocked.contains(s.defaultRoute) ? "local" : Self.dns(s.defaultRoute, s, shared, i.links)
-            // A route or Direct for a name on the own network or in the tailnet gets no rule (a setup saved before
-            // such names were refused may hold one): its own resolver answers it, which a website's route would skip,
-            // so it resolves and routes as if the rule weren't there. A block of one stays a block.
-            let tailnet = Compiler.tsSuffix(i.tsSuffix)
-            sites = Sites.runs(Sites.applied(s, tailnet: tailnet)).map { run in
+            // The websites whose rules apply, judged with the input's own tailnet domain, as the routes that run are: a
+            // block always, a route or Direct unless a resolver of the name's own comes first (`Compiler.answered`).
+            // Where the private names go is the order's to decide (see `dns`): one under a website above it reaches its
+            // own resolver all the same. A rule that doesn't apply is left out, so it neither names a tunnel that
+            // doesn't run nor opens a name under a block.
+            sites = Sites.runs(Sites.applied(s, tailnet: i.tsSuffix)).map { run in
                 (id: run.id, match: ["domain": J.strings(run.names), "domain_suffix": J.strings(run.names.map { "." + $0 })])
             }
             // Tailscale even without an exit route (its nodes). Health checks distinguish failed exits from an offline Mac,
@@ -476,21 +477,39 @@ nonisolated enum Compiler {
         Array(Set((officialTs(home) ? ["ts.net"] : []) + [suffix].compactMap { $0 })).sorted()
     }
 
-    /// Who answers `name` in `s` when no website rule takes it, where that is a resolver a website rule would wrongly
-    /// take it from: one of the exceptions `dns` writes after the website rules (the tailnet's names and reverse zones
-    /// while it is reached, its domain refused while it isn't, local names while devices on this network are reached,
-    /// this network's reverse zones), or multicast for `.local`, which macOS answers without unbraid. Nil when no
-    /// exception does: a website rule for the name works. Read from the same lists and conditions as `dns`, so a rule
-    /// is left out exactly where it would take a name from its own resolver (`Sites.applied`). `tailnet`: the domain
-    /// the input carries.
-    enum Answered: Equatable { case tailscale, tailnet, tailnetClosed, local, reverse, multicast }
+    /// The tailnet's names asked before any website's: its own domain, or all of ts.net on Tailscale's server while its
+    /// own domain isn't known yet.
+    static func earlyTailnetDomains(_ home: Home, suffix: String?) -> [String] {
+        officialTs(home) && suffix == nil ? ["ts.net"] : [suffix].compactMap { $0 }
+    }
+
+    /// The tailnet's names asked after the websites': the rest of ts.net on Tailscale's server, once its own domain is
+    /// known (another tailnet's ts.net names are public Funnel sites, which a website rule may route).
+    static func lateTailnetDomains(_ home: Home, suffix: String?) -> [String] {
+        officialTs(home) && suffix != nil && suffix != "ts.net" ? ["ts.net"] : []
+    }
+
+    /// The names a website's match covers.
+    static func names(_ match: [String: J]) -> [String] {
+        guard case .a(let list)? = match["domain"] else { return [] }
+        return list.compactMap { if case .s(let n) = $0 { n } else { nil } }
+    }
+
+    /// Who answers `name` in `s` before a website rule for it on a route or Direct can: one of the exceptions `dns`
+    /// writes before those rules (the tailnet's names and reverse zones while it is reached, its domain refused while it
+    /// isn't, local names while devices on this network are reached, this network's reverse zones), multicast for
+    /// `.local`, which macOS answers without unbraid, or this Mac for `localhost`. Nil when none does: the rule works.
+    /// Read from the same lists and conditions as `dns`, for telling the user (`Sites.applied`): the engine's order of
+    /// rules is what decides. `tailnet`: the domain the input carries.
+    enum Answered: Equatable { case tailscale, tailnet, tailnetClosed, local, reverse, multicast, loopback }
 
     static func answered(_ name: String, _ s: Setup, tailnet: String?) -> Answered? {
         func under(_ suffixes: [String]) -> Bool { suffixes.contains { name == $0 || name.hasSuffix("." + $0) } }
         let suffix = tsSuffix(tailnet)
         if under(["local"]) { return .multicast }
+        if under(["localhost"]) { return .loopback }
         if s.home.tailscale {
-            if under(tailnetDomains(s.home, suffix: suffix)) { return suffix.map { under([$0]) } == true || !officialTs(s.home) ? .tailnet : .tailscale }
+            if under(earlyTailnetDomains(s.home, suffix: suffix)) { return suffix == nil && officialTs(s.home) ? .tailscale : .tailnet }
             if under(tailnetReverse) { return .tailnet }
         } else if let suffix, under([suffix]) { return .tailnetClosed }
         if s.prefs.lan && under(localNames) { return .local }
@@ -547,20 +566,35 @@ nonisolated enum Compiler {
         // the like included) would otherwise be a way out. Their lookups through mDNSResponder can't be told apart from
         // anyone else's and follow the rules below; the addresses they get lead nowhere for them.
         rules += p.blocked.map { ["process_path_regex": $0, "action": "predefined", "rcode": "REFUSED"] }
-        // A website with a route of its own, the most specific first as in routing, before every exception below.
-        // Addresses are stand-ins, as for any name, blocked websites' too: a lookup can't tell unbraid's own (made
-        // through the system resolver, like every app's) from another app's, so the block is made where it can,
-        // refusing the connection; unbraid's own went direct before it. HTTPS and SVCB records can carry addresses
-        // (hints) a browser would connect to as they are: not stand-in addresses, so the engine couldn't tell the
-        // website and its app's route would carry it. They are answered empty, at the price of those records' hints,
-        // protocol parameters and Encrypted Client Hello keys. Other types (TXT, SRV…) are asked at the website's exit,
-        // never the app's or the default's, and refused for a refused website.
-        for (id, match) in p.sites {
-            rules.append(.o(match.merging(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1]) { $1 }))
-            rules.append(.o(match.merging(["query_type": ["HTTPS", "SVCB"], "action": "predefined", "rcode": "NOERROR"]) { $1 }))
-            rules.append(.o(match.merging(p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]) { $1 }))
+        // Websites' lookups, in three groups the engine takes in order. Addresses are stand-ins, as for any name, blocked
+        // websites' too: a lookup can't tell unbraid's own (made through the system resolver, like every app's) from
+        // another app's, so the block is made where it can, refusing the connection; unbraid's own went direct before
+        // it. HTTPS and SVCB records can carry addresses (hints) a browser would connect to as they are: not stand-in
+        // addresses, so the engine couldn't tell the website and its app's route would carry it. They are answered
+        // empty, at the price of those records' hints, protocol parameters and Encrypted Client Hello keys. Other types
+        // (TXT, SRV…) are asked at the website's exit, never the app's or the default's, and refused for a refused one.
+        func site(_ id: String, _ match: [String: J], except: [String] = []) {
+            // A name under it with a rule of its own (the most specific wins) is left to that rule.
+            func rule(_ type: [String: J], _ action: [String: J]) -> J {
+                guard !except.isEmpty else { return .o(match.merging(type) { $1 }.merging(action) { $1 }) }
+                let own: J = .o(match.merging(type) { $1 }), others: J = ["domain": J.strings(except), "domain_suffix": J.strings(except.map { "." + $0 }), "invert": true]
+                return .o(["type": "logical", "mode": "and", "rules": [own, others]].merging(action) { $1 })
+            }
+            rules.append(rule(["query_type": ["A", "AAAA"]], ["server": "fake", "rewrite_ttl": 1]))
+            rules.append(rule(["query_type": ["HTTPS", "SVCB"]], ["action": "predefined", "rcode": "NOERROR"]))
+            rules.append(rule([:], p.refused(site: id) ? ["action": "predefined", "rcode": "REFUSED"] : ["server": .s(p.siteDns(id))]))
         }
-        if p.homeTs && !domains.isEmpty { rules.append(["domain_suffix": J.strings(domains), "server": "dns-tailnet"]) }
+        // First the blocked websites: a block holds before every exception below, on the local network and in the
+        // tailnet too, and under a website with a route of its own. A name under it with a route of its own that applies
+        // is left out of it, to its own rule (the most specific wins, as in routing).
+        let routed = p.sites.filter { $0.id != BLOCK }.flatMap { Self.names($0.match) }
+        for (id, match) in p.sites where id == BLOCK {
+            let names = Self.names(match)
+            site(id, match, except: routed.filter { r in names.contains { r.hasSuffix("." + $0) } })
+        }
+        // Then the names the tailnet and the local network answer themselves, so a website above one of them (a public
+        // example.org above a tailnet's tail.example.org) never takes their lookups, nor does one in them.
+        if p.homeTs, case let early = earlyTailnetDomains(s.home, suffix: suffix), !early.isEmpty { rules.append(["domain_suffix": J.strings(early), "server": "dns-tailnet"]) }
         // Its reverse zones too, whatever the type: a lookup there names a tailnet address, which no other resolver should
         // see (the tailnet's answers NXDOMAIN, unless the tailnet routes those zones to a resolver of its own).
         if p.homeTs { rules.append(["domain_suffix": J.strings(tailnetReverse), "server": "dns-tailnet"]) }
@@ -570,6 +604,11 @@ nonisolated enum Compiler {
         if s.prefs.lan { rules.append(["domain_suffix": J.strings(localNames), "server": "local"]) }
         // With LAN access off too: it decides which apps reach those devices, not whose resolver names them.
         rules.append(["query_type": ["PTR"], "domain_suffix": J.strings(localReverse), "server": "local"])
+        // Then the websites with a route of their own or Direct, the most specific first as in routing.
+        for (id, match) in p.sites where id != BLOCK { site(id, match) }
+        // Last of the tailnet's: the rest of ts.net on Tailscale's server, once the tailnet's own domain is known, so a
+        // website rule for another tailnet's public (Funnel) name comes first.
+        if p.homeTs, case let late = lateTailnetDomains(s.home, suffix: suffix), !late.isEmpty { rules.append(["domain_suffix": J.strings(late), "server": "dns-tailnet"]) }
         rules.append(["query_type": ["A", "AAAA"], "server": "fake", "rewrite_ttl": 1])
         // Other query types (HTTPS, SVCB, TXT, SRV…) go to the asking app's own route, not the default one.
         for (id, match) in p.perApp where id != BLOCK {

@@ -73,8 +73,10 @@ nonisolated enum LinkPicker {
             (before == DIRECT && routes.contains(after)) || (before != BLOCK && after == BLOCK)
         }
         // Any change to the websites counts: a website's rule sits before its app's, so one given a route, moved or
-        // blocked may be leaving Direct whatever its app does.
+        // blocked may be leaving Direct whatever its app does. So does a change to what the engine does with them that
+        // leaves the saved websites alike: the tailnet's domain they are judged by, and which of them apply.
         return changes(old.defaultRoute, new.defaultRoute) || old.sites != new.sites
+            || !new.sites.isEmpty && (Sites.tailnet(of: old) != Sites.tailnet(of: new) || Sites.applied(old) != Sites.applied(new))
             || Set(old.apps.keys).union(new.apps.keys).contains { changes(old.routeOf($0), new.routeOf($0)) }
     }
 

@@ -50,6 +50,7 @@ nonisolated enum Sites {
         case .local: "your network answers this name while Reach devices on this network is on"
         case .reverse: "your network answers lookups of its own addresses"
         case .multicast: "the devices on your network answer .local names themselves, never through unbraid"
+        case .loopback: "this name is this Mac itself, which apps reach without unbraid"
         }
     }
 
