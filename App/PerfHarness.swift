@@ -416,10 +416,10 @@ private final class Meter: NSObject {
         if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
         await shoot(window, "\(dir)/add-website-refused\(suffix).png")
         Presentation.shared.addSite = nil; await meter.frames(45)
-        // A name the network answers while devices on it are reached: taken, with a note that it isn't applied now.
-        Presentation.shared.addSite = SiteTarget(address: "printer.lan"); await meter.frames(90)
+        // A name in a Tailscale network: refused, with the setting that looks after it.
+        Presentation.shared.addSite = SiteTarget(address: "nas.tail1234.ts.net"); await meter.frames(90)
         if let sheet = window.attachedSheet { sheet.makeFirstResponder(nil); await meter.frames(20) } else { report("[Perf] no website sheet"); shotsMissing += 1 }
-        await shoot(window, "\(dir)/add-website-note\(suffix).png")
+        await shoot(window, "\(dir)/add-website-tailscale\(suffix).png")
         Presentation.shared.addSite = nil; await meter.frames(45)
         Store.shared.update { s in for i in 0..<(Sites.max - Self.shotSites.count) { s.sites["site\(i).example"] = DIRECT } }; await meter.frames(45)
         Presentation.shared.addSite = SiteTarget(); await meter.frames(90)
