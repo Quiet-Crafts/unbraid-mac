@@ -216,21 +216,13 @@ nonisolated enum Sites {
         return runs
     }
 
-    /// `name` as people read it: an international name in its own letters ("xn--mnchen-3ya.de" → "münchen.de").
-    /// Only a decoding that writes back to `name` itself, and, as browsers show names, only when no label mixes scripts
-    /// or is made of letters that look like Latin ones ("xn--pple-43d.example" stays, not "аpple.example"): anything
-    /// else stays in its ASCII form.
-    static func shown(_ name: String) -> String {
-        guard let decoded = decoded(name), decoded.split(separator: ".").allSatisfy({ plain($0) }) else { return name }
-        return decoded
-    }
+    /// `name` as people read it: an international name in its own letters with its xn-- form beside it, so a name
+    /// whose letters only look like others' always shows what it is ("bücher.de (xn--bcher-kva.de)"). Only a decoding
+    /// that writes back to `name` itself; anything else stays in its ASCII form.
+    static func shown(_ name: String) -> String { decoded(name).map { "\($0) (\(name))" } ?? name }
 
-    /// What a search of the list matches `name` by: the name, its own letters, and those letters read as the Latin
-    /// ones they look like.
-    static func readings(_ name: String) -> [String] {
-        guard let decoded = decoded(name) else { return [name] }
-        return [name, decoded, String(decoded.map { lookalike[$0] ?? $0 })]
-    }
+    /// What a search of the list matches `name` by: its xn-- form and its own letters.
+    static func readings(_ name: String) -> [String] { [name] + [decoded(name)].compactMap { $0 } }
 
     /// `name`'s labels in their own letters, when that writes back to `name` itself (nil for any other).
     private static func decoded(_ name: String) -> String? {
@@ -239,48 +231,6 @@ nonisolated enum Sites {
             l.hasPrefix("xn--") ? Punycode.decode(l.dropFirst(4)).flatMap { $0.isEmpty ? nil : $0 } ?? String(l) : String(l)
         }.joined(separator: ".")
         return decoded != name && ascii(decoded) == name ? decoded : nil
-    }
-
-    /// Letters of other scripts that look like Latin ones, with the Latin letter each looks like.
-    /// Cyrillic, Greek and Armenian letters taken for Latin ones, as browsers read whole-script look-alikes (Cyrillic
-    /// "ꙇ" as "i" included).
-    private static let lookalike: [Character: Character] = Dictionary(uniqueKeysWithValues: zip(
-        "асԁеԍһіјӏорԛѕԝхуъьҽпгѵѡꙇүαικνορτυχϲϳօսհոցզա",
-        "acdeghijlopqswxybbenrvwiyaikvoptuxcjouhngqw"))
-
-    /// A label browsers show in its own letters: of one script (Latin may go with Chinese, Japanese or Korean, as they
-    /// allow), and, in a script other than Latin, not made only of letters that look like Latin ones.
-    private static func plain(_ label: Substring) -> Bool {
-        let scripts = Set(label.unicodeScalars.compactMap(script))
-        let mixes: [Set<String>] = [["latin", "han", "hiragana", "katakana"], ["latin", "han", "bopomofo"], ["latin", "han", "hangul"]]
-        if scripts.count > 1 && !mixes.contains(where: { scripts.isSubset(of: $0) }) { return false }
-        return scripts.isEmpty || scripts == ["latin"] || !label.allSatisfy { lookalike[$0] != nil || $0.isNumber || $0 == "-" }
-    }
-
-    private static let blocks: [(ClosedRange<UInt32>, String)] = [
-        (0x41...0x24F, "latin"), (0x1E00...0x1EFF, "latin"), (0x2C60...0x2C7F, "latin"), (0xA720...0xA7FF, "latin"), (0xAB30...0xAB6F, "latin"),
-        (0x370...0x3FF, "greek"), (0x1F00...0x1FFF, "greek"),
-        (0x400...0x52F, "cyrillic"), (0x1C80...0x1C8F, "cyrillic"), (0x2DE0...0x2DFF, "cyrillic"), (0xA640...0xA69F, "cyrillic"),
-        (0x530...0x58F, "armenian"), (0x590...0x5FF, "hebrew"), (0xFB1D...0xFB4F, "hebrew"),
-        (0x600...0x6FF, "arabic"), (0x750...0x77F, "arabic"), (0x870...0x8FF, "arabic"), (0xFB50...0xFDFF, "arabic"), (0xFE70...0xFEFF, "arabic"),
-        (0x1100...0x11FF, "hangul"), (0x3130...0x318F, "hangul"), (0xA960...0xA97F, "hangul"), (0xAC00...0xD7FF, "hangul"),
-        (0x3040...0x309F, "hiragana"), (0x30A0...0x30FF, "katakana"), (0x31F0...0x31FF, "katakana"), (0xFF66...0xFF9F, "katakana"),
-        (0x3100...0x312F, "bopomofo"), (0x31A0...0x31BF, "bopomofo"),
-        (0x2E80...0x2FDF, "han"), (0x3005...0x3007, "han"), (0x3021...0x3029, "han"), (0x3400...0x4DBF, "han"), (0x4E00...0x9FFF, "han"),
-        (0xF900...0xFAFF, "han"), (0x20000...0x3FFFF, "han"),
-    ]
-
-    /// The script of a letter, by its block; nil for digits, the hyphen and marks, which go with any script. Foundation
-    /// has no script property: blocks it doesn't name stand for a script of their own, so two of them read as a mix
-    /// (shown in ASCII, the safe side).
-    private static func script(_ c: Unicode.Scalar) -> String? {
-        let v = c.value
-        switch c.properties.generalCategory {
-        case .nonspacingMark, .spacingMark, .enclosingMark, .decimalNumber: return nil
-        default: break
-        }
-        if v == 0x2D || v == 0x30FC { return nil }
-        return blocks.first { $0.0.contains(v) }?.1 ?? "block-\(v >> 7)"
     }
 
     /// A label of a name: letters, digits and hyphens, neither first nor last a hyphen, at most 63.

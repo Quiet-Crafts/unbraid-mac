@@ -19,7 +19,7 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(SiteEdits.check("netflix", in: [:]), .refused("Add the whole name, such as netflix.com"))
         XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is this Mac itself, which apps reach without unbraid: a website rule can't change where it goes"))
         XCTAssertEqual(SiteEdits.check("co.uk", in: [:]), .refused("co.uk ends many websites' names: add one website under it"))
-        XCTAssertEqual(SiteEdits.check("bücher.de", in: ["xn--bcher-kva.de": DIRECT]), .refused("bücher.de already has a route"))
+        XCTAssertEqual(SiteEdits.check("bücher.de", in: ["xn--bcher-kva.de": DIRECT]), .refused("bücher.de (xn--bcher-kva.de) already has a route"))
         let full = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("s\($0).example", DIRECT) })
         XCTAssertEqual(SiteEdits.check("example.com", in: full), .refused("A profile holds up to 50 websites"))
         // At the limit the sheet says so before anything is typed.
@@ -129,15 +129,15 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertTrue(Sites.damaged.contains("no website can be added"))
     }
 
-    /// An international name is saved in its ASCII form and shown in its own letters.
-    func testAnInternationalNameIsShownInItsOwnLetters() {
-        XCTAssertEqual(Sites.shown("xn--bcher-kva.de"), "bücher.de")
-        XCTAssertEqual(Sites.shown("xn--mnchen-3ya.de"), "münchen.de")
-        XCTAssertEqual(Sites.shown("www.xn--fsqu00a.xn--0zwm56d"), "www.例子.测试")
+    /// An international name is saved in its ASCII form and shown in its own letters with that form beside it.
+    func testAnInternationalNameIsShownWithItsAsciiForm() {
+        XCTAssertEqual(Sites.shown("xn--bcher-kva.de"), "bücher.de (xn--bcher-kva.de)")
+        XCTAssertEqual(Sites.shown("www.xn--fsqu00a.xn--0zwm56d"), "www.例子.测试 (www.xn--fsqu00a.xn--0zwm56d)")
         XCTAssertEqual(Sites.shown("example.com"), "example.com")
         XCTAssertEqual(Sites.shown("xn--zz.example"), "xn--zz.example", "a label that doesn't decode stays as it is")
         for raw in ["bücher.de", "münchen.de", "例子.测试", "παράδειγμα.δοκιμή"] {
-            XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw)
+            let name = Sites.clean(raw)!
+            XCTAssertEqual(Sites.shown(name), "\(raw) (\(name))", raw)
         }
     }
 
@@ -154,26 +154,13 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertNil(Sites.clean("a\u{200D}b.com"))
     }
 
-    /// An all-Cyrillic name that reads as "cisco" (its "i" the Cyrillic iota) stays in its xn-- form, found by "cisco".
-    func testACyrillicCiscoLookAlikeStaysAscii() throws {
-        let name = try XCTUnwrap(Sites.clean("с\u{A647}ѕсо.example"))
-        XCTAssertEqual(name, "xn--n1afa3f3774h.example")
-        XCTAssertEqual(Sites.shown(name), name)
-        XCTAssertTrue(Sites.readings(name).contains("cisco.example"))
-    }
-
-    /// A name whose letters mix scripts, or are all of another script but look like Latin ones, is shown as it is saved
-    /// (the xn-- form), as browsers show it; a search finds it by either form and by the Latin it looks like.
-    func testALookAlikeNameIsShownInItsAsciiForm() {
-        XCTAssertEqual(Sites.shown("xn--pple-43d.example"), "xn--pple-43d.example")
-        XCTAssertEqual(Sites.readings("xn--pple-43d.example"), ["xn--pple-43d.example", "аpple.example", "apple.example"])
-        let allCyrillic = Sites.clean("сосо.example")!
-        XCTAssertEqual(Sites.shown(allCyrillic), allCyrillic)
-        for raw in ["bücher.de", "пример.рф", "例子.测试", "日本語テスト.jp", "한국어.kr", "παράδειγμα.δοκιμή", "عربي.example", "Latin中文.example"] {
-            let name = Sites.clean(raw)!
-            XCTAssertEqual(Sites.shown(name), raw.lowercased(), raw)
-            XCTAssertTrue(Sites.readings(name).contains(name), raw)
-        }
+    /// A name whose letters only look like Latin ones always shows its xn-- form beside them, and a search finds it by
+    /// either form: no table of look-alikes to keep complete.
+    func testALookAlikeNameAlwaysShowsItsAsciiForm() throws {
+        let cisco = try XCTUnwrap(Sites.clean("с\u{A647}ѕсо.example"))
+        XCTAssertEqual(cisco, "xn--n1afa3f3774h.example")
+        XCTAssertEqual(Sites.shown(cisco), "с\u{A647}ѕсо.example (xn--n1afa3f3774h.example)")
+        XCTAssertEqual(Sites.readings("xn--pple-43d.example"), ["xn--pple-43d.example", "аpple.example"])
         XCTAssertEqual(Sites.readings("example.com"), ["example.com"])
     }
 
@@ -197,10 +184,10 @@ final class SiteEditsTests: XCTestCase {
             _ = Punycode.decode(label[...])
             let name = "xn--\(label).example"
             let shown = Sites.shown(name)
-            if shown != name { XCTAssertEqual(Sites.clean(shown), Sites.clean(name), name) }
+            if shown != name { XCTAssertTrue(shown.hasSuffix(" (\(name))"), name) }
         }
         // Real names among them still decode.
-        for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), raw, raw) }
+        for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), Sites.clean(raw).map { "\(raw) (\($0))" }, raw) }
     }
 
     /// A website blocked now is opened by a setup that unblocks it, or that gives a name under it a route of its own.
