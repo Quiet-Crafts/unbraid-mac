@@ -75,6 +75,12 @@ nonisolated enum RestoreTraffic {
     /// A name no website rule covers, and the address its lookup gets on a VPN: an ordinary site on the internet.
     static let otherName = "unbraid-check.example", publicAddress = "203.0.113.80"
 
+    /// A program like `otherProgram` that none of `patterns` (the apps compiled on both sides) matches: one that takes
+    /// the default route on both sides, whatever apps are installed where.
+    static func outsideProgram(_ patterns: [String], in config: Config) -> String {
+        let candidates = [otherProgram] + (1...200).map { "/Applications/Another Program (unbraid check \($0)).app/Contents/MacOS/another" }
+        return candidates.first { !config.matches(patterns, $0) } ?? otherProgram
+    }
     /// A name like `otherName` that no website saved in `setups` covers, nor a name on the own network or in a Tailscale
     /// network: one that takes the default route (or its app's) on both sides, whatever websites are saved.
     static func outsideName(_ setups: [Setup]) -> String {
@@ -261,6 +267,8 @@ nonisolated enum RestoreTraffic {
         var defaultRoute: Loss?
         /// Per app key, per website name (a name and the probe under it count once), per home address.
         var apps: [String: Loss] = [:], sites: [String: Loss] = [:], home: [String: Loss] = [:]
+        /// Websites whose loss is only that of a tailnet's domain under them, not of the website itself.
+        var partly: Set<String> = []
     }
 
     /// How bad a loss is, so the worst of several (an app's copies, a website seen from several apps) is the one kept.
@@ -292,14 +300,15 @@ nonisolated enum RestoreTraffic {
         }
         var out = Losses()
         let other = outsideName([current, next])
-        guard let d = pair(otherProgram, other) else { return nil }
+        let program = outsideProgram(apps.values.flatMap { $0 } + [selfPattern], in: was)
+        guard let d = pair(program, other) else { return nil }
         out.defaultRoute = loss(d.0, d.1)
         // Every copy of every app (a bundle can be installed in more than one place, or inside another), the worst kept.
         // Copies that go the same way before and after are one kind of app, for the websites below.
-        var kinds: [String: String] = ["\(d.0)|\(d.1)": otherProgram]
+        var kinds: [String: String] = ["\(d.0)|\(d.1)": program]
         // What each walked program loses on its own: a website seen from it says only what is the website's.
         var own: [String: Loss] = [:]
-        own[otherProgram] = out.defaultRoute
+        own[program] = out.defaultRoute
         for (key, patterns) in apps.sorted(by: { $0.key < $1.key }) {
             var worst: Loss?
             for path in Set(patterns.compactMap(samplePath)).sorted() {
@@ -315,37 +324,47 @@ nonisolated enum RestoreTraffic {
         // comes before its app's route, so a name given Direct takes an app on a VPN there too.
         // Every saved one, applied or not: whether its name's own resolver comes first is the walk's to find.
         let names = Set(current.sites.keys).union(next.sites.keys).filter(Sites.isClean).sorted()
-        let programs = [otherProgram] + kinds.values.filter { $0 != otherProgram }.sorted()
-        let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [otherProgram]
+        let programs = [program] + kinds.values.filter { $0 != program }.sorted()
+        let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [program]
         // A tailnet's own domain under a saved website (example.org above corp.example.org) is probed too: whether its
         // names get an answer of their own can change with the restore while the website doesn't. Its apex and a name in
         // it no saved website covers, said once, for the closest website above it.
         var subtrees: [String: [String]] = [:]
-        for domain in Set([Sites.tailnet(of: current), Sites.tailnet(of: next)].compactMap { $0 }) {
+        let domains = Set([Sites.tailnet(of: current), Sites.tailnet(of: next)].compactMap { $0 })
+        for domain in domains {
             guard let closest = names.filter({ $0 != domain && Sites.under(domain, $0) }).max(by: { $0.count < $1.count }) else { continue }
             let inside = names.filter { Sites.under($0, domain) }
             let child = (0...200).map { "zz-check\($0 == 0 ? "" : String($0)).\(domain)" }.first { c in !inside.contains { Sites.under(c, $0) } }
             subtrees[closest, default: []] += (names.contains(domain) ? [] : [domain]) + [child].compactMap { $0 }
         }
         for name in names {
-            var worst: Loss?
-            for probe in [name, "zz-check." + name] + (subtrees[name] ?? []) {
-                for program in fromApps {
-                    guard let o = pair(program, probe) else { continue }
-                    let l = loss(o.0, o.1)
-                    // The app's own change (unblocked, say) is said for the app, not again for each website it opens.
-                    if l == own[program] ?? nil { continue }
-                    if rank(l) > rank(worst) { worst = l }
+            // A name under it that no more specific website and no tailnet domain covers: the website's own.
+            let child = (0...200).map { "zz-check\($0 == 0 ? "" : String($0)).\(name)" }.first { c in
+                !names.contains { $0 != name && Sites.under(c, $0) } && !domains.contains { Sites.under(c, $0) }
+            } ?? "zz-check." + name
+            func worst(_ probes: [String]) -> Loss? {
+                var worst: Loss?
+                for probe in probes {
+                    for from in fromApps {
+                        guard let o = pair(from, probe) else { continue }
+                        let l = loss(o.0, o.1)
+                        // The app's own change (unblocked, say) is said for the app, not again for each website it opens.
+                        if l == own[from] ?? nil { continue }
+                        if rank(l) > rank(worst) { worst = l }
+                    }
                 }
+                return worst
             }
-            out.sites[name] = worst
+            let whole = worst([name, child]), part = worst(subtrees[name] ?? [])
+            // Only the tailnet's names under it change: said as part of the website, not the whole of it.
+            if rank(part) > rank(whole) { out.sites[name] = part; out.partly.insert(name) } else { out.sites[name] = whole }
         }
         // The edges of every home range either setup reaches through a tunnel (its first and last address: a range
         // narrowed at either end shows there), and one on the local network.
         let ranges = [current, next].flatMap { s in (s.home.tailscale ? s.home.subnets : []) + (s.home.wg.map(Compiler.homeCidrs) ?? []) }
         for address in Set(ranges.flatMap(edges) + ["192.168.1.20"]).sorted() {
             // Through the home tunnel (or the tailnet) before, Direct after.
-            guard let o = pair(otherProgram, nil, address), o.0.exit == .home || o.0.exit == .tunnel(Compiler.tsTag), o.1.exit == .direct else { continue }
+            guard let o = pair(program, nil, address), o.0.exit == .home || o.0.exit == .tunnel(Compiler.tsTag), o.1.exit == .direct else { continue }
             out.home[address] = .homeDirect
         }
         return out

@@ -458,11 +458,13 @@ nonisolated enum Backup {
         }
         let rules = Sites.applied(current)
         func rule(_ name: String) -> String? { rules.filter { Sites.under(name, $0.key) }.max { $0.key.count < $1.key.count }?.value }
-        let opened = l.apps.filter { $0.value == .unblocked }.keys, openedSites = l.sites.filter { $0.value == .unblocked }.keys
+        let opened = l.apps.filter { $0.value == .unblocked }.keys, openedSites = l.sites.filter { $0.value == .unblocked && !l.partly.contains($0.key) }.keys
+        let openedUnder = l.sites.filter { $0.value == .unblocked && l.partly.contains($0.key) }.count
         let appsWaiting = opened.filter { waiting(current.routeOf($0)) }.count, sitesWaiting = openedSites.filter { waiting(rule($0)) }.count
         let appsBlocked = opened.count - appsWaiting, sitesBlocked = openedSites.count - sitesWaiting
         if appsBlocked > 0 { out.append(appsBlocked == 1 ? "1 app that is blocked now won't be." : "\(appsBlocked) apps that are blocked now won't be.") }
         if sitesBlocked > 0 { out.append(sitesBlocked == 1 ? "1 website that is blocked now won't be." : "\(sitesBlocked) websites that are blocked now won't be.") }
+        if openedUnder > 0 { out.append("Under \(count(openedUnder, "website")), names of a Tailscale network that are blocked now won't be.") }
         let wait = [count(appsWaiting, "app"), count(sitesWaiting, "website")].filter { !$0.hasPrefix("0 ") }
         if !wait.isEmpty {
             out.append("\(list(wait)) that can't connect now, because \(one(wait) ? "its route waits" : "their routes wait") for a server's config, \(one(wait) ? "goes" : "go") out without it.")

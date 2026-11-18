@@ -156,6 +156,38 @@ final class BackupWeakensTests: XCTestCase {
         XCTAssertFalse(next.tailscale)
         let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
         XCTAssertEqual(l.sites["example.org"], .unblocked)
+        XCTAssertEqual(l.partly, ["example.org"])
+        XCTAssertTrue(Backup.weakens(here, next).contains("Under 1 website, names of a Tailscale network that are blocked now won't be."))
+        XCTAssertFalse(Backup.weakens(here, next).contains { $0.contains("1 website that is blocked") })
+    }
+
+    /// A saved website at the tailnet's own domain under another saved website: the parent is probed under it outside
+    /// that row, so the opening is said once, for the row it is, and not for the parent that worked throughout.
+    func testAPrivateOpeningAtASavedRowIsSaidOnce() throws {
+        var here = base()
+        here.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        here.home.tsControlUrl = "https://hs.example"
+        here.home.tsSuffix = "zz-check.example.org"
+        here.home.tsSuffixConfirmed = true
+        here.defaultRoute = DIRECT
+        here.sites = ["example.org": DIRECT, "zz-check.example.org": DIRECT, "video.example": "ts"]
+        var next = here
+        next.sites["video.example"] = "nl"
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertNil(l.sites["example.org"] ?? nil)
+        XCTAssertEqual(Backup.weakens(here, next).filter { $0.contains("blocked now") }.count, 1)
+    }
+
+    /// The program the default route is checked with is one no app rule matches on either side, even an app installed
+    /// where the usual stand-in program lies.
+    func testTheDefaultProbeIsNoAssignedApp() throws {
+        var here = base()
+        here.defaultRoute = "nl"
+        here.apps = ["/Applications/Another Program (unbraid check).app": BLOCK]
+        var next = here
+        next.defaultRoute = DIRECT
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertEqual(l.defaultRoute, .toDirect)
     }
 
     func testWebsitesByWhatTheyEffectivelyGet() {
