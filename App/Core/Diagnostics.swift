@@ -60,16 +60,23 @@ nonisolated struct DiagnosticsReport: Equatable, Sendable {
     }
 }
 
+/// The app's websites (`Sites`), by another name: `Diagnostics.Sites` hides it inside the enum.
+private typealias WebsiteRules = Sites
+
 nonisolated enum Diagnostics {
     /// Websites with a route of their own, counted by where they go: their addresses stay out of a report.
+    /// Only the rules that apply count by where they go; saved ones that don't are counted apart.
     struct Sites: Equatable, Sendable {
-        var routes = 0, direct = 0, blocked = 0
+        var routes = 0, direct = 0, blocked = 0, notApplied = 0
         init() {}
         init(_ setup: Setup) {
-            for id in setup.sites.values { if id == DIRECT { direct += 1 } else if id == BLOCK { blocked += 1 } else { routes += 1 } }
+            let applied = WebsiteRules.applied(setup)
+            for id in applied.values { if id == DIRECT { direct += 1 } else if id == BLOCK { blocked += 1 } else { routes += 1 } }
+            notApplied = setup.sites.count - applied.count
         }
         var text: String {
-            routes + direct + blocked == 0 ? "none" : "\(routes) on routes, \(direct) Direct, \(blocked) Blocked"
+            routes + direct + blocked + notApplied == 0 ? "none"
+                : "\(routes) on routes, \(direct) Direct, \(blocked) Blocked" + (notApplied == 0 ? "" : ", \(notApplied) not applied")
         }
     }
 

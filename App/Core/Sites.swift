@@ -11,7 +11,7 @@ nonisolated enum Sites {
     /// "example.com"): the name alone, lower case, without "www." (unless what is left is a shared ending), international
     /// names in their ASCII form. A rule covers the name and every name under it. Nil when it names no website: no dot,
     /// an IP address, or characters no name has. What a new one may be is `refusal`'s to say.
-    static func clean(_ raw: String) -> String? { if case .name(let name) = read(raw) { name } else { nil } }
+    static func clean(_ raw: String) -> String? { if case .name(let name, _) = read(raw) { name } else { nil } }
 
     /// Whether `name` is written as a saved rule must be: lower-case ASCII labels of letters, digits and hyphens, two or
     /// more, at most 253 bytes, the last not a number. Syntax only, never the list of shared endings, so every saved and
@@ -25,39 +25,51 @@ nonisolated enum Sites {
     /// Why `raw` can't be added as a website, in the Add Website sheet's words; nil when it can. Beyond what `clean`
     /// refuses: names on the own network or in a Tailscale network (`ownNetwork`), and names that are, or sit above,
     /// endings many websites share. `tailnet`: the tailnet's own domain, as the user accepted it (`tailnet(of:)`).
-    static func refusal(_ raw: String, tailnet: String?) -> String? {
+    /// `list`: the shared endings, the bundled list unless a test gives another (nil: missing or damaged).
+    static func refusal(_ raw: String, tailnet: String?, list: Endings? = Sites.list) -> String? {
         switch read(raw) {
         case .refused(let why): return why
-        case .name(let name):
-            if let kind = ownNetwork(name, tailnet: tailnet) { return "\(kind.sentence(name)): a website rule can't change where it goes" }
-            guard suffixes != nil else { return damaged }
-            return shared(name) ? "\(name) ends many websites' names: add one website under it" : nil
+        case .name(let name, let full):
+            // The whole name as typed first: "www.example.org" when that is the tailnet's domain must not be saved as the
+            // public example.org above it.
+            for n in [full, name] { if let kind = ownNetwork(n, tailnet: tailnet) { return kind.refusal(n) } }
+            guard let list else { return damaged }
+            return list.shared(name) ? "\(name) ends many websites' names: add one website under it" : nil
         }
     }
 
-    /// Names on the own network or in a Tailscale network: their devices, this Mac, address lookups and Tailscale's
-    /// names are looked after by the app's own settings, so a website rule never applies to one, whatever is running.
+    /// Names on the own network or in a Tailscale network: their devices, private-network names, this Mac, the
+    /// internet's own infrastructure and Tailscale's names, so a website rule never applies to one, whatever is running.
     enum Own {
-        case device, thisMac, address, tailscale
+        case device, privateName, thisMac, address, infrastructure, tailscale
 
+        /// What the name is, in a sentence the refusal and the row both use.
         func sentence(_ name: String) -> String {
             switch self {
             case .device: "\(name) is a device on your own network, which Reach devices on this network in Settings › Home access looks after"
+            case .privateName: "\(name) is a name for private networks, not a website"
             case .thisMac: "\(name) is this Mac itself, which apps reach without unbraid"
             case .address: "\(name) is a lookup of an address, not a website"
+            case .infrastructure: "\(name) is part of the internet's own infrastructure, not a website"
             case .tailscale: "\(name) belongs to a Tailscale network, which Settings › Tailscale looks after"
             }
         }
+
+        /// Add Website's refusal.
+        func refusal(_ name: String) -> String { sentence(name) + ", so it can't take a website rule" }
     }
 
     /// Which kind of own-network name `name` is, or nil: `.local`, `.lan`, `home.arpa`, `fritz.box`, `.internal`,
     /// `localhost`, `arpa`, all of `ts.net`, and the tailnet's own domain (`tailnet`). The same set in every setup: only
     /// the domain the user accepted is read, never which of Tailscale's switches are on.
+    /// The tailnet's own domain comes first: a name under it is the tailnet's, whatever it ends in ("nas.corp.lan").
     static func ownNetwork(_ name: String, tailnet: String?) -> Own? {
-        if ["local", "lan", "home.arpa", "fritz.box", "internal"].contains(where: { under(name, $0) }) { return .device }
-        if under(name, "localhost") { return .thisMac }
-        if under(name, "arpa") { return .address }
         if under(name, "ts.net") || Compiler.tsSuffix(tailnet).map({ under(name, $0) }) == true { return .tailscale }
+        if Compiler.localNames.contains(where: { under(name, $0) }) { return .device }
+        if under(name, "internal") { return .privateName }
+        if under(name, "localhost") { return .thisMac }
+        if under(name, "in-addr.arpa") || under(name, "ip6.arpa") { return .address }
+        if under(name, "arpa") { return .infrastructure }
         return nil
     }
 
@@ -119,7 +131,8 @@ nonisolated enum Sites {
     /// Whether `name` is `suffix` or a name under it.
     static func under(_ name: String, _ suffix: String) -> Bool { name == suffix || name.hasSuffix("." + suffix) }
 
-    private enum Read { case name(String), refused(String) }
+    /// A name as a rule keeps it, and the whole name as typed (before "www." went); or why there is none.
+    private enum Read { case name(String, full: String), refused(String) }
 
     /// The longest text read as an address: longer is refused whole, never cut into another address.
     static let paste = 2000
@@ -138,6 +151,7 @@ nonisolated enum Sites {
         if host.hasPrefix("[") || host.filter({ $0 == ":" }).count > 1 { return .refused(address) }
         if let port = host.range(of: ":") { host = host[..<port.lowerBound] }
         guard var name = ascii(String(host).trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return .refused(notAName) }
+        let full = name
         // Every leading "www." goes while a name is left, so what is kept reads back as itself.
         // A leading "www." stays when what is left would be a shared ending: www.gob.mx is a website, gob.mx all of Mexico's.
         while name.hasPrefix("www."), name.dropFirst(4).contains("."), !shared(String(name.dropFirst(4))) { name.removeFirst(4) }
@@ -150,44 +164,60 @@ nonisolated enum Sites {
         }
         guard name.utf8.count <= 253, labels.allSatisfy(label) else { return .refused(notAName) }
         guard labels.count >= 2 else {
-            return .refused(ownNetwork(name, tailnet: nil).map { "\($0.sentence(name)): a website rule can't change where it goes" } ?? "Add the whole name, such as \(name).com")
+            return .refused(ownNetwork(name, tailnet: nil).map { $0.refusal(name) } ?? "Add the whole name, such as \(name).com")
         }
-        return .name(name)
+        return .name(name, full: full)
     }
 
     private static let notAName = "That isn't a website address"
     private static let address = "An IP address can't have a rule: add the website's name"
-    /// A name that is itself an ending many unrelated websites share ("co.uk"), or the base of one ("sch.uk", above
-    /// every "*.sch.uk"): a rule would cover them all. The Public Suffix List's ICANN section as
-    /// `Resources/shared_suffixes.txt` holds it (its wildcard and exception rules included), and hosting platforms where
-    /// everyone gets a name of their own (the list's private section, kept short). Without a sound list only those.
-    static func shared(_ name: String) -> Bool {
-        if platforms.contains(name) { return true }
-        guard let suffixes else { return false }
-        let parent = name.split(separator: ".", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
-        return suffixes.contains(name) || suffixes.contains("*." + name) || suffixes.contains("*." + parent) && !suffixes.contains("!" + name)
-            || ancestors.contains(name)
+    /// Whether `name` is itself an ending many unrelated websites share ("co.uk"), the base of one ("sch.uk", above
+    /// every "*.sch.uk"), or above one ("nordland.no"): a rule would cover them all. By the bundled list, and without a
+    /// sound list by the platforms alone.
+    static func shared(_ name: String) -> Bool { list?.shared(name) ?? (platforms.contains(name) || platformAncestors.contains(name)) }
+
+    /// The shared endings: the Public Suffix List's ICANN section as `Resources/shared_suffixes.txt` holds it (its
+    /// wildcard and exception rules included), and hosting platforms where everyone gets a name of their own (the list's
+    /// private section, kept short).
+    struct Endings {
+        let rules: Set<String>
+        /// Every name of two or more labels above a listed ending ("nordland.no" above "bo.nordland.no", "amazonaws.com"
+        /// above "s3.amazonaws.com"): a rule for one would cover all the websites under the endings below it.
+        let ancestors: Set<String>
+
+        /// The list in `data`, or nil when it isn't the one this build ships (missing, cut short or changed).
+        init?(_ data: Data?) {
+            guard let data, SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == Sites.suffixesDigest,
+                  let text = String(data: data, encoding: .utf8) else { return nil }
+            rules = Set(text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") })
+            ancestors = Sites.ancestors(of: Array(rules.filter { !$0.hasPrefix("!") }) + Array(Sites.platforms))
+        }
+
+        func shared(_ name: String) -> Bool {
+            if Sites.platforms.contains(name) { return true }
+            let parent = name.split(separator: ".", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
+            return rules.contains(name) || rules.contains("*." + name) || rules.contains("*." + parent) && !rules.contains("!" + name)
+                || ancestors.contains(name)
+        }
     }
 
-    /// Every name of two or more labels above a listed ending ("nordland.no" above "bo.nordland.no"): a rule for one
-    /// would cover all the websites under the endings below it.
-    private static let ancestors: Set<String> = {
+    private static func ancestors(of rules: [String]) -> Set<String> {
         var out = Set<String>()
-        for rule in suffixes ?? [] where !rule.hasPrefix("!") {
+        for rule in rules {
             let labels = (rule.hasPrefix("*.") ? String(rule.dropFirst(2)) : rule).split(separator: ".")
             for k in stride(from: labels.count - 1, through: 2, by: -1) { out.insert(labels.suffix(k).joined(separator: ".")) }
         }
         return out
-    }()
+    }
 
-    /// The bundled list's rules, read once; nil when the file isn't the one this build ships (missing, cut short or
-    /// changed): Add Website then takes no new website (`damaged`), rather than one a sound list would refuse.
-    static let suffixes: Set<String>? = {
-        guard let url = Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt"),
-              let data = try? Data(contentsOf: url), SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == suffixesDigest,
-              let text = String(data: data, encoding: .utf8) else { return nil }
-        return Set(text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty && !$0.hasPrefix("#") })
-    }()
+    private static let platformAncestors = ancestors(of: Array(platforms))
+
+    /// The bundled list, read once; nil when it isn't the one this build ships: Add Website then takes no new website
+    /// (`damaged`), rather than one a sound list would refuse. Saved rules never depend on it (`isClean`).
+    static let list = Endings(Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt").flatMap { try? Data(contentsOf: $0) })
+
+    /// The bundled list's rules.
+    static var suffixes: Set<String>? { list?.rules }
 
     /// SHA-256 of `Resources/shared_suffixes.txt` as shipped.
     static let suffixesDigest = "f29b2747d562a0eaa907af6fee2b35805789121f9a19dfad9d6b3561be465e47"
@@ -219,7 +249,12 @@ nonisolated enum Sites {
     /// `name` as people read it: an international name in its own letters with its xn-- form beside it, so a name
     /// whose letters only look like others' always shows what it is ("bücher.de (xn--bcher-kva.de)"). Only a decoding
     /// that writes back to `name` itself; anything else stays in its ASCII form.
-    static func shown(_ name: String) -> String { decoded(name).map { "\($0) (\(name))" } ?? name }
+    /// A long pair shows the xn-- form first, so a cut row still shows what the name is (the whole pair is the cell's
+    /// tooltip).
+    static func shown(_ name: String) -> String {
+        guard let d = decoded(name) else { return name }
+        return d.count + name.count > 50 ? "\(name) (\(d))" : "\(d) (\(name))"
+    }
 
     /// What a search of the list matches `name` by: its xn-- form and its own letters.
     static func readings(_ name: String) -> [String] { [name] + [decoded(name)].compactMap { $0 } }

@@ -33,10 +33,13 @@ nonisolated enum SiteEdits {
 
     /// Applies `change` as it is committed, which can be long after it was asked for (a limit question, an undo): a
     /// website whose route has gone since follows its app again, as removing the route did, and one more than a profile
-    /// holds is not added.
+    /// holds is not added. A name on the own network or in a Tailscale network (`Sites.ownNetwork`, by the domain the
+    /// setup holds now) is neither added nor moved, Block included, as Add Website refuses it; one saved can be removed.
     static func apply(_ change: Assignments, to setup: inout Setup) {
+        let tailnet = Sites.tailnet(of: setup)
         for (site, route) in change.sorted(by: { $0.key < $1.key }) where Sites.isClean(site) {
             guard let route, route == DIRECT || route == BLOCK || setup.route(route) != nil else { setup.sites[site] = nil; continue }
+            if Sites.ownNetwork(site, tailnet: tailnet) != nil { continue }
             if setup.sites[site] == nil, setup.sites.count >= Sites.max { continue }
             setup.sites[site] = route
         }

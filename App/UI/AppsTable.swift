@@ -554,7 +554,8 @@ private final class AppCell: DrawnCell {
             let new = Shows(name: row.name, aside: aside, conflict: why)
             guard new != shows || !self.site else { return }
             shows = new; self.site = true
-            toolTip = why
+            // The whole name on hover too: a long one is cut in the column.
+            toolTip = [row.name, why].compactMap { $0 }.joined(separator: "\n")
             needsDisplay = true
             return
         }

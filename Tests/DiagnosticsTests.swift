@@ -151,6 +151,10 @@ final class DiagnosticsTests: XCTestCase {
         for word in ["netflix", "bbc", "mybank", "tracker"] { XCTAssertFalse(text.lowercased().contains(word), word) }
         report.sites = Diagnostics.Sites(Setup())
         XCTAssertTrue(report.text(now: t0) { _ in nil }.contains("Websites: none"))
+        // A rule that doesn't apply is counted apart, never as on a route.
+        var lan = Setup()
+        lan.sites = ["printer.lan": "nl"]
+        XCTAssertEqual(Diagnostics.Sites(lan).text, "0 on routes, 0 Direct, 0 Blocked, 1 not applied")
     }
 
     /// The setup that was checked, as the compiler writes it: the user's own values among the engine's words.

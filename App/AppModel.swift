@@ -733,7 +733,13 @@ final class AppModel {
 
     /// Moves websites to a route, Direct or Blocked, in one undoable change.
     func moveSites(_ sites: [String], to routeId: String, undo: UndoManager?, completion: @escaping (Bool) -> Void = { _ in }) {
-        let keys = Set(sites).filter { setup.sites[$0] != nil && setup.sites[$0] != routeId }
+        // A name on the own network or in a Tailscale network can't be given another rule (only removed): said as Add
+        // Website says it.
+        let tailnet = Sites.tailnet(of: setup)
+        for site in Set(sites).sorted() where setup.sites[site] != nil && setup.sites[site] != routeId {
+            if let kind = Sites.ownNetwork(site, tailnet: tailnet) { warn(kind.refusal(site)) }
+        }
+        let keys = Set(sites).filter { setup.sites[$0] != nil && setup.sites[$0] != routeId && Sites.ownNetwork($0, tailnet: tailnet) == nil }
         guard !keys.isEmpty else { completion(false); return }
         changeSites(Dictionary(uniqueKeysWithValues: keys.map { ($0, routeId) }), name: keys.count == 1 ? "Move Website" : "Move \(keys.count) Websites", undo: undo, finished: completion)
     }

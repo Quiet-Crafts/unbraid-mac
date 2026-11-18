@@ -740,7 +740,7 @@ private struct TailscaleTab: View {
         let s = model.setup
         let v = model.vpn.state
         let nodes = v.tsExitNodes.sorted { ($0.online ? 0 : 1, $0.name) < ($1.online ? 0 : 1, $1.name) }
-        SettingsPage(title: "Tailscale", subtitle: "\(nodes.count) exit node\(nodes.count == 1 ? "" : "s") · \(model.store.tsSuffix ?? "no tailnet domain")", tile: IconTile.Tile.indigo) {
+        SettingsPage(title: "Tailscale", subtitle: "\(nodes.count) exit node\(nodes.count == 1 ? "" : "s") · \(Sites.tailnet(of: s) ?? "no tailnet domain")", tile: IconTile.Tile.indigo) {
             if let n = model.notice { Section { NoticeRow(text: n) } }
             Section {
                 SubToggle("Reach your tailnet", s.home.tailscale ? status(v, enabled: true)
@@ -754,8 +754,11 @@ private struct TailscaleTab: View {
                         Button("Use") { model.store.acceptTsSuffix(offered) }.contentButton()
                     }
                 }
-                if s.home.tailscale, let domain = model.store.tsSuffix {
-                    SettingsRow(title: "Tailnet domain “\(domain)”", caption: Compiler.officialTs(s.home) && Compiler.tsSuffixIsTailscales(domain) ? "Tailscale’s own: lookups of names under it go to your tailnet." : "You accepted it: lookups of names under it go to your tailnet.", symbol: "network") {
+                // The domain as kept, whether Tailscale runs or not: websites under it can't take a rule either way.
+                if let domain = Sites.tailnet(of: s) {
+                    let own = Compiler.officialTs(s.home) && Compiler.tsSuffixIsTailscales(domain)
+                    let dns = s.home.tailscale ? "lookups of names under it go to your tailnet" : s.tailscale ? "while Reach your tailnet is off, names under it get no answer" : "while Tailscale is off, names under it are looked up as any other"
+                    SettingsRow(title: "Tailnet domain “\(domain)”", caption: (own ? "Tailscale’s own: " : "You accepted it: ") + dns + ". Names under it can’t take a website rule.", symbol: "network") {
                         if !Compiler.officialTs(s.home) || !Compiler.tsSuffixIsTailscales(domain) { Button("Remove…") { removing = domain }.contentButton() }
                     }
                 }

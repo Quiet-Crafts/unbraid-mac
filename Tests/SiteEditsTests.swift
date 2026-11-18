@@ -17,7 +17,7 @@ final class SiteEditsTests: XCTestCase {
             XCTAssertEqual(SiteEdits.check(raw, in: [:]), .refused(address), raw)
         }
         XCTAssertEqual(SiteEdits.check("netflix", in: [:]), .refused("Add the whole name, such as netflix.com"))
-        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is this Mac itself, which apps reach without unbraid: a website rule can't change where it goes"))
+        XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is this Mac itself, which apps reach without unbraid, so it can't take a website rule"))
         XCTAssertEqual(SiteEdits.check("co.uk", in: [:]), .refused("co.uk ends many websites' names: add one website under it"))
         XCTAssertEqual(SiteEdits.check("bücher.de", in: ["xn--bcher-kva.de": DIRECT]), .refused("bücher.de (xn--bcher-kva.de) already has a route"))
         let full = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("s\($0).example", DIRECT) })
@@ -33,11 +33,16 @@ final class SiteEditsTests: XCTestCase {
     /// Names on the own network or in a Tailscale network are refused, for every route, Block included, each kind with
     /// a sentence that says what it is and which setting looks after it. A saved or restored one is kept as it is.
     func testANameOnTheOwnNetworkOrATailscaleNetworkIsRefusedWithWhy() {
-        let end = ": a website rule can't change where it goes"
+        let end = ", so it can't take a website rule"
         let device = "is a device on your own network, which Reach devices on this network in Settings › Home access looks after"
-        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box", "svc.internal"] {
+        for name in ["printer.lan", "nas.local", "router.home.arpa", "box.fritz.box"] {
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) \(device)\(end)"), name)
         }
+        // .internal isn't among the names the local network's resolver is asked: no promise of that setting.
+        XCTAssertEqual(SiteEdits.check("svc.internal", in: [:]), .refused("svc.internal is a name for private networks, not a website\(end)"))
+        // Only reverse lookups are lookups of an address; other .arpa names are the internet's own.
+        XCTAssertEqual(SiteEdits.check("resolver.arpa", in: [:]), .refused("resolver.arpa is part of the internet's own infrastructure, not a website\(end)"))
+        XCTAssertEqual(SiteEdits.check("1.0.0.0.ip6.arpa", in: [:]), .refused("1.0.0.0.ip6.arpa is a lookup of an address, not a website\(end)"))
         XCTAssertEqual(SiteEdits.check("app.localhost", in: [:]), .refused("app.localhost is this Mac itself, which apps reach without unbraid\(end)"))
         XCTAssertEqual(SiteEdits.check("localhost", in: [:]), .refused("localhost is this Mac itself, which apps reach without unbraid\(end)"))
         XCTAssertEqual(SiteEdits.check("10.in-addr.arpa", in: [:]), .refused("10.in-addr.arpa is a lookup of an address, not a website\(end)"))
@@ -47,6 +52,11 @@ final class SiteEditsTests: XCTestCase {
         }
         XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:]), .valid("nas.corp.example"))
         XCTAssertEqual(SiteEdits.check("nas.corp.example", in: [:], tailnet: "Corp.Example."), .refused("nas.corp.example \(tailscale)\(end)"))
+        // The tailnet's own domain wins over what its names end in.
+        XCTAssertEqual(SiteEdits.check("nas.corp.lan", in: [:], tailnet: "corp.lan"), .refused("nas.corp.lan \(tailscale)\(end)"))
+        // The whole name as typed is checked before "www." goes: the tailnet's www.example.org is not the public example.org.
+        XCTAssertEqual(SiteEdits.check("https://www.example.org/", in: [:], tailnet: "www.example.org"), .refused("www.example.org \(tailscale)\(end)"))
+        XCTAssertEqual(SiteEdits.check("https://www.example.org/", in: [:]), .valid("example.org"))
         XCTAssertEqual(SiteEdits.check("lan.example.com", in: [:]), .valid("lan.example.com"))
         // For what is typed only: a saved setup or a backup keeps what it holds (the compiler leaves out what can't work).
         let saved = ["printer.lan": DIRECT, "nas.tail1234.ts.net": "nl", "tracker.lan": BLOCK, "co.uk": BLOCK, "nas.local": DIRECT, "example.com": DIRECT]
@@ -120,6 +130,49 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(Sites.applied(s), ["www.gob.mx": BLOCK])
     }
 
+    /// Without a sound list (missing, or not the file this build ships) a new name is refused with why, and a saved
+    /// block of a name the list would keep with its "www." still applies, and compiles as a block.
+    func testADamagedOrMissingListRefusesNewNamesAndKeepsSavedBlocks() throws {
+        XCTAssertNil(Sites.Endings(nil))
+        XCTAssertNil(Sites.Endings(Data("co.uk\n".utf8)))
+        for list in [Sites.Endings(nil), Sites.Endings(Data("co.uk\n".utf8))] {
+            XCTAssertEqual(Sites.refusal("co.uk", tailnet: nil, list: list), Sites.damaged)
+            XCTAssertEqual(Sites.refusal("example.com", tailnet: nil, list: list), Sites.damaged)
+        }
+        XCTAssertEqual(Sites.refusal("co.uk", tailnet: nil), "co.uk ends many websites' names: add one website under it")
+        let saved = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["www.gob.mx": BLOCK])
+        XCTAssertEqual(Sites.applied(saved), ["www.gob.mx": BLOCK])
+        let config = try Compiler.compile(Compiler.Input(setup: saved, links: [:], apps: [:], selfPattern: "^/x$", tsSuffix: nil))
+        XCTAssertTrue(config.contains("www.gob.mx"))
+    }
+
+    /// A parent of a hosting platform the app refuses is refused too: amazonaws.com sits above s3.amazonaws.com.
+    func testAParentOfARefusedPlatformIsRefused() {
+        XCTAssertEqual(SiteEdits.check("amazonaws.com", in: [:]), .refused("amazonaws.com ends many websites' names: add one website under it"))
+        XCTAssertEqual(SiteEdits.check("aws.amazon.com", in: [:]), .valid("aws.amazon.com"))
+    }
+
+    /// A long international name shows its xn-- form first, so a row cut at its end still shows what the name is.
+    func testALongInternationalNameShowsItsAsciiFormFirst() throws {
+        let long = try XCTUnwrap(Sites.clean("bücher." + String(repeating: "a", count: 40) + "." + String(repeating: "b", count: 40) + ".com"))
+        XCTAssertTrue(Sites.shown(long).hasPrefix("xn--bcher-kva."), Sites.shown(long))
+        XCTAssertEqual(Sites.shown("xn--bcher-kva.de"), "bücher.de (xn--bcher-kva.de)")
+    }
+
+    /// Moving or adding a name on the own network or in a Tailscale network is refused when it is committed too (a
+    /// route menu, a drag, an add retried after a limit question), Block included; one saved can still be removed.
+    func testAnOwnNetworkNameIsNeitherAddedNorMovedAtCommit() {
+        var s = Setup(routes: [nl, us], defaultRoute: DIRECT)
+        s.sites = ["printer.lan": DIRECT]
+        SiteEdits.apply(["printer.lan": BLOCK, "nas.local": BLOCK, "app.tail9.ts.net": "us", "netflix.com": "us"], to: &s)
+        XCTAssertEqual(s.sites, ["printer.lan": DIRECT, "netflix.com": "us"])
+        s.home.tsSuffix = "corp.example"
+        SiteEdits.apply(["nas.corp.example": BLOCK], to: &s)
+        XCTAssertNil(s.sites["nas.corp.example"])
+        SiteEdits.apply(["printer.lan": nil], to: &s)
+        XCTAssertEqual(s.sites, ["netflix.com": "us"])
+    }
+
     /// The list is the file this build ships, checked by its digest: a missing, cut or changed file takes no new
     /// website, with why, rather than one a sound list would refuse.
     func testADamagedListTakesNoNewWebsite() throws {
@@ -184,7 +237,7 @@ final class SiteEditsTests: XCTestCase {
             _ = Punycode.decode(label[...])
             let name = "xn--\(label).example"
             let shown = Sites.shown(name)
-            if shown != name { XCTAssertTrue(shown.hasSuffix(" (\(name))"), name) }
+            if shown != name { XCTAssertTrue(shown.hasSuffix(" (\(name))") || shown.hasPrefix("\(name) ("), name) }
         }
         // Real names among them still decode.
         for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), Sites.clean(raw).map { "\(raw) (\($0))" }, raw) }
