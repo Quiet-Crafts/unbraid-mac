@@ -108,6 +108,24 @@ final class BackupWeakensTests: XCTestCase {
 
     // MARK: Cases missed before
 
+    /// The tailnet's own domain under a saved Direct website gets no answer now (Tailscale runs for an exit, with Reach
+    /// your tailnet off), and would go Direct by that website after a restore that leaves the exit unused: said for the
+    /// website.
+    func testATailnetDomainUnderASavedWebsiteThatOpensIsSaid() throws {
+        var here = base()
+        here.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        here.home.tsControlUrl = "https://hs.example"
+        here.home.tsSuffix = "corp.example.org"
+        here.home.tsSuffixConfirmed = true
+        here.defaultRoute = DIRECT
+        here.sites = ["example.org": DIRECT, "video.example": "ts"]
+        var next = here
+        next.sites["video.example"] = "nl"
+        XCTAssertTrue(here.tailscale)
+        XCTAssertFalse(next.tailscale)
+        let l = try XCTUnwrap(RestoreTraffic.losses(here, next))
+        XCTAssertEqual(l.sites["example.org"], .unblocked)
+    }
 
     func testWebsitesByWhatTheyEffectivelyGet() {
         var here = base()

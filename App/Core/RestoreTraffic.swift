@@ -306,9 +306,12 @@ nonisolated enum RestoreTraffic {
         let names = Set(current.sites.keys).union(next.sites.keys).filter(Sites.isClean).sorted()
         let programs = [otherProgram] + kinds.values.filter { $0 != otherProgram }.sorted()
         let fromApps = names.count * 2 * programs.count <= maxWalks ? programs : [otherProgram]
+        // A tailnet's own domain under a saved website (example.org above corp.example.org) is probed too, said for that
+        // website: whether its names get an answer of their own can change with the restore while the website doesn't.
+        let domains = Set([Sites.tailnet(of: current), Sites.tailnet(of: next)].compactMap { $0 })
         for name in names {
             var worst: Loss?
-            for probe in [name, "zz-check." + name] {
+            for probe in [name, "zz-check." + name] + domains.filter({ $0 != name && Sites.under($0, name) }).sorted().map({ "zz-check." + $0 }) {
                 for program in fromApps {
                     guard let o = pair(program, probe) else { continue }
                     let l = loss(o.0, o.1)
