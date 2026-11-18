@@ -75,9 +75,9 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(run.handle(.timer, now: at(405)), .nothing)
     }
 
-    // MARK: Networks without a fingerprint (P-1, X-1, O-1)
+    // MARK: Networks without a fingerprint
 
-    /// P-1: a network reached afresh with no acceptable reading gets the profile for any other network after 20 s.
+    /// a network reached afresh with no acceptable reading gets the profile for any other network after 20 s.
     func testANetworkReachedAfreshWithoutAFingerprintIsUnrecognisedAfter20s() {
         var run = settled()
         XCTAssertEqual(drive(&run, [(100, [offline]), (300, [pending(Self.cafe)])], until: 400), [unrecognised])
@@ -88,7 +88,7 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&off, [(10, [offline])], until: 10_000), [])
     }
 
-    /// X-1: another network reached the same way as home (same interface and IPv4 router address) with no fingerprint
+    /// another network reached the same way as home (same interface and IPv4 router address) with no fingerprint
     /// gets no longer wait than any other: unrecognised after 20 s.
     func testAnotherNetworkLookingLikeHomeIsUnrecognisedInTheEnd() {
         for gap: Double in [2, 60, 600, 28_800] {
@@ -99,7 +99,7 @@ final class AutoSwitchRunTests: XCTestCase {
         }
     }
 
-    /// O-1: networks without a fingerprint look alike; one is left by going offline while awake, another interface or
+    /// networks without a fingerprint look alike; one is left by going offline while awake, another interface or
     /// router. A sleep, a moment offline or a reconnect there keep a hand pick.
     func testAHandPickOnAnUnrecognisedNetworkEndsWhenTheMacLeavesIt() {
         func there() -> Run {
@@ -130,9 +130,9 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&late, [(0, [.profiles(names), .connected(true), pending()]), (40, [on("a,b")])], until: 100), [unrecognised, "a,b"])
     }
 
-    // MARK: Late routers, sleep and wakes (T2-1, X-4, T3-1)
+    // MARK: Late routers, sleep and wakes
 
-    /// T2-1, X-4, T3-1: at home, the Mac offline for a moment or asleep for hours, the routers answering at any of the
+    /// at home, the Mac offline for a moment or asleep for hours, the routers answering at any of the
     /// watcher's read times. Within the one wait (20 s) nothing switches and a hand pick stays; later, the Mac counts as
     /// somewhere unrecognised, then home decides again: one switch away and one back to home's rule (the accepted
     /// limit: the hand pick ended when the network counted as changed).
@@ -189,10 +189,10 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&other, [(421, [.timer])], until: 430), [unrecognised])
     }
 
-    // MARK: Routers shared by two remembered networks (R-3, R-4, X-2, T3-2)
+    // MARK: Routers shared by two remembered networks
 
-    /// R-4, R-3: on the office, its own router away for a while: still the office, and a switch pending meanwhile is
-    /// still for the same network. T3-2: arriving there, the shared router alone at the settle moment.
+    /// on the office, its own router away for a while: still the office, and a switch pending meanwhile is
+    /// still for the same network. arriving there, the shared router alone at the settle moment.
     func testASharedRouterKeepsTheNetworkItWasReadAs() {
         var run = settled("b,c", Self.office)
         _ = run.handle(.pickedByHand, now: at(10))
@@ -207,7 +207,7 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(rules.profile(on: "b"), "Travel")
     }
 
-    /// X-2: after leaving home, a network reached another way whose only router is the shared one is neither home nor
+    /// after leaving home, a network reached another way whose only router is the shared one is neither home nor
     /// the office. Back at home's place after more than a moment, it takes a fresh reading that names home on its own:
     /// the shared router alone is in doubt, so any other network; home's own router keeps home.
     func testAPreferenceNeverOutlivesLeavingTheNetwork() {
@@ -224,9 +224,9 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&bridge, [(10, [pending("en0|")]), (12, [pending("en0|10.9.9.1")])], until: 100), [unrecognised])
     }
 
-    // MARK: Switches the app couldn't make (X-3)
+    // MARK: Switches the app couldn't make
 
-    /// X-3: the switch asked for wasn't made (a reconnect, a reread meanwhile): owed again once things settle; not over
+    /// the switch asked for wasn't made (a reconnect, a reread meanwhile): owed again once things settle; not over
     /// a hand pick made since.
     func testASwitchNotMadeIsOwedAgain() {
         var run = settled()
@@ -246,7 +246,7 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&run, [(210, [on("b,c", Self.office)]), (230, [.unapplied(decided)])], until: 300), ["b,c"])
     }
 
-    // MARK: Hand picks and rules (P-2, P-5, R-5, T-3, T-4)
+    // MARK: Hand picks and rules
 
     func testAHandPickStaysUntilTheNetworkOrItsRuleChanges() {
         var run = settled()
@@ -257,19 +257,19 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&run, [(20, [.rules(r)])], until: 40), [], "rules for other networks")
         r.renamed("Home", to: "House")
         XCTAssertEqual(drive(&run, [(50, [.profiles(["House", "Work", "Travel"]), .rules(r)])], until: 70), [], "a rename")
-        // A rename while the network reads nothing, or the Mac is offline for a moment, follows the pick too (R-5).
+        // A rename while the network reads nothing, or the Mac is offline for a moment, follows the pick too.
         r.renamed("House", to: "Casa")
         XCTAssertEqual(drive(&run, [(80, [pending()]), (81, [.profiles(["Casa", "Work", "Travel"]), .rules(r)]), (84, [on("a,b")])], until: 100), [])
         r.renamed("Casa", to: "Haus")
         XCTAssertEqual(drive(&run, [(110, [offline]), (111, [.profiles(["Haus", "Work", "Travel"]), .rules(r)]), (113, [on("a,b")])], until: 130), [])
-        // A new profile for this network applies, over the pick (P-2).
+        // A new profile for this network applies, over the pick.
         r.known[0].profile = "Travel"
         XCTAssertEqual(drive(&run, [(140, [.rules(r)])], until: 160), ["a,b"])
         // Another network decides again.
         XCTAssertEqual(drive(&run, [(170, [on("b,c", Self.office)])], until: 200), ["b,c"])
     }
 
-    /// P-5, T-4: a pick made offline has no network: the next one decides. A pick made while the network is still read
+    /// a pick made offline has no network: the next one decides. A pick made while the network is still read
     /// counts for what the reading gives, even when nothing looked at it on time.
     func testAHandPickWithoutANetwork() {
         var run = settled()
@@ -382,9 +382,9 @@ final class AutoSwitchRunTests: XCTestCase {
         }
     }
 
-    // MARK: Fourth review (Y-2, Y-3, T4-3)
+    // MARK: Routers learnt late, the one wait, picks while reading
 
-    /// Y-2: a network remembered as one router, and another holding it and one more: on the larger one, its other router
+    /// a network remembered as one router, and another holding it and one more: on the larger one, its other router
     /// away for a while keeps it that network (the established one wins over an exact match), and a hand pick stays.
     func testTheEstablishedNetworkWinsOverAnExactMatch() {
         var r = NetworkRules(salt: "salt")
@@ -401,7 +401,7 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(drive(&fresh, [(0, [.profiles(names), .connected(true), on("b", Self.cafe)])], until: 10), ["b"])
     }
 
-    /// Y-3: the one wait starts once per arrival; learning the router address, or it coming and going, doesn't restart it.
+    /// the one wait starts once per arrival; learning the router address, or it coming and going, doesn't restart it.
     func testLearningTheRouterAddressDoesNotRestartTheWait() {
         var run = Run(rules: rules, now: t0)
         XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending("en0|")]), (10, [pending(Self.cafe)]),
@@ -409,7 +409,7 @@ final class AutoSwitchRunTests: XCTestCase {
         XCTAssertEqual(run.here(at: at(20)), unrecognised)
     }
 
-    /// T4-3: a pick made while the network is still being read belongs to the network being read: it holds when the
+    /// a pick made while the network is still being read belongs to the network being read: it holds when the
     /// router answers after the wait, whatever it turns out to be. A pick made after the network counted as unrecognised
     /// is the accepted limit: the late answer decides.
     func testAHandPickWhileReadingHoldsForTheLateAnswer() {
@@ -431,7 +431,7 @@ final class AutoSwitchRunTests: XCTestCase {
                                       (1030, [on("a,b")])], until: 1100), [unrecognised])
     }
 
-    /// Z-5: an ambiguous fingerprint first (a router two remembered networks share), then the full one: a pick made
+    /// an ambiguous fingerprint first (a router two remembered networks share), then the full one: a pick made
     /// while the network was read holds through both; a later reading for the same arrival never replaces it.
     func testAHandPickHoldsThroughAnAmbiguousThenFullReading() {
         var run = Run(rules: rules, now: t0)
@@ -448,7 +448,7 @@ final class AutoSwitchRunTests: XCTestCase {
                        ["a,b", "a,b"])
     }
 
-    /// Z-5 as a property: a hand pick made at any moment on a network (known, being read, unrecognised) holds through
+    /// As a property: a hand pick made at any moment on a network (known, being read, unrecognised) holds through
     /// every later reading of it, ambiguous or not, moments offline, reconnects and busy, until the Mac leaves.
     func testRandomAHandPickHoldsUntilTheMacLeaves() {
         var g = Rng(s: 0x2a5)
