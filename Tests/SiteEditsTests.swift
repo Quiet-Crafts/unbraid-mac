@@ -141,6 +141,14 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertNil(Sites.clean("a\u{200D}b.com"))
     }
 
+    /// An all-Cyrillic name that reads as "cisco" (its "i" the Cyrillic iota) stays in its xn-- form, found by "cisco".
+    func testACyrillicCiscoLookAlikeStaysAscii() throws {
+        let name = try XCTUnwrap(Sites.clean("с\u{A647}ѕсо.example"))
+        XCTAssertEqual(name, "xn--n1afa3f3774h.example")
+        XCTAssertEqual(Sites.shown(name), name)
+        XCTAssertTrue(Sites.readings(name).contains("cisco.example"))
+    }
+
     /// A name whose letters mix scripts, or are all of another script but look like Latin ones, is shown as it is saved
     /// (the xn-- form), as browsers show it; a search finds it by either form and by the Latin it looks like.
     func testALookAlikeNameIsShownInItsAsciiForm() {

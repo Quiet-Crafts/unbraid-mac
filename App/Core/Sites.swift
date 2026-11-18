@@ -221,7 +221,11 @@ nonisolated enum Sites {
     }
 
     /// Letters of other scripts that look like Latin ones, with the Latin letter each looks like.
-    private static let lookalike: [Character: Character] = Dictionary(uniqueKeysWithValues: zip("асԁеһіјӏорԛѕԝхуαικνορτυχօսհոց", "acdehijlopqswxyaikvoptuxouhng"))
+    /// Cyrillic, Greek and Armenian letters taken for Latin ones, as browsers read whole-script look-alikes (Cyrillic
+    /// "ꙇ" as "i" included).
+    private static let lookalike: [Character: Character] = Dictionary(uniqueKeysWithValues: zip(
+        "асԁеԍһіјӏорԛѕԝхуъьҽпгѵѡꙇүαικνορτυχϲϳօսհոցզա",
+        "acdeghijlopqswxybbenrvwiyaikvoptuxcjouhngqw"))
 
     /// A label browsers show in its own letters: of one script (Latin may go with Chinese, Japanese or Korean, as they
     /// allow), and, in a script other than Latin, not made only of letters that look like Latin ones.
