@@ -1112,8 +1112,10 @@ final class Connection {
             let blocked = Set(record.setup.activeRoutes.filter {
                 (!$0.imported && record.links[$0.id] == nil && store.accounts[$0.loc.provider] == nil) || LinkPicker.keyLeftOut($0, in: record.setup)
             }.map(\.id))
-            guard let setup = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
-            let domain = Sites.tailnet(of: store.setup)
+            guard let kept = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
+            // The tailnet domain as accepted now, so routes, DNS and the seal key all come from the same Home.
+            let setup = Sites.withDomain(kept, of: store.setup)
+            let domain = Sites.tailnet(of: setup)
             let ids = Set(setup.activeRoutes(tailnet: domain).map(\.id))
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
@@ -1269,7 +1271,9 @@ final class Connection {
                 // never shown as a change not applied, and never counted against an edit (none is pending, or the pending
                 // one isn't due, so wasn't tried).
                 let quiet = (health && (!pending || !due)) || fallback
-                let s = fallback ? old.input.setup : wanted.setup, accounts = store.accounts
+                // The running setup again, with the tailnet domain as accepted now: the picker then needs the same routes
+                // for websites as the compiler input (`makeInput`), which judges them by that domain.
+                let s = fallback ? Sites.withDomain(old.input.setup, of: store.setup) : wanted.setup, accounts = store.accounts
                 // Inputs read after a suspension must still be the ones this attempt was built from.
                 @MainActor func fits(_ input: Compiler.Input) -> Bool {
                     guard g == generation, request == reloadRequest, state.phase == .on, revision() == wanted, accounts == store.accounts,
@@ -1388,7 +1392,8 @@ final class Connection {
                     }
                 }
                 // Install the new app rules from local links before asking any provider. Missing routes reject traffic.
-                if LinkPicker.needsInterim(from: old.input.setup, to: s, revoking: signOut == .replace || revokedAction) {
+                if LinkPicker.needsInterim(from: old.input.setup, to: s, revoking: signOut == .replace || revokedAction,
+                                           suffixes: (old.input.tsSuffix, store.tsSuffix)) {  // `makeInput` hands the engine `store.tsSuffix`
                     do {
                         let ready = try await LinkPicker.pick(s, keep: keep, applied: applied, appliedAccounts: appliedAccounts,
                             accounts: accounts, last: last, avoid: avoided, refused: refused, gone: gone, deferred: deferred, portStep: ports,
@@ -2883,9 +2888,10 @@ final class Connection {
         // The tailnet's own domain is only known once signed in: reload once so DNS routes it to Tailscale.
         // A domain the check now refuses (saved before it existed, or reported by a server) is dropped, not kept.
         let suffix = Compiler.tsSuffix(u.suffix)
-        // A running Tailscale that names no usable domain withdraws one still on offer, so it can't be accepted later.
         if suffix != store.tsSuffix, suffix != nil || Compiler.tsSuffix(store.tsSuffix) == nil { store.tsSuffix = suffix }
-        else if suffix == nil, u.backendState == "Running", store.tsSuffixOffered != nil { store.tsSuffix = nil }
+        // A domain named in its place that can't be used withdraws the one on offer, so it can't be accepted later; a
+        // status that names none (no tailnet information yet) leaves it, and the accepted domain stays as it is.
+        else if suffix == nil, !u.suffix.trimmingCharacters(in: .whitespaces).isEmpty { store.withdrawTsOffer() }
     }
 
     // MARK: Helpers

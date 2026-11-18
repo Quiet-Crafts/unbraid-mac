@@ -98,7 +98,7 @@ struct SitesTable: View {
         // A route's page lists the websites whose rules put them there; the Websites page lists every one saved.
         let listed = route == nil ? s.sites : Sites.applied(s)
         return listed.filter { route == nil || $0.value == route }
-            .map { Row(id: $0.key, name: Sites.shown($0.key), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
+            .map { Row(id: $0.key, name: Sites.shown($0.key, asciiFirst: true), routeName: s.label($0.value), week: week[$0.key] ?? 0) }
             .sorted(by: sort.inOrder)
     }
 

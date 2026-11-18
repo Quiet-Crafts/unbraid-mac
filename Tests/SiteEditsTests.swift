@@ -39,7 +39,7 @@ final class SiteEditsTests: XCTestCase {
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) \(device)\(end)"), name)
         }
         // .internal isn't among the names the local network's resolver is asked: no promise of that setting.
-        XCTAssertEqual(SiteEdits.check("svc.internal", in: [:]), .refused("svc.internal is a name for private networks, not a website\(end)"))
+        XCTAssertEqual(SiteEdits.check("svc.internal", in: [:]), .refused("svc.internal is a name for private networks, which unbraid leaves to them\(end)"))
         // Only reverse lookups are lookups of an address; other .arpa names are the internet's own.
         XCTAssertEqual(SiteEdits.check("resolver.arpa", in: [:]), .refused("resolver.arpa is part of the internet's own infrastructure, not a website\(end)"))
         XCTAssertEqual(SiteEdits.check("1.0.0.0.ip6.arpa", in: [:]), .refused("1.0.0.0.ip6.arpa is a lookup of an address, not a website\(end)"))
@@ -140,10 +140,19 @@ final class SiteEditsTests: XCTestCase {
             XCTAssertEqual(Sites.refusal("example.com", tailnet: nil, list: list), Sites.damaged)
         }
         XCTAssertEqual(Sites.refusal("co.uk", tailnet: nil), "co.uk ends many websites' names: add one website under it")
+        // With the list missing or damaged, everything runs as it would: new names refused, the saved Block kept and
+        // compiled.
         let saved = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: ["www.gob.mx": BLOCK])
-        XCTAssertEqual(Sites.applied(saved), ["www.gob.mx": BLOCK])
-        let config = try Compiler.compile(Compiler.Input(setup: saved, links: [:], apps: [:], selfPattern: "^/x$", tsSuffix: nil))
-        XCTAssertTrue(config.contains("www.gob.mx"))
+        for list in [Sites.Endings(nil), Sites.Endings(Data("co.uk\n".utf8))] {
+            try Sites.$listInTest.withValue(.some(list)) {
+                XCTAssertNil(Sites.list)
+                XCTAssertEqual(SiteEdits.check("co.uk", in: [:]), .refused(Sites.damaged))
+                XCTAssertTrue(Sites.isClean("www.gob.mx"))
+                XCTAssertEqual(Sites.applied(saved), ["www.gob.mx": BLOCK])
+                let walk = try EngineWalk(try Compiler.compile(Compiler.Input(setup: saved, links: [:], apps: [:], selfPattern: "^/x$", tsSuffix: nil)))
+                XCTAssertTrue(walk.outcome("/Applications/Other.app/Contents/MacOS/other", "mail.www.gob.mx").hasSuffix(" reject"))
+            }
+        }
     }
 
     /// A parent of a hosting platform the app refuses is refused too: amazonaws.com sits above s3.amazonaws.com.
@@ -173,6 +182,26 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(s.sites, ["netflix.com": "us"])
     }
 
+    /// Right before a change is committed it is checked again against the setup it goes into: an Add by the address as
+    /// typed (a domain accepted meanwhile refuses www.example.org, not only its parent's key), a user's move of an
+    /// own-network name refused, while Undo and Redo put back exactly what was there, a restored Block included.
+    func testAChangeIsCheckedAgainAgainstTheSetupItIsCommittedTo() {
+        var s = Setup(routes: [nl, us], defaultRoute: "nl")
+        XCTAssertNil(SiteEdits.refusal(["example.org": DIRECT], in: s, typed: "https://www.example.org/"))
+        s.home.tsSuffix = "www.example.org"
+        let why = SiteEdits.refusal(["example.org": DIRECT], in: s, typed: "https://www.example.org/")
+        XCTAssertEqual(why, "www.example.org belongs to a Tailscale network, which Settings › Tailscale looks after, so it can't take a website rule")
+        XCTAssertNil(SiteEdits.refusal(["example.org": DIRECT], in: s))
+        XCTAssertEqual(SiteEdits.refusal(["printer.lan": BLOCK], in: s), Sites.Own.device.refusal("printer.lan"))
+        XCTAssertNil(SiteEdits.refusal(["printer.lan": BLOCK], in: s, faithful: true))
+        XCTAssertNil(SiteEdits.refusal(["printer.lan": nil], in: s))
+        SiteEdits.apply(["printer.lan": BLOCK], to: &s, faithful: true)
+        XCTAssertEqual(s.sites, ["printer.lan": BLOCK])
+        s.sites = Dictionary(uniqueKeysWithValues: (0..<Sites.max).map { ("site\($0).example", DIRECT) })
+        XCTAssertEqual(SiteEdits.refusal(["one-more.example": DIRECT], in: s, faithful: true), SiteEdits.full)
+        XCTAssertNil(SiteEdits.refusal(["site0.example": "us"], in: s))
+    }
+
     /// The list is the file this build ships, checked by its digest: a missing, cut or changed file takes no new
     /// website, with why, rather than one a sound list would refuse.
     func testADamagedListTakesNoNewWebsite() throws {
@@ -187,6 +216,9 @@ final class SiteEditsTests: XCTestCase {
         XCTAssertEqual(Sites.shown("xn--bcher-kva.de"), "bücher.de (xn--bcher-kva.de)")
         XCTAssertEqual(Sites.shown("www.xn--fsqu00a.xn--0zwm56d"), "www.例子.测试 (www.xn--fsqu00a.xn--0zwm56d)")
         XCTAssertEqual(Sites.shown("example.com"), "example.com")
+        // The Websites table always puts the xn-- form first: its column can cut the row at any width.
+        XCTAssertEqual(Sites.shown("xn--bcher-kva.de", asciiFirst: true), "xn--bcher-kva.de (bücher.de)")
+        XCTAssertEqual(Sites.shown("example.com", asciiFirst: true), "example.com")
         XCTAssertEqual(Sites.shown("xn--zz.example"), "xn--zz.example", "a label that doesn't decode stays as it is")
         for raw in ["bücher.de", "münchen.de", "例子.测试", "παράδειγμα.δοκιμή"] {
             let name = Sites.clean(raw)!
@@ -240,7 +272,7 @@ final class SiteEditsTests: XCTestCase {
             if shown != name { XCTAssertTrue(shown.hasSuffix(" (\(name))") || shown.hasPrefix("\(name) ("), name) }
         }
         // Real names among them still decode.
-        for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map(Sites.shown), Sites.clean(raw).map { "\(raw) (\($0))" }, raw) }
+        for raw in ["bücher.de", "例子.测试", "😀.com"] { XCTAssertEqual(Sites.clean(raw).map { Sites.shown($0) }, Sites.clean(raw).map { "\(raw) (\($0))" }, raw) }
     }
 
     /// A website blocked now is opened by a setup that unblocks it, or that gives a name under it a route of its own.

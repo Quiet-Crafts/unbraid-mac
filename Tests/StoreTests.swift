@@ -131,6 +131,21 @@ final class StoreTests: XCTestCase {
     }
 
     private func exists(_ name: String) -> Bool { FileManager.default.fileExists(atPath: dir.appending(path: name).path) }
+    /// A domain on offer is withdrawn alone: the domain accepted before stays.
+    func testWithdrawingAnOfferKeepsTheAcceptedDomain() {
+        let s = store()
+        s.update { $0.home.tailscale = true; $0.home.tsControlUrl = "https://hs.example"; $0.home.tsSuffix = "corp.example" }
+        s.tsSuffix = "corp.example"
+        XCTAssertEqual(s.setup.home.tsSuffix, "corp.example")
+        s.update { $0.home.tsSuffix = nil }
+        s.tsSuffix = "other.example"
+        XCTAssertEqual(s.tsSuffixOffered, "other.example")
+        s.update { $0.home.tsSuffix = "corp.example" }
+        s.withdrawTsOffer()
+        XCTAssertNil(s.tsSuffixOffered)
+        XCTAssertEqual(s.setup.home.tsSuffix, "corp.example")
+    }
+
     func testSealedTempsSweptAtLaunchAndForget() async throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let temp = ".accounts.bin.\(UUID().uuidString).tmp"

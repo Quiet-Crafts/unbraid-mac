@@ -65,7 +65,9 @@ nonisolated enum LinkPicker {
 
     /// Changes that must reach the engine before a provider can delay them. A ready route also needs the new app
     /// rules installed when another route is waiting, otherwise apps leaving Direct still use their real address.
-    static func needsInterim(from old: Setup?, to new: Setup, revoking: Bool = false) -> Bool {
+    /// - Parameter suffixes: the tailnet domain the running input and the new one hand the engine (`Compiler.Input.tsSuffix`),
+    ///   when the caller has them: the first exit node turns it on with the switches and the saved domain alike.
+    static func needsInterim(from old: Setup?, to new: Setup, revoking: Bool = false, suffixes: (old: String?, new: String?)? = nil) -> Bool {
         guard let old else { return false }
         if revoking { return true }
         let routes = Set(new.activeRoutes.map(\.id))
@@ -79,7 +81,8 @@ nonisolated enum LinkPicker {
         // public website away from it; and the filter that looks a Direct website's names up.
         return changes(old.defaultRoute, new.defaultRoute) || old.sites != new.sites
             || !new.sites.isEmpty && (Sites.tailnet(of: old) != Sites.tailnet(of: new) || old.home.tailscale != new.home.tailscale
-                || old.prefs.lan != new.prefs.lan || old.prefs.effectiveFilter != new.prefs.effectiveFilter)
+                || old.prefs.lan != new.prefs.lan || old.prefs.effectiveFilter != new.prefs.effectiveFilter
+                || suffixes.map { Compiler.tsSuffix($0.old) != Compiler.tsSuffix($0.new) } == true)
             || Set(old.apps.keys).union(new.apps.keys).contains { changes(old.routeOf($0), new.routeOf($0)) }
     }
 

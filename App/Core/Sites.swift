@@ -47,7 +47,7 @@ nonisolated enum Sites {
         func sentence(_ name: String) -> String {
             switch self {
             case .device: "\(name) is a device on your own network, which Reach devices on this network in Settings › Home access looks after"
-            case .privateName: "\(name) is a name for private networks, not a website"
+            case .privateName: "\(name) is a name for private networks, which unbraid leaves to them"
             case .thisMac: "\(name) is this Mac itself, which apps reach without unbraid"
             case .address: "\(name) is a lookup of an address, not a website"
             case .infrastructure: "\(name) is part of the internet's own infrastructure, not a website"
@@ -75,6 +75,14 @@ nonisolated enum Sites {
 
     /// The tailnet's own domain, as the user accepted it and the setup keeps it, whether Tailscale runs or not: what
     /// own-network names are judged by everywhere.
+    /// `s` with the tailnet domain `current` holds (accepted or not, confirmed or not), the rest as it was: an older
+    /// setup run again judges its websites as the saved one does.
+    static func withDomain(_ s: Setup, of current: Setup) -> Setup {
+        var s = s
+        s.home.tsSuffix = current.home.tsSuffix
+        s.home.tsSuffixConfirmed = current.home.tsSuffixConfirmed
+        return s
+    }
     static func tailnet(of setup: Setup) -> String? { Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) }
 
     /// The websites whose rules apply: a block always, a route or Direct unless its name is on the own network or in a
@@ -179,7 +187,7 @@ nonisolated enum Sites {
     /// The shared endings: the Public Suffix List's ICANN section as `Resources/shared_suffixes.txt` holds it (its
     /// wildcard and exception rules included), and hosting platforms where everyone gets a name of their own (the list's
     /// private section, kept short).
-    struct Endings {
+    struct Endings: Sendable {
         let rules: Set<String>
         /// Every name of two or more labels above a listed ending ("nordland.no" above "bo.nordland.no", "amazonaws.com"
         /// above "s3.amazonaws.com"): a rule for one would cover all the websites under the endings below it.
@@ -214,7 +222,10 @@ nonisolated enum Sites {
 
     /// The bundled list, read once; nil when it isn't the one this build ships: Add Website then takes no new website
     /// (`damaged`), rather than one a sound list would refuse. Saved rules never depend on it (`isClean`).
-    static let list = Endings(Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt").flatMap { try? Data(contentsOf: $0) })
+    static var list: Endings? { listInTest ?? bundled }
+    private static let bundled = Endings(Bundle(for: BundleToken.self).url(forResource: "shared_suffixes", withExtension: "txt").flatMap { try? Data(contentsOf: $0) })
+    /// Tests only: the list as a missing or damaged file leaves it (`.some(nil)`), for the code they run within.
+    @TaskLocal static var listInTest: Endings?? = nil
 
     /// The bundled list's rules.
     static var suffixes: Set<String>? { list?.rules }
@@ -250,10 +261,10 @@ nonisolated enum Sites {
     /// whose letters only look like others' always shows what it is ("bücher.de (xn--bcher-kva.de)"). Only a decoding
     /// that writes back to `name` itself; anything else stays in its ASCII form.
     /// A long pair shows the xn-- form first, so a cut row still shows what the name is (the whole pair is the cell's
-    /// tooltip).
-    static func shown(_ name: String) -> String {
+    /// tooltip); `asciiFirst` always does, for a table column whose width can cut either.
+    static func shown(_ name: String, asciiFirst: Bool = false) -> String {
         guard let d = decoded(name) else { return name }
-        return d.count + name.count > 50 ? "\(name) (\(d))" : "\(d) (\(name))"
+        return asciiFirst || d.count + name.count > 50 ? "\(name) (\(d))" : "\(d) (\(name))"
     }
 
     /// What a search of the list matches `name` by: its xn-- form and its own letters.

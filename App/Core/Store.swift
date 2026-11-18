@@ -437,6 +437,9 @@ final class Store {
     /// A domain the control server names that isn't Tailscale's own, waiting for the user's yes (`acceptTsSuffix`).
     private(set) var tsSuffixOffered: String?
 
+    /// The control server named an unusable domain instead of the one on offer: the offer goes, nothing else.
+    func withdrawTsOffer() { if tsSuffixOffered != nil { tsSuffixOffered = nil } }
+
     func acceptTsSuffix(_ suffix: String) {
         // Only the domain still on offer: a server that changed it since must be asked about again.
         guard suffix == tsSuffixOffered else { return }

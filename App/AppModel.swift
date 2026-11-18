@@ -726,7 +726,7 @@ final class AppModel {
         case .refused(let why): return why
         case .valid(let name):
             guard routeId == DIRECT || routeId == BLOCK || setup.route(routeId) != nil else { return "That route is gone" }
-            changeSites([name: routeId], name: "Add Website", undo: undo, finished: completion)
+            changeSites([name: routeId], name: "Add Website", typed: raw, undo: undo, finished: completion)
             return nil
         }
     }
@@ -752,9 +752,15 @@ final class AppModel {
     }
 
     /// As `apply` for apps: a website on a route not in use yet activates it, so the plan's limit is asked about first.
-    private func changeSites(_ change: SiteEdits.Assignments, name: String, undo: UndoManager?, finished: @escaping (Bool) -> Void = { _ in }) {
+    /// `typed`: an Add's address as typed, validated again in full against the setup the change is committed to.
+    private func changeSites(_ change: SiteEdits.Assignments, name: String, typed: String? = nil, undo: UndoManager?, finished: @escaping (Bool) -> Void = { _ in }) {
         let ticket = routeEdits.begin(Set(change.keys.map { .site($0) }), move: true)
         nextLimitAsk()
+        let valid = { [weak self] () -> Bool in
+            guard let self else { return false }
+            let remaining = self.routeEdits.remainingSites(change, in: ticket)
+            return self.sitesAllowed(remaining, typed: remaining.isEmpty ? nil : typed, faithful: false)
+        }
         checkLimit({ [self] in SiteEdits.apply(routeEdits.remainingSites(change, in: ticket), to: &$0) }, ticket: ticket, after: { [weak self, weak undo] old, new in
             guard let self, let undo, old.sites != new.sites else { return }
             let keys = Array(self.routeEdits.remainingSites(change, in: ticket).keys)
@@ -762,7 +768,15 @@ final class AppModel {
                 undo: undo, name: name, submit: { [weak self] change, completed in
                     guard let self else { completed(false); return }; self.replaySites(change, completed: completed)
                 })
-        }, accepted: nil, valid: { true }, finished: finished)
+        }, accepted: nil, valid: valid, finished: finished)
+    }
+
+    /// Whether a website change still holds against the setup as it is now (`SiteEdits.refusal`); if not, says why, so
+    /// the change fails as refused instead of passing as made.
+    private func sitesAllowed(_ change: SiteEdits.Assignments, typed: String?, faithful: Bool) -> Bool {
+        guard let why = SiteEdits.refusal(change, in: setup, typed: typed, faithful: faithful) else { return true }
+        warn(why)
+        return false
     }
 
     private func replaySites(_ change: SiteEdits.Assignments, completed: @escaping (Bool) -> Void) {
@@ -770,8 +784,11 @@ final class AppModel {
         nextLimitAsk()
         moveReplays.append(ticket) { [weak self] finished in
             guard let self else { completed(false); finished(); return }
-            self.checkLimit({ [self] in SiteEdits.apply(routeEdits.remainingSites(change, in: ticket), to: &$0) }, ticket: ticket,
-                after: { _, _ in }, accepted: nil, valid: { true }, finished: { applied in completed(applied); finished() })
+            // Undo and Redo put back exactly what was there, a rule on an own-network name included (a restored Block).
+            self.checkLimit({ [self] in SiteEdits.apply(routeEdits.remainingSites(change, in: ticket), to: &$0, faithful: true) }, ticket: ticket,
+                after: { _, _ in }, accepted: nil,
+                valid: { [weak self] in self?.sitesAllowed(self?.routeEdits.remainingSites(change, in: ticket) ?? [:], typed: nil, faithful: true) ?? false },
+                finished: { applied in completed(applied); finished() })
         }
     }
 

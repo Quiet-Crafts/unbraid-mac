@@ -31,15 +31,33 @@ nonisolated enum SiteEdits {
         Dictionary(uniqueKeysWithValues: Set(keys).map { ($0, setup.sites[$0]) })
     }
 
+    /// Why `change` can't be committed to `setup` as it is now, or nil; checked again right before it is (a limit
+    /// question or a provider lookup can come in between). `typed`: an Add's address as typed, checked in full again, as
+    /// a domain accepted meanwhile can make it a private name. `faithful`: Undo or Redo putting back exactly what was
+    /// there, which may be a rule on an own-network name (a restored Block); anything else can't give such a name one.
+    /// Removing a rule is never refused, and one whose route has gone follows its app again (`apply`).
+    static func refusal(_ change: Assignments, in setup: Setup, typed: String? = nil, faithful: Bool = false) -> String? {
+        let tailnet = Sites.tailnet(of: setup)
+        if let typed, case .refused(let why) = check(typed, in: setup.sites, tailnet: tailnet) { return why }
+        var count = setup.sites.count
+        for (site, route) in change.sorted(by: { $0.key < $1.key }) where Sites.isClean(site) {
+            guard let route, route == DIRECT || route == BLOCK || setup.route(route) != nil else { continue }
+            if !faithful, let kind = Sites.ownNetwork(site, tailnet: tailnet) { return kind.refusal(site) }
+            if setup.sites[site] == nil { count += 1; if count > Sites.max { return full } }
+        }
+        return nil
+    }
+
     /// Applies `change` as it is committed, which can be long after it was asked for (a limit question, an undo): a
     /// website whose route has gone since follows its app again, as removing the route did, and one more than a profile
     /// holds is not added. A name on the own network or in a Tailscale network (`Sites.ownNetwork`, by the domain the
-    /// setup holds now) is neither added nor moved, Block included, as Add Website refuses it; one saved can be removed.
-    static func apply(_ change: Assignments, to setup: inout Setup) {
+    /// setup holds now) is neither added nor moved, Block included, as Add Website refuses it, unless `faithful` (Undo or
+    /// Redo putting back what was there); one saved can be removed. `refusal` says beforehand what this would skip.
+    static func apply(_ change: Assignments, to setup: inout Setup, faithful: Bool = false) {
         let tailnet = Sites.tailnet(of: setup)
         for (site, route) in change.sorted(by: { $0.key < $1.key }) where Sites.isClean(site) {
             guard let route, route == DIRECT || route == BLOCK || setup.route(route) != nil else { setup.sites[site] = nil; continue }
-            if Sites.ownNetwork(site, tailnet: tailnet) != nil { continue }
+            if !faithful, Sites.ownNetwork(site, tailnet: tailnet) != nil { continue }
             if setup.sites[site] == nil, setup.sites.count >= Sites.max { continue }
             setup.sites[site] = route
         }

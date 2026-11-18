@@ -757,8 +757,8 @@ private struct TailscaleTab: View {
                 // The domain as kept, whether Tailscale runs or not: websites under it can't take a rule either way.
                 if let domain = Sites.tailnet(of: s) {
                     let own = Compiler.officialTs(s.home) && Compiler.tsSuffixIsTailscales(domain)
-                    let dns = s.home.tailscale ? "lookups of names under it go to your tailnet" : s.tailscale ? "while Reach your tailnet is off, names under it get no answer" : "while Tailscale is off, names under it are looked up as any other"
-                    SettingsRow(title: "Tailnet domain “\(domain)”", caption: (own ? "Tailscale’s own: " : "You accepted it: ") + dns + ". Names under it can’t take a website rule.", symbol: "network") {
+                    let dns = s.home.tailscale ? "lookups of names under it go to your tailnet" : s.tailscale ? "while Reach your tailnet is off, names under it get no answer by default" : "while Tailscale is off, names under it are looked up as any other"
+                    SettingsRow(title: "Tailnet domain “\(domain)”", caption: (own ? "Tailscale’s own: " : "You accepted it: ") + dns + ". Names under it can’t be given a new website rule.", symbol: "network") {
                         if !Compiler.officialTs(s.home) || !Compiler.tsSuffixIsTailscales(domain) { Button("Remove…") { removing = domain }.contentButton() }
                     }
                 }

@@ -3204,6 +3204,32 @@ extension CompilerTests {
         XCTAssertEqual([accepted.corp, accepted.new, accepted.tunnel], [true, false, true])
     }
 
+    /// The running setup taken again after its tailnet domain was removed (a recovery): with the domain as saved now, the
+    /// picker asks for the route only a website under the old domain uses, and the compiler finds a server for it.
+    func testARecoveryOfTheRunningSetupNeedsTheRoutesItsWebsitesNowNeed() throws {
+        var old = example
+        old.defaultRoute = DIRECT
+        old.home = Home(tailscale: false)
+        old.home.tsControlUrl = "https://hs.example"
+        old.home.tsSuffix = "corp.example"
+        old.home.tsSuffixConfirmed = true
+        old.apps = ["com.b": "it"]
+        old.sites = ["nas.corp.example": "us"]
+        var saved = old
+        saved.home.tsSuffix = nil
+        saved.home.tsSuffixConfirmed = false
+        XCTAssertFalse(old.activeRoutes.contains { $0.id == "us" })
+        let taken = Sites.withDomain(old, of: saved)
+        let ids = Set(taken.activeRoutes.map(\.id))
+        XCTAssertEqual(ids, ["it", "us"])
+        XCTAssertEqual(ids, Set(taken.activeRoutes(tailnet: Sites.tailnet(of: saved)).map(\.id)))
+        var input = Compiler.Input(setup: taken, links: links(taken).filter { ids.contains($0.key) }, apps: patterns(taken), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)
+        input.siteDomain = .given(Sites.tailnet(of: saved))
+        let walk = try EngineWalk(try Compiler.compile(input))
+        XCTAssertTrue(walk.tags.contains("r-us"))
+        XCTAssertTrue(walk.dns.contains { names($0)?.contains("nas.corp.example") == true })
+    }
+
     /// A saved route for an .arpa name that isn't a reverse lookup gets no rule either.
     func testAnArpaNameThatIsntAReverseLookupGetsNoRule() throws {
         var s = example
@@ -3229,6 +3255,26 @@ extension CompilerTests {
         XCTAssertTrue(LinkPicker.needsInterim(from: s, to: reach))
         var lan = s; lan.prefs.lan.toggle()
         XCTAssertTrue(LinkPicker.needsInterim(from: s, to: lan))
+    }
+
+    /// An app moved from a VPN route to the first Tailscale exit node, Reach your tailnet off: the switches and the saved
+    /// domain are alike, but the engine now gets the tailnet's domain (refused there), so the interim rules go in.
+    func testTheFirstExitNodeUnderASavedWebsiteNeedsTheInterimRules() {
+        var s = example
+        s.home = Home(tailscale: false)
+        s.home.tsControlUrl = "https://hs.example"
+        s.home.tsSuffix = "tail.example.org"
+        s.home.tsSuffixConfirmed = true
+        s.sites = ["example.org": DIRECT]
+        var exit = s
+        exit.routes.append(Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit"))
+        exit.apps["com.a"] = "ts"
+        func engine(_ x: Setup) -> String? { x.tailscale ? Compiler.trustedStoredSuffix(x.home) : nil }
+        XCTAssertEqual([engine(s), engine(exit)], [nil, "tail.example.org"])
+        XCTAssertFalse(LinkPicker.needsInterim(from: s, to: exit))
+        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: exit, suffixes: (engine(s), engine(exit))))
+        // The same domain on both sides adds nothing.
+        XCTAssertFalse(LinkPicker.needsInterim(from: exit, to: exit, suffixes: (engine(exit), engine(exit))))
     }
 
     /// The interim rules are installed for any change to what the engine does with websites, also one that leaves the
