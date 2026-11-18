@@ -3172,7 +3172,7 @@ extension CompilerTests {
             let paused = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: s.sites.filter { $0.value == BLOCK }, favorites: [], prefs: s.prefs)
             let base = Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: suffix)
             var test = base; test.setup = tested; test.links = links(tested)
-            var pause = base; pause.setup = paused; pause.links = [:]; pause.siteDomain = Sites.tailnet(of: s)
+            var pause = base; pause.setup = paused; pause.links = [:]; pause.siteDomain = .given(Sites.tailnet(of: s))
             for config in [try Compiler.compile(base), try Compiler.compile(test), try Compiler.denyAll(base), try Compiler.compile(pause)] {
                 let walk = try EngineWalk(config)
                 for name in own { XCTAssertFalse(walk.dns.contains { names($0)?.contains(name) == true }, name) }
@@ -3180,6 +3180,55 @@ extension CompilerTests {
             XCTAssertEqual(Sites.applied(s).keys.sorted(), ["netflix.com"])
             XCTAssertEqual(Sites.applied(tested).keys.sorted(), ["netflix.com"])
         } } }
+    }
+
+    /// An input judges websites by the domain it is given, also an older setup's whose Home still holds another (a
+    /// recovery made from it after the domain changed): a newly accepted domain takes the rule away, a removed one gives
+    /// it back. Only an input given none reads the setup's own Home.
+    func testAnInputJudgesWebsitesByTheDomainItIsGiven() throws {
+        var old = example
+        old.home.tsControlUrl = "https://hs.example"
+        old.home.tsSuffix = "corp.example"
+        old.home.tsSuffixConfirmed = true
+        old.apps = old.apps.filter { $0.value != "us" }
+        old.sites = ["nas.corp.example": "us", "nas.new.example": "us"]
+        func rules(_ domain: Compiler.SiteDomain) throws -> (corp: Bool, new: Bool, tunnel: Bool) {
+            var input = Compiler.Input(setup: old, links: links(old), apps: patterns(old), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)
+            input.siteDomain = domain
+            let walk = try EngineWalk(try Compiler.compile(input))
+            return (walk.dns.contains { names($0)?.contains("nas.corp.example") == true }, walk.dns.contains { names($0)?.contains("nas.new.example") == true }, walk.tags.contains("r-us"))
+        }
+        let home = try rules(.fromSetup), cleared = try rules(.given(nil)), accepted = try rules(.given("new.example"))
+        XCTAssertEqual([home.corp, home.new, home.tunnel], [false, true, true])
+        XCTAssertEqual([cleared.corp, cleared.new, cleared.tunnel], [true, true, true])
+        XCTAssertEqual([accepted.corp, accepted.new, accepted.tunnel], [true, false, true])
+    }
+
+    /// A saved route for an .arpa name that isn't a reverse lookup gets no rule either.
+    func testAnArpaNameThatIsntAReverseLookupGetsNoRule() throws {
+        var s = example
+        s.sites = ["resolver.arpa": "us", "netflix.com": "us"]
+        let walk = try EngineWalk(try raw(s))
+        XCTAssertFalse(walk.dns.contains { names($0)?.contains("resolver.arpa") == true })
+        XCTAssertTrue(walk.dns.contains { names($0)?.contains("netflix.com") == true })
+    }
+
+    /// A private domain accepted, or Reach your tailnet or Reach devices on this network switched, under a saved public
+    /// website: the saved websites are alike, but which names answer before them changes, so the interim rules go in.
+    func testAPrivateZoneChangeUnderASavedWebsiteNeedsTheInterimRules() {
+        var s = example
+        s.home = Home(tailscale: true)
+        s.home.tsControlUrl = "https://hs.example"
+        s.sites = ["example.org": DIRECT]
+        var accepted = s
+        accepted.home.tsSuffix = "tail.example.org"
+        accepted.home.tsSuffixConfirmed = true
+        XCTAssertEqual(Sites.applied(s), Sites.applied(accepted))
+        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: accepted))
+        var reach = s; reach.home.tailscale = false
+        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: reach))
+        var lan = s; lan.prefs.lan.toggle()
+        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: lan))
     }
 
     /// The interim rules are installed for any change to what the engine does with websites, also one that leaves the

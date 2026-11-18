@@ -43,16 +43,21 @@ nonisolated enum Compiler {
         var tsSuffix: String?
         /// The tailnet's domain the user accepted, whether Tailscale runs or not (`Sites.tailnet(of:)`): which websites
         /// are on the own network or in a Tailscale network is judged by it, the same in every input made from one setup.
-        /// Nil reads it from `setup`'s Home; an input whose setup has none of its own (a pause) carries its source's.
-        var siteDomain: String?
+        /// `.fromSetup` reads it from `setup`'s Home; the app gives every input the saved setup's (`.given`), so an
+        /// older setup (a recovery's) or one without a Home of its own (a pause) is judged by the domain in force now.
+        var siteDomain: SiteDomain = .fromSetup
         /// Loopback port and password of the app's own way into each exit; nil = none.
         var probe: (port: Int, password: String)?
         /// The domain websites are judged by (see `siteDomain`).
-        var websiteDomain: String? { siteDomain ?? Sites.tailnet(of: setup) }
+        var websiteDomain: String? { if case .given(let domain) = siteDomain { domain } else { Sites.tailnet(of: setup) } }
         /// What happens to connections whose program can't be found (see `Ownerless`).
         var ownerless: Ownerless = .refusedWhileBlocking
         var tsLoginPending = false
     }
+
+    /// Where an input's website domain comes from (`Input.siteDomain`): its setup's Home, or a domain given whole, none
+    /// included. Given, a cleared domain stays cleared even when the setup is an older one that still holds it.
+    enum SiteDomain: Sendable, Equatable { case fromSetup, given(String?) }
 
     /// A connection whose program the engine can't find (it ended right after sending, the socket was the kernel's, or
     /// the lookup failed) matches no app rule, Block's included, and would take the default route. Refusing it is safer
@@ -119,7 +124,7 @@ nonisolated enum Compiler {
         // from the Mac's own address.
         // Only websites whose rules apply: one on the own network or in a Tailscale network stays without a rule here too.
         let sites = Sites.applied(s, tailnet: i.websiteDomain).mapValues { $0 == DIRECT ? DIRECT : BLOCK }
-        blocking.siteDomain = i.websiteDomain
+        blocking.siteDomain = .given(i.websiteDomain)
         blocking.setup = Setup(routes: [], defaultRoute: deny ? denied : DIRECT, apps: apps, sites: sites, favorites: [], prefs: prefs)
         blocking.links = [:]
         blocking.blocked = []
@@ -699,7 +704,7 @@ nonisolated enum Compiler {
         // On Tailscale's own control server all of ts.net is the tailnet's; on another, only the domain the user accepted.
         let domains = tsDomains ?? (officialTs(s.home) ? ["ts.net"] : [trustedStoredSuffix(s.home)].compactMap { $0 })
         let name = d.address.lowercased()
-        return ([tailnet] + homeSubnets(s)).contains { within(d.address, $0) } || d.byName && domains.contains { name.hasSuffix("." + $0) } ? tsTag : nil
+        return ([tailnet] + homeSubnets(s)).contains { within(d.address, $0) } || d.byName && domains.contains { name == $0 || name.hasSuffix("." + $0) } ? tsTag : nil
     }
 
     /// How the user's own DNS server is reached when it lives at home, or what that still needs; nil when it is out

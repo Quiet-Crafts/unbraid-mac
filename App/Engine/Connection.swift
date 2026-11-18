@@ -1063,6 +1063,8 @@ final class Connection {
         var setup: Setup
         var apps: [String: [String]]
         var search: String
+        /// The tailnet domain websites are judged by: one accepted during the pause seals again.
+        var siteDomain: String?
     }
     private var pauseSealed: SealKey?
     /// Seal attempts that may pass are tried again by this wake (not by a change's retry, which may replace its own).
@@ -1111,11 +1113,12 @@ final class Connection {
                 (!$0.imported && record.links[$0.id] == nil && store.accounts[$0.loc.provider] == nil) || LinkPicker.keyLeftOut($0, in: record.setup)
             }.map(\.id))
             guard let setup = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
-            let ids = Set(setup.activeRoutes.map(\.id))
+            let domain = Sites.tailnet(of: store.setup)
+            let ids = Set(setup.activeRoutes(tailnet: domain).map(\.id))
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
-                                       tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: Sites.tailnet(of: store.setup), probe: nil, ownerless: .refusedWhileSplit)
-            return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input)), input)
+                                       tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: .given(domain), probe: nil, ownerless: .refusedWhileSplit)
+            return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input), siteDomain: domain), input)
         }
         // What holds now (`Lifecycle.sealAdmission`): the record read above, the setup and the accounts as they are.
         func admitted(_ p: (key: SealKey, input: Compiler.Input)?) -> Bool {
@@ -2880,7 +2883,9 @@ final class Connection {
         // The tailnet's own domain is only known once signed in: reload once so DNS routes it to Tailscale.
         // A domain the check now refuses (saved before it existed, or reported by a server) is dropped, not kept.
         let suffix = Compiler.tsSuffix(u.suffix)
+        // A running Tailscale that names no usable domain withdraws one still on offer, so it can't be accepted later.
         if suffix != store.tsSuffix, suffix != nil || Compiler.tsSuffix(store.tsSuffix) == nil { store.tsSuffix = suffix }
+        else if suffix == nil, u.backendState == "Running", store.tsSuffixOffered != nil { store.tsSuffix = nil }
     }
 
     // MARK: Helpers
@@ -2919,7 +2924,7 @@ final class Connection {
     private func makeInput(_ s: Setup, _ links: [String: Link], blocked: Set<String> = [], probe: (port: Int, password: String)?) -> Compiler.Input {
         Compiler.Input(setup: s, links: links, portStep: portStep, blocked: blocked, apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(s)), remembered: AppCatalog.shared.remembered(Array(s.apps.keys)),
                        // The app's own executable, not its bundle: anything else placed inside it doesn't go direct.
-                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: store.tsSuffix, siteDomain: Sites.tailnet(of: store.setup), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending)
+                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: store.tsSuffix, siteDomain: .given(Sites.tailnet(of: store.setup)), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending)
     }
 
     /// What the paused engine is built from now (`PauseKey`).
