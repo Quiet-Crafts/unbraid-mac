@@ -560,6 +560,15 @@ private final class Meter: NSObject {
             w.orderFrontRegardless()
             await meter.frames(60)
             await shoot(w, "\(dir)/settings-\(pane.name)\(suffix).png")
+            // Tailscale again with an accepted domain kept while Reach your tailnet is off: the domain and Remove still show.
+            if pane.name == "tailscale" {
+                let home = model.setup.home
+                model.setHome { $0.tsSuffix = "corp.example"; $0.tailscale = false }
+                await meter.frames(60)
+                await shoot(w, "\(dir)/settings-tailscale-domain\(suffix).png")
+                model.setHome { $0 = home }
+                await meter.frames(20)
+            }
         }
         // About again, with the update check on and a newer release found.
         if let w = last {
