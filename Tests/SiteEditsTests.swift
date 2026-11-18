@@ -97,7 +97,7 @@ final class SiteEditsTests: XCTestCase {
         let list = try XCTUnwrap(Sites.suffixes, "the bundled list is read and sound")
         XCTAssertEqual(list.count, 5512)
         for name in ["co.uk", "com.au", "co.jp", "org.uk", "k12.ca.us", "police.uk", "nhs.uk", "asn.au", "gob.mx", "sch.uk", "github.io",
-                     "herokuapp.com", "anything.ck", "foo.kawasaki.jp", "school.sch.uk"] {
+                     "herokuapp.com", "anything.ck", "foo.kawasaki.jp", "school.sch.uk", "nordland.no", "kawasaki.jp"] {
             XCTAssertEqual(SiteEdits.check(name, in: [:]), .refused("\(name) ends many websites' names: add one website under it"), name)
         }
         for (raw, kept) in [("bbc.co.uk", "bbc.co.uk"), ("example.com.au", "example.com.au"), ("user.github.io", "user.github.io"), ("github.com", "github.com"),

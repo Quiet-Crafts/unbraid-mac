@@ -166,7 +166,19 @@ nonisolated enum Sites {
         guard let suffixes else { return false }
         let parent = name.split(separator: ".", maxSplits: 1).dropFirst().first.map(String.init) ?? ""
         return suffixes.contains(name) || suffixes.contains("*." + name) || suffixes.contains("*." + parent) && !suffixes.contains("!" + name)
+            || ancestors.contains(name)
     }
+
+    /// Every name of two or more labels above a listed ending ("nordland.no" above "bo.nordland.no"): a rule for one
+    /// would cover all the websites under the endings below it.
+    private static let ancestors: Set<String> = {
+        var out = Set<String>()
+        for rule in suffixes ?? [] where !rule.hasPrefix("!") {
+            let labels = (rule.hasPrefix("*.") ? String(rule.dropFirst(2)) : rule).split(separator: ".")
+            for k in stride(from: labels.count - 1, through: 2, by: -1) { out.insert(labels.suffix(k).joined(separator: ".")) }
+        }
+        return out
+    }()
 
     /// The bundled list's rules, read once; nil when the file isn't the one this build ships (missing, cut short or
     /// changed): Add Website then takes no new website (`damaged`), rather than one a sound list would refuse.
