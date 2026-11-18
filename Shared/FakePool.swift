@@ -36,4 +36,21 @@ nonisolated enum FakePool {
     /// Whether a check tries a failed move's reload again: only while the engine is down because of it. A running
     /// engine (a reload succeeded since) or a failure the app's own reload left is not the extension's to repair.
     static func retries(failedRotation: Bool, engineRunning: Bool) -> Bool { failedRotation && !engineRunning }
+
+    /// Whether an engine start within a connection (a reload, or a move tried again) takes a new table, the next block
+    /// from a deleted cache file, instead of the block and cache file it has. [ran]: an engine ran on this block, so
+    /// programs may hold its addresses: it is kept only with the cache file that names them, never from an empty one.
+    /// [refused]: the engine's last start refused the cache file as damaged (it never replaces one, which could bring
+    /// an empty table to a block in use), so no start on that file can work.
+    /// [cacheBytes]: the size of the cache file, 0 when there is none.
+    static func needsNewTable(ran: Bool, cacheBytes: Int, refused: Bool) -> Bool {
+        refused || ran && cacheBytes <= 0
+    }
+
+    /// Whether [error], a start the engine refused, says its cache file is damaged: the engine patch's wording
+    /// (tools/sing-box-fakeip-no-reuse.patch) at the step that opens the file. Found anywhere in the text, whatever the
+    /// engine puts before it: taking another error for this one only costs a block, missing this one would have every
+    /// later start meet the same file.
+    static func refusedCache(_ error: String) -> Bool { error.contains("initialize cache-file: \(damagedCache): ") }
+    static let damagedCache = "damaged cache file kept"
 }

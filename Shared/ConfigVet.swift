@@ -246,7 +246,11 @@ nonisolated enum ConfigVet {
                   refusesTunnels(dnsRules.first, ["action": "predefined", "rcode": "REFUSED"]) else { throw refused }
         }
         let cache = try object(try object(r["experimental"])["cache_file"])
+        // The stand-in addresses are kept in the cache file: without it a reload would start the same block with an empty
+        // table while programs hold its addresses.
         guard cache["path"] == nil || cache["path"] as? String == cacheFile,
+              isFlag(cache["enabled"]), cache["enabled"] as? Bool == true,
+              isFlag(cache["store_fakeip"]), cache["store_fakeip"] as? Bool == true,
               let data = try? JSONSerialization.data(withJSONObject: parsed, options: [.withoutEscapingSlashes, .sortedKeys]),
               let canonical = String(data: data, encoding: .utf8) else { throw refused }
         return canonical

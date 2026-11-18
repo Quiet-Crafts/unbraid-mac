@@ -522,14 +522,24 @@ final class ConfigVetTests: XCTestCase {
         }
         XCTAssertTrue(try cache { _ in })
         XCTAssertTrue(try cache { $0["path"] = nil })
+        // The stand-in addresses live in it: a reload without it would start the same block with an empty table.
+        XCTAssertFalse(try cache { $0["store_fakeip"] = false })
+        XCTAssertFalse(try cache { $0["store_fakeip"] = nil })
+        XCTAssertFalse(try cache { $0["store_fakeip"] = 1 })
+        XCTAssertFalse(try cache { $0["enabled"] = false })
+        XCTAssertFalse(try cache { $0["enabled"] = nil })
         XCTAssertTrue(try cache { $0["path"] = ConfigVet.cacheFile })
         for path in ["x.db", "CrashReport-1.log", "PlatformMetadata-1.json", ".", "", "Cache.db", "cache.db-wal", "cache.db/", "../cache.db"] {
             XCTAssertFalse(try cache { $0["path"] = path }, path)
         }
         XCTAssertFalse(try cache { $0["path"] = 1 })
+        // Without the cache file the engine keeps the table in memory, and loses it at every reload.
         var c = try example()
         c["experimental"] = nil
-        XCTAssertTrue(passes(c))
+        XCTAssertFalse(passes(c))
+        c = try example()
+        edit(&c, "experimental") { $0["cache_file"] = nil }
+        XCTAssertFalse(passes(c))
     }
 
     /// What the compiler writes the same every time is required as it writes it.

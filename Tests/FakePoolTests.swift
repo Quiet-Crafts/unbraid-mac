@@ -35,4 +35,33 @@ final class FakePoolTests: XCTestCase {
         XCTAssertFalse(FakePool.retries(failedRotation: false, engineRunning: false), "an app reload that failed is the app's")
         XCTAssertFalse(FakePool.retries(failedRotation: false, engineRunning: true))
     }
+
+    /// A block an engine ran on is kept only with the cache file that names its addresses; a file the engine refused as
+    /// damaged is never tried again. A block no engine ran on yet (a move that failed) is tried again as it is.
+    func testWhenAStartTakesANewTable() {
+        for bytes in [0, 1, 32_768] {
+            XCTAssertEqual(FakePool.needsNewTable(ran: true, cacheBytes: bytes, refused: false), bytes == 0, "\(bytes)")
+            XCTAssertFalse(FakePool.needsNewTable(ran: false, cacheBytes: bytes, refused: false), "\(bytes)")
+            XCTAssertTrue(FakePool.needsNewTable(ran: true, cacheBytes: bytes, refused: true))
+            XCTAssertTrue(FakePool.needsNewTable(ran: false, cacheBytes: bytes, refused: true))
+        }
+    }
+
+    /// The extension knows a refused cache file by the engine's words: they are the engine patch's, in both places it
+    /// refuses one, at the step that opens the file.
+    func testTheEngineSaysWhenItRefusesItsCacheFile() throws {
+        let patch = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+            .appending(path: "tools/sing-box-fakeip-no-reuse.patch")
+        let text = try String(contentsOf: patch, encoding: .utf8)
+        let refusals = text.split(separator: "\n").filter { $0.hasPrefix("+") && $0.contains("return E.Cause(err, \"") }
+            .filter { $0.contains("cache file") }
+        XCTAssertEqual(refusals.count, 2)
+        XCTAssertTrue(refusals.allSatisfy { $0.contains("E.Cause(err, \"\(FakePool.damagedCache): ") })
+        // As the engine's command line and as libbox word it.
+        XCTAssertTrue(FakePool.refusedCache("start service: initialize cache-file: damaged cache file kept: it holds fake-IP names: invalid database"))
+        XCTAssertTrue(FakePool.refusedCache("start or reload service: initialize cache-file: damaged cache file kept: it holds fake-IP names: checksum error"))
+        XCTAssertFalse(FakePool.refusedCache("start or reload service: listen tcp 127.0.0.1:9: bind: address already in use"))
+        XCTAssertFalse(FakePool.refusedCache("start or reload service: start inbound/mixed[damaged cache file kept]: listen tcp 127.0.0.1:9: bind: address already in use"))
+        XCTAssertFalse(FakePool.refusedCache(""))
+    }
 }

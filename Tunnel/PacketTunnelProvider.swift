@@ -12,6 +12,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Root's container inside the sandbox; only root can read it.
     private static let home = FileManager.default.homeDirectoryForCurrentUser
     private var fakeBlock: Int?
+    /// The block of the engine that last ran: programs may hold its addresses. `fakeBlock` is ahead of it while a move
+    /// to the next block has not started an engine yet.
+    private var held: Int?
+    /// The engine's last start refused its cache file as damaged (`FakePool.refusedCache`).
+    private var refused = false
     /// The checked configuration the engine runs and its search domain (as staged or sealed), for a move to the next
     /// block of stand-in addresses (`rotate`).
     private var current: (config: String, search: String?)?
@@ -131,6 +136,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             try Data(String(block).utf8).write(to: Self.fakeCounter, options: .atomic)
             try Self.remove(Self.fakePending)
             fakeBlock = block
+            held = block
             current = (config, search)
             Self.blockChanged = .now
             exhausted = false
@@ -196,11 +202,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 guard owner == staged.uid else { throw Fail(Ownership.otherUser) }
                 let config = try ConfigVet.check(staged.config)
                 guard let block = fakeBlock else { throw Fail("Not running") }
-                let run = try ConfigVet.owned(ConfigVet.fakeBlock(config, block), by: owner)
+                // On the engine's block and cache file (the block a failed move already advanced to), unless they can't
+                // be kept (`FakePool.needsNewTable`).
+                let fresh = FakePool.needsNewTable(ran: block == held, cacheBytes: try Self.cacheBytes(), refused: refused)
+                let target = fresh ? ConfigVet.nextFakeBlock(block) : block
+                let run = try ConfigVet.owned(ConfigVet.fakeBlock(config, target), by: owner)
                 if staged.persist { try Self.invalidateConfig() }
-                // On the block a failed move already advanced to; from here this reload is the app's to see through.
+                // A failed move stays the extension's to retry until this reload asks the engine to run.
+                if fresh { try newTable(target) }
+                // From here this reload is the app's to see through.
                 failedRotation = nil
                 try swap(run, config: config, search: staged.search, owner: owner, server: server)
+                if fresh {
+                    recordBlock(target)
+                    Log.info("fake addresses: reloaded on the next block")
+                }
                 // Running but not sealed is its own answer: Connect on Demand can't start this configuration.
                 let sealed = !staged.persist || Self.persistOrStayInvalid(config, owner: owner, search: staged.search)
                 completionHandler?(sealed ? EngineAck.done : EngineAck.unsealed)
@@ -218,12 +234,32 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // Its Tailscale identity is told again once it has read its state.
         platform?.use(search: search ?? profileSearch)
         platform?.forgetIdentity()
-        try server.startOrReloadService(run, options: LibboxOverrideOptions())
+        do { try server.startOrReloadService(run, options: LibboxOverrideOptions()) } catch {
+            refused = FakePool.refusedCache(error.localizedDescription)
+            throw error
+        }
         Self.running.withLock { $0.engine = (Staging.revision(config, search: search), owner) }
         current = (config, search)
+        held = fakeBlock
+        refused = false
         failedRotation = nil
         TailscaleWatch.refresh()
         return count
+    }
+
+    /// Before an engine is asked to run on block [next] with a new table: the block is recorded as tried, as at a
+    /// start, then the cache file is deleted, so the engine never opens one it refused or one that holds another
+    /// block's names (a running engine keeps the deleted file open until the reload closes it; the new one creates its
+    /// own). A failure leaves the running engine its block and, unless the deletion itself failed halfway, its file.
+    private func newTable(_ next: Int) throws {
+        try Data(String(next).utf8).write(to: Self.fakePending, options: .atomic)
+        try Self.clearCache()
+        // From here the old table is gone and the engine may hand out the next block's addresses: a later reload must
+        // never go back to the old block, whose addresses programs still hold.
+        fakeBlock = next
+        refused = false
+        Self.blockChanged = .now
+        exhausted = false
     }
 
     private func watchPool() {
@@ -266,10 +302,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         exhausted = false
         do {
             let run = try ConfigVet.owned(ConfigVet.fakeBlock(current.config, next), by: owner)
-            try Data(String(next).utf8).write(to: Self.fakePending, options: .atomic)
-            // From here the engine may have handed out the next block's addresses, and dropped the old block's names: a
-            // later reload must never go back to the old block, whose addresses programs still hold.
-            fakeBlock = next
+            try newTable(next)
             do {
                 let count = try swap(run, config: current.config, search: current.search, owner: owner, server: server)
                 // The same configuration: still the fallback if it was.
@@ -284,14 +317,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         } catch { Log.error("fake addresses: move failed", error: error) }
     }
 
-    /// The reload of a failed move, again: the same checked configuration on the same (already advanced) block. Its
-    /// failures were logged once, with the move.
+    /// The reload of a failed move, again: the same checked configuration on the same (already advanced) block and its
+    /// cache file, or on the next block from a deleted one if the engine refused that file (`FakePool.needsNewTable`).
+    /// Its failures were logged once, with the move.
     private func retryRotation(on block: Int, _ current: (config: String, search: String?), owner: uid_t, replaced: Int, server: LibboxCommandServer) {
-        guard let run = try? ConfigVet.owned(ConfigVet.fakeBlock(current.config, block), by: owner),
+        var target = block
+        guard let bytes = try? Self.cacheBytes() else { return }
+        if FakePool.needsNewTable(ran: block == held, cacheBytes: bytes, refused: refused) {
+            target = ConfigVet.nextFakeBlock(block)
+            guard (try? newTable(target)) != nil else { return }
+        }
+        guard let run = try? ConfigVet.owned(ConfigVet.fakeBlock(current.config, target), by: owner),
               let count = try? swap(run, config: current.config, search: current.search, owner: owner, server: server) else { return }
         Self.fallbackRun.withLock { if $0 == replaced { $0 = count } }
         Log.info("fake addresses: the move to the next block succeeded on a retry")
-        recordBlock(block)
+        recordBlock(target)
     }
 
     /// As a start: a failure here leaves the pending block, which the next start then skips.
@@ -325,6 +365,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         platform?.close()
         platform = nil
         fakeBlock = nil
+        held = nil
+        refused = false
         current = nil
         failedRotation = nil
         pool?.cancel()
@@ -610,10 +652,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return ConfigVet.nextFakeBlock(last)
     }
 
+    /// The size of the engine's cache file, 0 when there is none; an error when that can't be told (nothing is then
+    /// decided from it). Where libbox opens it: relative paths are resolved against its working path (`setup`).
+    private static func cacheBytes() throws -> Int {
+        var info = stat()
+        if stat(home.appending(path: "Working/\(ConfigVet.cacheFile)").path, &info) == 0 { return Int(info.st_size) }
+        guard errno == ENOENT else { throw Fail("Could not read the engine's cache") }
+        return 0
+    }
+
+    /// Unlinked directly: gone means the system said so, or said there was none.
     private static func clearCache() throws {
         for suffix in ["", "-wal", "-shm", "-journal"] {
-            try remove(home.appending(path: "Working/\(ConfigVet.cacheFile)\(suffix)"))
-            try remove(home.appending(path: "\(ConfigVet.cacheFile)\(suffix)"))
+            for url in [home.appending(path: "Working/\(ConfigVet.cacheFile)\(suffix)"), home.appending(path: "\(ConfigVet.cacheFile)\(suffix)")] {
+                guard unlink(url.path) == 0 || errno == ENOENT else { throw Fail("Could not delete \(url.lastPathComponent)") }
+            }
         }
     }
 
