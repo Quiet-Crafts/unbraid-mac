@@ -149,7 +149,8 @@ struct AddWebsiteSheet: View {
                         .onKeyPress(.downArrow) { step(1, s) }
                     feedback(check).font(.system(size: 12)).lineLimit(2).fixedSize(horizontal: false, vertical: true)
                     // Taken, but in this setup its own resolver answers it: said before it is saved, as its row will say.
-                    if case .valid(let name) = check, let why = Sites.notApplied(name, choice, in: s, tailnet: Sites.tailnet(of: s)) {
+                    // Judged with the website in place: on a Tailscale exit it can itself make the tailnet's domain count.
+                    if case .valid(let name) = check, let why = Self.note(name, choice, s) {
                         Text("Not applied now: \(why)").font(.system(size: 12)).foregroundStyle(Ink.dim)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -186,6 +187,13 @@ struct AddWebsiteSheet: View {
                 .disabled(!valid(check))
         }
         .onAppear { focused = true }
+    }
+
+    /// Why `name` on `route` wouldn't apply once added, or nil.
+    private static func note(_ name: String, _ route: String, _ s: Setup) -> String? {
+        var t = s
+        t.sites[name] = route
+        return Sites.notApplied(name, in: t)
     }
 
     /// Up and Down in the address field choose the route above or below, as in a list.

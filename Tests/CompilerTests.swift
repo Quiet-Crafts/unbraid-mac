@@ -3180,5 +3180,7 @@ extension CompilerTests {
         s.sites = ["dev.localhost": "us", "nas.local": BLOCK]
         XCTAssertEqual(s.activeRoutes.map(\.id), [])
         XCTAssertNotNil(Sites.notApplied("dev.localhost", in: s))
+        XCTAssertNotNil(Sites.limited("nas.local", in: s))
+        XCTAssertNil(Sites.limited("printer.lan", in: s))
     }
 }

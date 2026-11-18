@@ -56,6 +56,13 @@ nonisolated enum Sites {
         }
     }
 
+    /// What `setup`'s block of `name` can't stop, or nil: a `.local` name's devices answer it themselves, and apps then
+    /// connect to them on the local network, which unbraid doesn't carry. A lookup or connection that does pass unbraid
+    /// is still refused.
+    static func limited(_ name: String, in setup: Setup) -> String? {
+        setup.sites[name] == BLOCK && under(name, "local") ? "Blocked only where it passes unbraid: the devices on your network answer .local names themselves" : nil
+    }
+
     /// The one decision of which of `setup`'s websites apply: clean names, a block always, a route or Direct unless
     /// `notApplied` (its own resolver answers it in this setup; with Reach your tailnet off, a Tailscale Funnel site
     /// under ts.net works like any other). The compiler writes rules for these only, and statistics, every count, the

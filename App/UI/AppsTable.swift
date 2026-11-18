@@ -547,9 +547,11 @@ private final class AppCell: DrawnCell {
             // A route or Direct for a name on the own network or tailnet (saved before such names were refused) is
             // not applied: the name keeps its own resolver and its app's route. Said on the row, with why.
             let s = model.setup
-            let why = Sites.notApplied(row.id, in: s).map { "Not applied: " + $0 }
-            setAccessibilityLabel([row.name, row.routeName, why.map { _ in "Not applied" }].compactMap { $0 }.joined(separator: ", "))
-            let new = Shows(name: row.name, aside: why.map { _ in "Not applied" }, conflict: why)
+            // A block of a .local name holds only for what passes unbraid: said the same way.
+            let unapplied = Sites.notApplied(row.id, in: s).map { "Not applied: " + $0 }, limited = Sites.limited(row.id, in: s)
+            let why = unapplied ?? limited, aside = unapplied != nil ? "Not applied" : limited != nil ? "Partly blocked" : nil
+            setAccessibilityLabel([row.name, row.routeName, aside].compactMap { $0 }.joined(separator: ", "))
+            let new = Shows(name: row.name, aside: aside, conflict: why)
             guard new != shows || !self.site else { return }
             shows = new; self.site = true
             toolTip = why
@@ -629,6 +631,8 @@ private final class RouteCell: DrawnCell {
         var color = NSColor.clear
         /// After the route's name, in the dim colour: " · Default", or " · Not applied" for a website rule that isn't.
         var note: String?
+        /// Why a website rule isn't applied, for the tooltip: part of what is shown, so a new reason is drawn.
+        var reason: String?
     }
 
     private var shows = Shows()
@@ -651,8 +655,9 @@ private final class RouteCell: DrawnCell {
         let id = current ?? s.defaultRoute
         // A website rule that isn't applied (`Sites.applied`) reads dimmed, as a route it doesn't take.
         let unapplied = site && s.sites[app] != nil && !Sites.isApplied(app, in: s)
+        let reason = unapplied ? Sites.notApplied(app, in: s).map { "Not applied: " + $0 } : nil
         let new = Shows(app: app, label: s.label(id), inherited: current == nil || unapplied, color: s.nsColor(id),
-                        note: unapplied ? " · Not applied" : current == nil ? " · Default" : nil)
+                        note: unapplied ? " · Not applied" : current == nil ? " · Default" : nil, reason: reason)
         guard new != shows else { return }
         shows = new
         let font = CellFont.route
@@ -663,7 +668,7 @@ private final class RouteCell: DrawnCell {
         if let note = new.note { selected.append(attributed(note, font, selectionInk.withAlphaComponent(0.75))) }
         selectedText = selected
         wordsWidth = textWidth(words) + 1
-        toolTip = unapplied ? Sites.notApplied(app, in: s).map { "Not applied: " + $0 } : site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
+        toolTip = unapplied ? reason : site ? "This website's route, in every app" : current == nil ? "Follows the default route" : current == s.defaultRoute ? "Chosen: stays on this route if the default changes" : "Its own route"
         setAccessibilityElement(true)
         setAccessibilityRole(.popUpButton)
         setAccessibilityLabel("Route for \(site ? app : AppModel.shared.appName(app))")

@@ -427,7 +427,7 @@ private final class Meter: NSObject {
         await shoot(window, "\(dir)/add-website-full\(suffix).png")
         Presentation.shared.addSite = nil; await meter.frames(45)
         // A rule saved for a name on the home network before such names were refused: its row says it isn't applied.
-        Store.shared.update { $0.sites = Self.shotSites.merging(["printer.lan": DIRECT]) { $1 } }; await meter.frames(60)
+        Store.shared.update { $0.sites = Self.shotSites.merging(["printer.lan": DIRECT, "nas.local": BLOCK]) { $1 } }; await meter.frames(60)
         await shoot(window, "\(dir)/websites-not-applied\(suffix).png")
         Store.shared.update { $0.sites = [:] }; await meter.frames(60)
         await shoot(window, "\(dir)/empty-websites\(suffix).png")
