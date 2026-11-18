@@ -160,7 +160,7 @@ final class Connection {
         let keys = Array(store.setup.apps.keys), apps = AppCatalog.shared
         var setup = store.setup
         if !Lifecycle.endTesting(base: testingBase, accounts: testingAccounts, setup: setup, currentAccounts: store.accounts) { setup.testing = testingOwner.routes }
-        return Revision(setup: setup, accounts: store.accounts, suffix: Sites.tailnet(of: setup), apps: apps.patterns(for: apps.routingKeys(setup)), remembered: apps.remembered(keys), tsLoginPending: tsLoginPending)
+        return Revision(setup: setup, accounts: store.accounts, suffix: store.tsSuffix, apps: apps.patterns(for: apps.routingKeys(setup)), remembered: apps.remembered(keys), tsLoginPending: tsLoginPending)
     }
     /// What the committed config was built from.
     private var appliedRevision: Revision? { committed?.interim == true ? nil : committed?.revision }
@@ -1114,7 +1114,7 @@ final class Connection {
             let ids = Set(setup.activeRoutes.map(\.id))
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
-                                       tsSuffix: Sites.tailnet(of: setup), probe: nil, ownerless: .refusedWhileSplit)
+                                       tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: Sites.tailnet(of: store.setup), probe: nil, ownerless: .refusedWhileSplit)
             return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input)), input)
         }
         // What holds now (`Lifecycle.sealAdmission`): the record read above, the setup and the accounts as they are.
@@ -2256,8 +2256,8 @@ final class Connection {
     private func commit(_ input: Compiler.Input, _ json: String, _ accounts: [String: String]?, blocking: Bool = false, interim: Bool = false, search searched: String? = nil) {
         let s = input.setup, links = input.links
         committedEngine = tunnel.applied
-        let tags = ((try? Compiler.shared(s, links, blocked: input.blocked, tailnet: input.tsSuffix)) ?? [:]).merging(
-            s.activeRoutes(tailnet: input.tsSuffix).filter { $0.tsExit != nil && !input.blocked.contains($0.id) }.map { ($0.id, Compiler.tsTag) }) { $1 }
+        let tags = ((try? Compiler.shared(s, links, blocked: input.blocked, tailnet: input.websiteDomain)) ?? [:]).merging(
+            s.activeRoutes(tailnet: input.websiteDomain).filter { $0.tsExit != nil && !input.blocked.contains($0.id) }.map { ($0.id, Compiler.tsTag) }) { $1 }
         committed = Committed(input: input, json: json, accounts: accounts, tags: tags, probeDNS: (try? Compiler.probeDNS(input)) ?? [:], revision: Revision(input, accounts ?? store.accounts),
                               blocking: blocking, interim: interim, search: searched ?? search(input))
         commits += 1
@@ -2914,12 +2914,12 @@ final class Connection {
         return r
     }
 
-    /// The tailnet's domain is the one `s` itself holds (`Sites.tailnet(of:)`), or `domainOf`'s for a setup made from
-    /// another (a pause's), so the routes the input runs and its websites are judged by the same domain.
-    private func makeInput(_ s: Setup, _ links: [String: Link], blocked: Set<String> = [], probe: (port: Int, password: String)?, domainOf: Setup? = nil) -> Compiler.Input {
+    /// Websites are judged by the tailnet domain the user accepted (`Sites.tailnet(of:)` of the saved setup), the same
+    /// for every input: a speed test's, a recovery's, a pause's.
+    private func makeInput(_ s: Setup, _ links: [String: Link], blocked: Set<String> = [], probe: (port: Int, password: String)?) -> Compiler.Input {
         Compiler.Input(setup: s, links: links, portStep: portStep, blocked: blocked, apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(s)), remembered: AppCatalog.shared.remembered(Array(s.apps.keys)),
                        // The app's own executable, not its bundle: anything else placed inside it doesn't go direct.
-                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: Sites.tailnet(of: domainOf ?? s), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending)
+                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: store.tsSuffix, siteDomain: Sites.tailnet(of: store.setup), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending)
     }
 
     /// What the paused engine is built from now (`PauseKey`).
@@ -2937,7 +2937,7 @@ final class Connection {
         // What is blocked stays blocked through a pause: apps, and websites (refused for every app that asks macOS).
         let paused = Setup(routes: [], defaultRoute: DIRECT, apps: s.apps.filter { $0.value == BLOCK }, sites: s.sites.filter { $0.value == BLOCK },
                            favorites: [], prefs: prefs)
-        var input = makeInput(paused, [:], probe: nil, domainOf: s)
+        var input = makeInput(paused, [:], probe: nil)
         // Every app's patterns, though only blocks are routed: an app here inside a blocked bundle that is only remembered
         // is refused by that bundle's rule, so the pause keeps the guards of a block (see `Compiler.Input.remembered`).
         let keys = Array(s.apps.keys)

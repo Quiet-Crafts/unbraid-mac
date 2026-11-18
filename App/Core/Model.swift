@@ -442,8 +442,8 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     /// Routes that carry traffic right now: the default plus any with apps or websites whose rules apply
     /// (`Sites.applied`): a rule shown as not applied starts no tunnel.
     var activeRoutes: [Route] { activeRoutes(tailnet: Sites.tailnet(of: self)) }
-    /// The same, judged with the tailnet domain a compiler input carries (`Compiler.Input.tsSuffix`), as the compiler
-    /// judges it: what it builds tunnels for.
+    /// The same, judged with the tailnet domain a compiler input carries (`Compiler.Input.websiteDomain`), as the
+    /// compiler judges it: what it builds tunnels for.
     func activeRoutes(tailnet: String?) -> [Route] {
         let used = Set(apps.values).union(Sites.applied(self, tailnet: tailnet).values)
         return routes.filter { $0.id == defaultRoute || used.contains($0.id) || testing.contains($0.id) }
@@ -452,15 +452,6 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     var tsExit: String? { activeRoutes.lazy.compactMap(\.tsExit).first }
     /// Tailscale runs for home access or for an exit-node route.
     var tailscale: Bool { home.tailscale || tsExit != nil }
-    /// Whether the tailnet's domain counts (`Sites.tailnet(of:)`, `Store.tsSuffix`): Tailscale on for home access, or an
-    /// exit route the default, an app, a test or a website uses. Websites count unless what decides it without the
-    /// domain already keeps their rule from applying (local and .local names, reverse zones, this Mac): whether one
-    /// applies otherwise depends on this domain, so `activeRoutes` (and `tailscale`) can't be read here.
-    var tailnetCounts: Bool {
-        let sites = sites.filter { $0.value == BLOCK || Compiler.answered($0.key, self, tailnet: nil) == nil }.values
-        let used = Set(apps.values).union(sites).union(testing).union([defaultRoute])
-        return home.tailscale || routes.contains { $0.tsExit != nil && used.contains($0.id) }
-    }
 }
 
 nonisolated enum ProfileGeneration {

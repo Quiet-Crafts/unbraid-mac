@@ -94,7 +94,7 @@ nonisolated enum RestoreTraffic {
             else { links[r.id] = standIn(r, n) }
         }
         let input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
-                                   tsSuffix: Sites.tailnet(of: s))
+                                   tsSuffix: s.tailscale ? Compiler.trustedStoredSuffix(s.home) : nil)
         guard let text = try? Compiler.compile(input), let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let route = o["route"] as? [String: Any], let rules = route["rules"] as? [[String: Any]], let final = route["final"] as? String,
               let dns = o["dns"] as? [String: Any] else { return nil }

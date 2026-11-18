@@ -313,20 +313,22 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(site.filter { dns[$0]["query_type"] == nil }.map { dns[$0]["server"] as? String }, ["dns-r-us", "local", "dns-r-it"])
     }
 
-    /// The engine's order decides: blocked websites first, then the names the tailnet and the local network answer
-    /// themselves, then websites on a route or Direct. So a private name reaches its own resolver in every state, also
-    /// under a public website with a route of its own (a Headscale tailnet's tail.example.org under example.org), and
-    /// a website rule for it takes over once that resolver doesn't answer it (Reach your tailnet or Reach devices on
-    /// this network off). A block holds before all of them.
-    func testAPrivateNameReachesItsOwnResolverInEveryState() throws {
+    /// Lookups go blocked websites first, then the names the tailnet and the local network answer themselves, then
+    /// websites on a route or Direct. So a private name under a public website with a route of its own (a Headscale
+    /// tailnet's tail.example.org under example.org) reaches its own resolver whenever one is there to answer it, and a
+    /// block holds before all of them. A route or Direct for a name in a Tailscale network or on the own network gets
+    /// no rule, whatever is on.
+    func testAPrivateNameUnderARoutedParentReachesItsOwnResolver() throws {
         var s = withSites
         s.home.tsControlUrl = "https://hs.example"
+        s.home.tsSuffix = "tail.example.org"
+        s.home.tsSuffixConfirmed = true
         s.sites = ["example.org": "us", "nas.tail.example.org": "it", "nas.lan": "it", "tracker.lan": BLOCK, "co.uk": "us", "bank.example": DIRECT]
         func walk(tailscale: Bool, lan: Bool) throws -> EngineWalk {
             var t = s
             t.home.tailscale = tailscale
             t.prefs.lan = lan
-            return try EngineWalk(try raw(t, tsSuffix: "tail.example.org"))
+            return try EngineWalk(try raw(t, tsSuffix: tailscale ? "tail.example.org" : nil))
         }
         let other = "/Applications/Other.app/Contents/MacOS/other"
         let on = try walk(tailscale: true, lan: true)
@@ -339,19 +341,15 @@ final class CompilerTests: XCTestCase {
         XCTAssertEqual(on.lookup("nas.lan", "A"), "server:local")
         XCTAssertEqual(on.outcome(other, "tracker.lan"), "A=server:fake TXT=rcode:REFUSED reject")
         XCTAssertEqual(on.lookup("x.co.uk", "TXT"), "server:dns-r-us")
-        // Reach your tailnet off: the tailnet's domain gets no answer, whatever website is above or in it.
+        // Nothing here answers them: the saved rules still don't apply; the names go as any other would (here by the
+        // public parent for the tailnet's names, by the default for the printer).
         let off = try walk(tailscale: false, lan: false)
-        XCTAssertEqual(off.lookup("x.tail.example.org", "A"), "rcode:NXDOMAIN")
-        XCTAssertEqual(off.lookup("nas.tail.example.org", "TXT"), "rcode:NXDOMAIN")
-        // Devices on this network not reached: the website rule takes the name, on its route.
-        XCTAssertEqual(off.outcome(other, "nas.lan"), "A=server:fake TXT=server:dns-r-it exit:r-it via dns-r-it")
+        XCTAssertEqual(off.outcome(other, "nas.lan"), "A=server:fake TXT=server:dns-r-nl exit:r-nl via dns-r-nl")
         XCTAssertEqual(off.outcome(other, "tracker.lan"), "A=server:fake TXT=rcode:REFUSED reject")
-        // What the app says agrees: those rules are shown not applied where their own resolver answers them.
-        var t = s
-        t.home.tailscale = true
-        XCTAssertNotNil(Sites.notApplied("nas.tail.example.org", "it", in: t, tailnet: "tail.example.org"))
-        XCTAssertNotNil(Sites.notApplied("nas.lan", "it", in: t, tailnet: "tail.example.org"))
-        XCTAssertNil(Sites.notApplied("example.org", "us", in: t, tailnet: "tail.example.org"))
+        for config in [on, off] { XCTAssertFalse(config.dns.contains { names($0)?.contains("nas.lan") == true || names($0)?.contains("nas.tail.example.org") == true }) }
+        XCTAssertNotNil(Sites.notApplied("nas.tail.example.org", in: s))
+        XCTAssertNotNil(Sites.notApplied("nas.lan", in: s))
+        XCTAssertNil(Sites.notApplied("example.org", in: s))
     }
 
     /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name
@@ -1388,7 +1386,8 @@ final class CompilerTests: XCTestCase {
                     XCTAssertEqual(!tailnetDns.isEmpty, homeAccess, context)
                     // The Mac lists the suffixes sorted; the engine takes them as a set.
                     // The tailnet's own domain first; the rest of ts.net after the websites (another tailnet's Funnel names).
-                    if homeAccess { XCTAssertEqual(tailnetDns.filter { !strings($0["domain_suffix"]).contains { $0.hasSuffix("arpa") } }.map { strings($0["domain_suffix"]) }, [["corp.example"], ["ts.net"]], context) }
+                    // The Mac lists the suffixes sorted; the engine takes them as a set.
+                    if homeAccess { XCTAssertEqual(Set(strings(tailnetDns.first?["domain_suffix"])), ["ts.net", "corp.example"], context) }
                     XCTAssertEqual(dnsServer(c, "dns-tailnet") != nil, homeAccess, context)
                     let t = tun(c)
                     XCTAssertEqual(strings(t["route_address"]), ["0.0.0.0/0", "::/0", "172.19.0.0/30"] + (homeAccess ? subnets : []), context)
@@ -2989,21 +2988,18 @@ extension CompilerTests {
             if next(3) == 0 { s.home.tsControlUrl = "https://hs.example" }
             if next(2) == 0 { s.apps["com.b"] = nil }
             s.sites = Dictionary((0..<next(10)).map { _ in (names[next(names.count)], routes[next(routes.count)]) }) { a, _ in a }
-            return (s, [nil, "tail123.ts.net", "corp.example"][next(3)])
+            // The domain the user accepted is kept in Home; the engine's tailnet rules get it while Tailscale runs.
+            let suffix = [nil, "tail123.ts.net", "corp.example"][next(3)]
+            s.home.tsSuffix = suffix
+            s.home.tsSuffixConfirmed = true
+            return (s, s.tailscale ? suffix : nil)
         }
     }
 
-    /// The private zones a state's own resolvers answer, read from the state alone (not from the compiler or the app):
-    /// the tailnet's names and reverse zones while it is reached (all of ts.net on Tailscale's server until the tailnet's
-    /// own domain is known), its domain while it isn't, local names while devices on this network are reached, and
-    /// local reverse zones.
+    /// The names that can't have a website rule (devices on the own network, this Mac, address lookups, Tailscale's
+    /// names and the tailnet's own domain as the user accepted it), read from the saved setup alone.
     func privateZones(_ s: Setup, _ suffix: String?) -> [String] {
-        var zones = ["168.192.in-addr.arpa", "10.in-addr.arpa"]
-        if s.home.tailscale {
-            zones += [suffix, Compiler.officialTs(s.home) && suffix == nil ? "ts.net" : nil, "100.in-addr.arpa"].compactMap { $0 }
-        } else if let suffix { zones.append(suffix) }
-        if s.prefs.lan { zones += ["lan", "home.arpa", "fritz.box"] }
-        return zones
+        ["local", "lan", "home.arpa", "fritz.box", "internal", "localhost", "arpa", "ts.net"] + [s.home.tsSuffix].compactMap { $0 }
     }
 
     /// The names walked for `s`: each website's name and one under it, an ordinary name and one in each private zone.
@@ -3015,9 +3011,9 @@ extension CompilerTests {
 
     /// For 400 seeded setups and states, every name a website rule or a private zone touches, from an app on a route, a
     /// Direct app and any other program, walked through the compiled config as the engine walks it: what a name outside
-    /// the state's private zones gets (its A and TXT answers, then where the connection goes and whose resolver it used)
-    /// is what the compiler of 1.2.0's release candidate gave (`Tests/Fixtures/sites-outcomes.txt`, one fingerprint per
-    /// setup).
+    /// the names that can't have a rule gets (its A and TXT answers, then where the connection goes and whose resolver it
+    /// used) is recorded in `Tests/Fixtures/sites-outcomes.txt`, one fingerprint per setup. Every name outside that set
+    /// went the same way under the release candidate's compiler; the set's own names now never take a website's rule.
     func testOrdinaryNamesGoWhereTheyWentBefore() throws {
         let file = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appending(path: "Fixtures/sites-outcomes.txt")
         var lines: [String] = []
@@ -3029,11 +3025,14 @@ extension CompilerTests {
             let walk = try EngineWalk(config)
             let zones = privateZones(s, state.suffix)
             var out: [String] = []
-            // Another tailnet's ts.net names while the tailnet's own domain is known on Tailscale's server: their rules
-            // now come before Tailscale's resolver (`testAnotherTailnetsFunnelSiteKeepsItsRule`), as they didn't.
-            let foreign = s.home.tailscale && Compiler.officialTs(s.home) && state.suffix != nil
-            for name in probes(s) where !zones.contains(where: { name == $0 || name.hasSuffix("." + $0) }) && !(foreign && (name == "ts.net" || name.hasSuffix(".ts.net"))) {
+            for name in probes(s) where !zones.contains(where: { name == $0 || name.hasSuffix("." + $0) }) {
                 for p in Self.walkPrograms { out.append("\(name) \(p.split(separator: "/")[1]) \(walk.outcome(p, name))") }
+            }
+            if let dump = ProcessInfo.processInfo.environment["SITES_DUMP"] {
+                var all: [String] = []
+                for name in probes(s) { for p in Self.walkPrograms { all.append("\(i) \(name) \(p.split(separator: "/")[1]) \(walk.outcome(p, name))") } }
+                let h = FileHandle(forWritingAtPath: dump) ?? { FileManager.default.createFile(atPath: dump, contents: nil); return FileHandle(forWritingAtPath: dump)! }()
+                h.seekToEndOfFile(); h.write(Data((all.joined(separator: "\n") + "\n").utf8)); h.closeFile()
             }
             lines.append("\(i) \(out.count) \(SHA256.hash(data: Data(out.joined(separator: "\n").utf8)).map { String(format: "%02x", $0) }.joined())")
         }
@@ -3065,8 +3064,11 @@ extension CompilerTests {
                 s.prefs.lan = lan
                 s.apps = s.apps.filter { $0.value != "us" }
                 s.sites = Dictionary(uniqueKeysWithValues: sample.map { ($0, route) })
+                // The domain the user accepted is kept in Home; the engine's tailnet rules get it while Tailscale runs.
+                s.home.tsSuffix = suffix
+                s.home.tsSuffixConfirmed = true
                 let context = "tailscale \(tailscale) headscale \(headscale) lan \(lan) \(suffix ?? "-") \(route)"
-                let config = try raw(s, tsSuffix: suffix)
+                let config = try raw(s, tsSuffix: s.tailscale ? suffix : nil)
                 let walk = try EngineWalk(config)
                 // Every outbound and resolver a rule names is in the config.
                 for r in walk.route {
@@ -3075,9 +3077,9 @@ extension CompilerTests {
                 }
                 for r in walk.dns { if let d = r["server"] as? String { XCTAssertTrue(walk.servers.contains(d), "\(d) \(context)") } }
                 // The routes the app says run are the ones the compiler gives a tunnel.
-                let running = Set(s.activeRoutes(tailnet: suffix).map(\.id))
+                let running = Set(s.activeRoutes.map(\.id))
                 XCTAssertEqual(running.contains("us"), walk.tags.contains("r-us"), context)
-                let applied = Sites.applied(s, tailnet: suffix)
+                let applied = Sites.applied(s)
                 for name in sample {
                     let probe = "zz." + name
                     if route == BLOCK {
@@ -3085,11 +3087,10 @@ extension CompilerTests {
                     } else if applied[name] != nil {
                         let dns = route == DIRECT ? "local" : "dns-r-us", exit = route == DIRECT ? "direct" : "r-us"
                         XCTAssertEqual(walk.outcome(other, probe), "A=server:fake TXT=server:\(dns) exit:\(exit) via \(dns)", "\(name) \(context)")
-                    } else if name.hasSuffix(".local") || name.hasSuffix(".localhost") {
-                        continue // answered outside unbraid: nothing here to walk
                     } else {
-                        let answer = walk.lookup(probe, name.hasSuffix(".arpa") ? "PTR" : "TXT")
-                        XCTAssertTrue(["server:dns-tailnet", "server:local", "rcode:NXDOMAIN"].contains(answer), "\(name) \(answer) \(context)")
+                        // Not applied: no rule of its own, in any state.
+                        XCTAssertFalse(walk.dns.contains { names($0)?.contains(name) == true } || walk.route.contains { names($0)?.contains(name) == true }, "\(name) \(context)")
+                        XCTAssertNotNil(Sites.ownNetwork(name, tailnet: Sites.tailnet(of: s)), "\(name) \(context)")
                     }
                 }
                 states += 1
@@ -3098,78 +3099,103 @@ extension CompilerTests {
         XCTAssertEqual(states, 72)
     }
 
-    /// A route only a not-applied rule uses gets no tunnel and no rule; once the rule applies it is back.
+    /// A route only a not-applied rule uses gets no tunnel and no rule, with devices on this network reached or not.
     func testARouteOnlyANotAppliedRuleUsesIsNotCompiled() throws {
         var s = example
         s.apps = s.apps.filter { $0.value != "it" }
         s.sites = ["printer.lan": "it"]
-        s.prefs.lan = true
-        let off = try compile(s)
-        XCTAssertFalse(endpointTags(off).contains("r-it"))
-        XCTAssertFalse(rules(off).contains { names($0)?.contains("printer.lan") == true })
-        s.prefs.lan = false
-        let on = try compile(s)
-        XCTAssertTrue(endpointTags(on).contains("r-it"))
-        XCTAssertEqual(rules(on).first { names($0) == ["printer.lan"] && outbound($0) != nil }.flatMap(outbound), "r-it")
+        for lan in [true, false] {
+            s.prefs.lan = lan
+            let c = try compile(s)
+            XCTAssertFalse(endpointTags(c).contains("r-it"))
+            XCTAssertFalse(rules(c).contains { names($0)?.contains("printer.lan") == true })
+        }
     }
 }
 
 extension CompilerTests {
-    /// On Tailscale's own server with the tailnet's own domain known, another tailnet's public (Funnel) name with a rule
-    /// of its own takes that rule: Tailscale's resolver answers the tailnet's own names first and the rest of ts.net only
-    /// after the websites. Without the own domain known, all of ts.net stays Tailscale's.
-    func testAnotherTailnetsFunnelSiteKeepsItsRule() throws {
+    /// All of ts.net is Tailscale's and comes before any website, whether the tailnet's own domain is known or not: a
+    /// saved rule for another tailnet's name gets none, and a name shared into the tailnet reaches Tailscale's resolver.
+    func testTsNetIsTailscalesBeforeAnyWebsite() throws {
         var s = example
-        s.sites = ["service.tail-b.ts.net": "us"]
+        s.sites = ["tail-b.ts.net": DIRECT, "service.tail-b.ts.net": "us", "netflix.com": "us"]
         let other = "/Applications/Other.app/Contents/MacOS/other"
-        let known = try EngineWalk(try raw(s, tsSuffix: "tail-a.ts.net"))
-        XCTAssertEqual(known.outcome(other, "service.tail-b.ts.net"), "A=server:fake TXT=server:dns-r-us exit:r-us via dns-r-us")
-        XCTAssertEqual(known.lookup("nas.tail-a.ts.net", "A"), "server:dns-tailnet")
-        XCTAssertEqual(known.lookup("peer.tail-c.ts.net", "A"), "server:dns-tailnet")
-        XCTAssertNil(Sites.notApplied("service.tail-b.ts.net", "us", in: s, tailnet: "tail-a.ts.net"))
-        let unknown = try EngineWalk(try raw(s, tsSuffix: nil))
-        XCTAssertEqual(unknown.lookup("service.tail-b.ts.net", "A"), "server:dns-tailnet")
-        XCTAssertNotNil(Sites.notApplied("service.tail-b.ts.net", "us", in: s, tailnet: nil))
+        for suffix in [nil, "tail-a.ts.net"] {
+            var t = s
+            t.home.tsSuffix = suffix
+            let walk = try EngineWalk(try raw(t, tsSuffix: suffix))
+            for name in ["service.tail-b.ts.net", "nas.tail-b.ts.net", "nas.tail-a.ts.net"] { XCTAssertEqual(walk.lookup(name, "A"), "server:dns-tailnet", name) }
+            XCTAssertEqual(walk.outcome(other, "netflix.com"), "A=server:fake TXT=server:dns-r-us exit:r-us via dns-r-us")
+            XCTAssertFalse(walk.dns.contains { names($0)?.contains { $0.hasSuffix("ts.net") } == true })
+        }
     }
 
-    /// The tailnet's domain counts while Tailscale is on for home access, or an exit route is used by the default, an
-    /// app, a test or a website a local rule doesn't already keep from applying: a printer's rule on the exit doesn't
-    /// close an unrelated public name under the domain. A speed test of the exit makes it count, so the input built for
-    /// that test carries it.
-    func testTheTailnetDomainCountsOnlyWhereTailscaleRunsForSomething() {
+    /// A blocked name in a Tailscale network with a Direct rule under it: the Direct rule never applies, so the block
+    /// covers the name under it in the normal setup and in the one a failed change leaves (every app on a VPN blocked,
+    /// Direct ones kept), whatever Tailscale is doing.
+    func testDenyAllKeepsAChildUnderATailnetNameBlocked() throws {
         var s = example
-        s.home = Home()
-        s.home.tsControlUrl = "https://hs.example"
-        s.home.tsSuffix = "corp.example"
-        s.routes.append(Route(id: "ts", tsExit: "100.64.0.9"))
         s.defaultRoute = DIRECT
-        s.prefs.lan = true
-        s.sites = ["printer.lan": "ts", "public.corp.example": "us"]
-        XCTAssertFalse(s.tailnetCounts)
-        XCTAssertNil(Sites.tailnet(of: s))
-        XCTAssertNotNil(Sites.applied(s)["public.corp.example"])
-        var tested = s
-        tested.testing = ["ts"]
-        XCTAssertEqual(Sites.tailnet(of: tested), "corp.example")
-        XCTAssertNil(Sites.applied(tested)["public.corp.example"], "refused while Reach your tailnet is off and Tailscale runs")
-        s.prefs.lan = false
-        XCTAssertTrue(s.tailnetCounts, "the printer's rule on the exit now applies, so Tailscale runs")
+        s.sites = ["tail-b.ts.net": BLOCK, "service.tail-b.ts.net": DIRECT]
+        let other = "/Applications/Other.app/Contents/MacOS/other"
+        for tailscale in [false, true] {
+            var t = s
+            t.home.tailscale = tailscale
+            let input = Compiler.Input(setup: t, links: links(t), apps: patterns(t), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)
+            for config in [try Compiler.compile(input), try Compiler.denyAll(input)] {
+                if let engine = try ProviderFixtures.engine() { XCTAssertNil(ProviderFixtures.engineRefusal(config, engine)) }
+                let walk = try EngineWalk(config)
+                XCTAssertEqual(walk.outcome(other, "service.tail-b.ts.net"), "A=server:fake TXT=rcode:REFUSED reject", "tailscale \(tailscale)")
+            }
+        }
+    }
+
+    /// The set of names that can't have a rule is the same in every kind of setup compiled from one saved setup: the
+    /// normal one, one with a route under test, the one a failed change leaves, a pause's (blocks only): a route or
+    /// Direct for such a name gets a rule in none of them, whatever Tailscale and the local network are set to.
+    func testTheOwnNetworkSetIsTheSameInEveryKindOfCompiledSetup() throws {
+        let own = ["printer.lan", "nas.local", "svc.internal", "dev.localhost", "8.8.8.in-addr.arpa", "app.tail9.ts.net", "nas.corp.example"]
+        for tailscale in [false, true] { for lan in [false, true] { for exit in [false, true] {
+            var s = example
+            s.routes.append(Route(id: "ts", tsExit: "100.64.0.9", hue: 4))
+            s.home = Home(tailscale: tailscale)
+            s.home.tsControlUrl = "https://hs.example"
+            s.home.tsSuffix = "corp.example"
+            s.home.tsSuffixConfirmed = true
+            s.prefs.lan = lan
+            s.defaultRoute = DIRECT
+            s.sites = Dictionary(uniqueKeysWithValues: own.map { ($0, exit ? "ts" : DIRECT) })
+            s.sites["netflix.com"] = DIRECT
+            let suffix = s.tailscale ? "corp.example" : nil
+            var tested = s
+            tested.testing = ["ts"]
+            let paused = Setup(routes: [], defaultRoute: DIRECT, apps: [:], sites: s.sites.filter { $0.value == BLOCK }, favorites: [], prefs: s.prefs)
+            let base = Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: suffix)
+            var test = base; test.setup = tested; test.links = links(tested)
+            var pause = base; pause.setup = paused; pause.links = [:]; pause.siteDomain = Sites.tailnet(of: s)
+            for config in [try Compiler.compile(base), try Compiler.compile(test), try Compiler.denyAll(base), try Compiler.compile(pause)] {
+                let walk = try EngineWalk(config)
+                for name in own { XCTAssertFalse(walk.dns.contains { names($0)?.contains(name) == true }, name) }
+            }
+            XCTAssertEqual(Sites.applied(s).keys.sorted(), ["netflix.com"])
+            XCTAssertEqual(Sites.applied(tested).keys.sorted(), ["netflix.com"])
+        } } }
     }
 
     /// The interim rules are installed for any change to what the engine does with websites, also one that leaves the
-    /// saved websites alike: accepting the tailnet's domain, or turning Reach devices on this network on.
+    /// saved websites alike: accepting the tailnet's domain, or a filter for Direct traffic.
     func testAChangeToWhatAWebsiteRuleDoesNeedsTheInterimRules() {
         var s = example
         s.home = Home(tailscale: true)
         s.home.tsControlUrl = "https://hs.example"
-        s.sites = ["nas.corp.example": DIRECT, "printer.lan": "us"]
-        s.prefs.lan = false
+        s.sites = ["nas.corp.example": DIRECT, "printer.example": "us"]
         var accepted = s
         accepted.home.tsSuffix = "corp.example"
+        accepted.home.tsSuffixConfirmed = true
         XCTAssertTrue(LinkPicker.needsInterim(from: s, to: accepted))
-        var lan = s
-        lan.prefs.lan = true
-        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: lan))
+        var filtered = s
+        filtered.prefs.filter = Filter(id: "quad9", direct: true)
+        XCTAssertTrue(LinkPicker.needsInterim(from: s, to: filtered))
         XCTAssertFalse(LinkPicker.needsInterim(from: s, to: s))
     }
 

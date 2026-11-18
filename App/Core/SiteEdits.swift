@@ -11,12 +11,12 @@ nonisolated enum SiteEdits {
 
     /// `tailnet`: the tailnet's own domain, when there is one (its names can't have a rule). At the limit nothing can be
     /// added, so that is said before anything is typed; only an address already there says so instead.
-    static func check(_ raw: String, in sites: [String: String]) -> Check {
+    static func check(_ raw: String, in sites: [String: String], tailnet: String? = nil) -> Check {
         let atLimit = sites.count >= Sites.max
         if raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return atLimit ? .refused(full) : .empty }
         if let name = Sites.clean(raw), sites[name] != nil { return .refused("\(Sites.shown(name)) already has a route") }
         if atLimit { return .refused(full) }
-        if let why = Sites.refusal(raw) { return .refused(why) }
+        if let why = Sites.refusal(raw, tailnet: tailnet) { return .refused(why) }
         guard let name = Sites.clean(raw) else { return .refused("That isn't a website address") }
         return .valid(name)
     }

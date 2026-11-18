@@ -8,79 +8,90 @@ nonisolated enum Sites {
     static let readMax = 4 * max
 
     /// The address in `raw` as a rule keeps it, from what people type or paste ("https://www.Example.com/page" →
-    /// "example.com"): the name alone, lower case, without "www.", international names in their ASCII form. A rule
-    /// covers the name and every name under it. Nil when it names no website: no dot, an IP address, or characters no
-    /// name has. What a saved setup may hold; what a new one may be is `refusal`'s to say.
+    /// "example.com"): the name alone, lower case, without "www." (unless what is left is a shared ending), international
+    /// names in their ASCII form. A rule covers the name and every name under it. Nil when it names no website: no dot,
+    /// an IP address, or characters no name has. What a new one may be is `refusal`'s to say.
     static func clean(_ raw: String) -> String? { if case .name(let name) = read(raw) { name } else { nil } }
 
-    /// Whether `name` is an address exactly as `clean` writes one: what a saved rule must be.
-    static func isClean(_ name: String) -> Bool { clean(name) == name }
+    /// Whether `name` is written as a saved rule must be: lower-case ASCII labels of letters, digits and hyphens, two or
+    /// more, at most 253 bytes, the last not a number. Syntax only, never the list of shared endings, so every saved and
+    /// restored rule reads the same whether that list is sound or not.
+    static func isClean(_ name: String) -> Bool {
+        let labels = name.split(separator: ".", omittingEmptySubsequences: false)
+        guard name.utf8.count <= 253, labels.count >= 2, labels.allSatisfy(label), let last = labels.last else { return false }
+        return !(last.allSatisfy(\.isNumber) || (last.hasPrefix("0x") && last.dropFirst(2).allSatisfy(\.isHexDigit)))
+    }
 
     /// Why `raw` can't be added as a website, in the Add Website sheet's words; nil when it can. Beyond what `clean`
-    /// refuses: names no rule can ever work for (`never`), and endings many websites share. For what is typed only: a
-    /// saved setup keeps what it holds (the compiler leaves out what can't work). A name a rule can work for, but that
-    /// its own resolver answers in this setup, is taken: `notApplied` says so.
-    static func refusal(_ raw: String) -> String? {
+    /// refuses: names on the own network or in a Tailscale network (`ownNetwork`), and names that are, or sit above,
+    /// endings many websites share. `tailnet`: the tailnet's own domain, as the user accepted it (`tailnet(of:)`).
+    static func refusal(_ raw: String, tailnet: String?) -> String? {
         switch read(raw) {
         case .refused(let why): return why
         case .name(let name):
-            if let why = never(name) { return why }
+            if let kind = ownNetwork(name, tailnet: tailnet) { return "\(kind.sentence(name)): a website rule can't change where it goes" }
             guard suffixes != nil else { return damaged }
             return shared(name) ? "\(name) ends many websites' names: add one website under it" : nil
         }
     }
 
-    /// Why no website rule can ever work for `name`, whatever the setup: no app ever connects to it by a name unbraid
-    /// answers. `.local` names are answered by the devices themselves (multicast), never through unbraid.
-    private static func never(_ name: String) -> String? {
-        let no = "unbraid can't give it a rule"
-        if under(name, "local") { return "\(name) is answered by the devices on your network themselves, never through unbraid: \(no)" }
-        if under(name, "localhost") { return "\(name) is this Mac itself: \(no)" }
-        if under(name, "arpa"), !under(name, "home.arpa") { return "\(name) is a lookup of an address, not a website: \(no)" }
-        return nil
-    }
+    /// Names on the own network or in a Tailscale network: their devices, this Mac, address lookups and Tailscale's
+    /// names are looked after by the app's own settings, so a website rule never applies to one, whatever is running.
+    enum Own {
+        case device, thisMac, address, tailscale
 
-    /// Why `setup`'s rule for `name` on `route` doesn't apply in this setup, or nil when it does: the resolver that
-    /// answers the name here is one a website rule would wrongly take it from (`Compiler.answered`), so the compiler
-    /// leaves the rule out. A block always applies. `tailnet`: the tailnet's domain, as the compiler is given it.
-    static func notApplied(_ name: String, _ route: String, in setup: Setup, tailnet: String?) -> String? {
-        guard route != BLOCK, let answered = Compiler.answered(name, setup, tailnet: tailnet) else { return nil }
-        return switch answered {
-        case .tailscale: "Tailscale answers ts.net names while Reach your tailnet is on"
-        case .tailnet: "your tailnet answers this name while Reach your tailnet is on"
-        case .tailnetClosed: "unbraid leaves your tailnet's names unanswered while Reach your tailnet is off"
-        case .local: "your network answers this name while Reach devices on this network is on"
-        case .reverse: "your network answers lookups of its own addresses"
-        case .multicast: "the devices on your network answer .local names themselves, never through unbraid"
-        case .loopback: "this name is this Mac itself, which apps reach without unbraid"
+        func sentence(_ name: String) -> String {
+            switch self {
+            case .device: "\(name) is a device on your own network, which Reach devices on this network in Settings › Home access looks after"
+            case .thisMac: "\(name) is this Mac itself, which apps reach without unbraid"
+            case .address: "\(name) is a lookup of an address, not a website"
+            case .tailscale: "\(name) belongs to a Tailscale network, which Settings › Tailscale looks after"
+            }
         }
     }
 
-    /// What `setup`'s block of `name` can't stop, or nil: a `.local` name's devices answer it themselves, and apps then
-    /// connect to them on the local network, which unbraid doesn't carry. A lookup or connection that does pass unbraid
-    /// is still refused.
-    static func limited(_ name: String, in setup: Setup) -> String? {
-        setup.sites[name] == BLOCK && under(name, "local") ? "Blocked only where it passes unbraid: the devices on your network answer .local names themselves" : nil
+    /// Which kind of own-network name `name` is, or nil: `.local`, `.lan`, `home.arpa`, `fritz.box`, `.internal`,
+    /// `localhost`, `arpa`, all of `ts.net`, and the tailnet's own domain (`tailnet`). The same set in every setup: only
+    /// the domain the user accepted is read, never which of Tailscale's switches are on.
+    static func ownNetwork(_ name: String, tailnet: String?) -> Own? {
+        if ["local", "lan", "home.arpa", "fritz.box", "internal"].contains(where: { under(name, $0) }) { return .device }
+        if under(name, "localhost") { return .thisMac }
+        if under(name, "arpa") { return .address }
+        if under(name, "ts.net") || Compiler.tsSuffix(tailnet).map({ under(name, $0) }) == true { return .tailscale }
+        return nil
     }
 
-    /// The one decision of which of `setup`'s websites apply: clean names, a block always, a route or Direct unless
-    /// `notApplied` (its own resolver answers it in this setup; with Reach your tailnet off, a Tailscale Funnel site
-    /// under ts.net works like any other). The compiler writes rules for these only, and statistics, every count, the
-    /// widgets, the rows and restore's comparison go by the same. `tailnet` is normalised by the compiler's own reading.
+    /// The tailnet's own domain, as the user accepted it and the setup keeps it, whether Tailscale runs or not: what
+    /// own-network names are judged by everywhere.
+    static func tailnet(of setup: Setup) -> String? { Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) }
+
+    /// The websites whose rules apply: a block always, a route or Direct unless its name is on the own network or in a
+    /// Tailscale network (a backup or the Android app may hold one). The compiler writes rules for these only, and the
+    /// routes that run, statistics, every count, the widgets and the rows go by the same.
     static func applied(_ setup: Setup, tailnet: String?) -> [String: String] {
-        setup.sites.filter { isClean($0.key) && notApplied($0.key, $0.value, in: setup, tailnet: tailnet) == nil }
+        setup.sites.filter { isClean($0.key) && ($0.value == BLOCK || ownNetwork($0.key, tailnet: tailnet) == nil) }
     }
 
-    /// `applied` with `setup`'s own tailnet domain (`tailnet(of:)`): what every part of the app but the compiler,
-    /// which is handed the same domain with its input, uses.
+    /// `applied` with `setup`'s own accepted domain.
     static func applied(_ setup: Setup) -> [String: String] { applied(setup, tailnet: tailnet(of: setup)) }
 
-    /// Why `setup`'s saved rule for `name` doesn't apply, as the app judges it (`tailnet(of:)`); nil when it does.
+    /// Why `setup`'s saved rule for `name` doesn't apply, in the same words as Add Website's refusal; nil when it does.
     static func notApplied(_ name: String, in setup: Setup) -> String? {
-        setup.sites[name].flatMap { notApplied(name, $0, in: setup, tailnet: tailnet(of: setup)) }
+        guard let route = setup.sites[name], route != BLOCK, let kind = ownNetwork(name, tailnet: tailnet(of: setup)) else { return nil }
+        return "Not applied: " + kind.sentence(name)
     }
 
-    /// How many of `sites` (`setup`'s own or a saved profile's) don't apply in `setup` (see `applied`).
+    /// What `setup`'s block of `name` can't stop, or nil: `.local` names are answered by the devices themselves and
+    /// `localhost` ones by this Mac, so apps reach them without unbraid. A lookup or connection that does pass unbraid is
+    /// still refused.
+    static func limited(_ name: String, in setup: Setup) -> String? {
+        guard setup.sites[name] == BLOCK else { return nil }
+        if under(name, "local") { return "Blocked only where it passes unbraid: the devices on your network answer .local names themselves" }
+        if under(name, "localhost") { return "Blocked only where it passes unbraid: apps reach this Mac's own names without it" }
+        return nil
+    }
+
+    /// How many of `sites` (`setup`'s own or a saved profile's) don't apply (see `applied`).
     static func notAppliedCount(_ sites: [String: String], in setup: Setup) -> Int {
         var s = setup
         s.sites = sites
@@ -89,10 +100,6 @@ nonisolated enum Sites {
 
     /// Whether `setup`'s rule for `name` applies (see `applied`).
     static func isApplied(_ name: String, in setup: Setup) -> Bool { applied(setup)[name] != nil }
-
-    /// The tailnet domain `setup`'s websites are judged by: the one the setup has accepted while Tailscale runs, as
-    /// `Store.tsSuffix` reads it and the engine is given it.
-    static func tailnet(of setup: Setup) -> String? { setup.tailnetCounts ? Compiler.tsSuffix(Compiler.trustedStoredSuffix(setup.home)) : nil }
 
     /// The websites blocked in `before` that `after` opens, whole or in part: no longer blocked itself, or a name under
     /// it given a route or Direct of its own there (the most specific rule wins, Block included). A name under it that
@@ -142,7 +149,9 @@ nonisolated enum Sites {
             return .refused(labels.count > 1 && !last.isEmpty ? address : notAName)
         }
         guard name.utf8.count <= 253, labels.allSatisfy(label) else { return .refused(notAName) }
-        guard labels.count >= 2 else { return .refused(never(name) ?? "Add the whole name, such as \(name).com") }
+        guard labels.count >= 2 else {
+            return .refused(ownNetwork(name, tailnet: nil).map { "\($0.sentence(name)): a website rule can't change where it goes" } ?? "Add the whole name, such as \(name).com")
+        }
         return .name(name)
     }
 

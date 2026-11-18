@@ -419,14 +419,17 @@ final class Store {
     var tsSuffix: String? {
         get {
             let h = setup.home
-            guard setup.tailnetCounts else { return nil }
+            guard setup.tailscale else { return nil }
             return Compiler.trustedStoredSuffix(h)
         }
         set {
             // A sign-out or another server: an old domain still waiting to move out of defaults (a launch with the keychain
             // locked) must not come back with the next launch.
             if newValue == nil { defaults.removeObject(forKey: "tsSuffix") }
-            let (accepted, offered) = Self.tsSuffix(reported: newValue, accepted: tsSuffix, official: Compiler.officialTs(setup.home))
+            // Compared with the domain kept in Home, not with `tsSuffix`, which reads nil while the saved setup runs no
+            // Tailscale: a report from an engine running Tailscale for a while (a speed test of an idle exit) must not
+            // count as a new domain and undo the user's acceptance.
+            let (accepted, offered) = Self.tsSuffix(reported: newValue, accepted: setup.home.tsSuffix, official: Compiler.officialTs(setup.home))
             if tsSuffixOffered != offered { tsSuffixOffered = offered }
             update { if $0.home.tsSuffix != accepted { $0.home.tsSuffixConfirmed = false }; $0.home.tsSuffix = accepted }
         }

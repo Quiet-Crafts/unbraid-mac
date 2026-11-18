@@ -84,7 +84,7 @@ final class StatsSitesTests: XCTestCase {
         XCTAssertEqual(StatsMath.key(of: ev("2", site: nil), own: "app.unbraid", program: program), "com.apple.Safari")
         // The app's own probes stay its own; a name that is no rule's address is never a website key.
         XCTAssertEqual(StatsMath.key(of: ev("3", site: "netflix.com", own: true), own: "app.unbraid", program: program), "app.unbraid")
-        for bad in ["www.netflix.com", "Netflix.com", "", "/Applications/Evil.app", "netflix"] {
+        for bad in ["netflix.com.", "Netflix.com", "", "/Applications/Evil.app", "netflix"] {
             XCTAssertEqual(StatsMath.key(of: ev("4", site: bad), own: "app.unbraid", program: program), "com.apple.Safari", bad)
         }
     }
@@ -92,7 +92,7 @@ final class StatsSitesTests: XCTestCase {
     func testKeysAndAddressesRoundTrip() {
         XCTAssertEqual(StatsMath.siteKey("example.com"), "site:example.com")
         XCTAssertNil(StatsMath.siteKey(nil))
-        XCTAssertNil(StatsMath.siteKey("www.example.com"))
+        XCTAssertNil(StatsMath.siteKey("Example.com"))
         XCTAssertEqual(StatsMath.site("site:example.com"), "example.com")
         for key in ["com.apple.Safari", "/usr/bin/curl", "~/bin/tool", "?", StatsMath.otherPrograms, "app.unbraid", "sites.example"] {
             XCTAssertNil(StatsMath.site(key), key)
@@ -112,16 +112,20 @@ final class StatsSitesTests: XCTestCase {
         // A rule that isn't applied (a name on the own network or in the tailnet, saved on a route or Direct) is not
         // counted: its name's traffic stays its app's. The counts and the widget go by the same.
         s.sites = ["nas.internal": DIRECT, "printer.lan": "us", "nas.corp.example": "us", "tracker.lan": BLOCK, "netflix.com": "us"]
-        // Here devices on this network are reached, so the network answers printer.lan; nothing answers nas.internal first.
-        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "nas.internal", "netflix.com"])
-        XCTAssertEqual(SiteEdits.applied(BLOCK, in: s), ["tracker.lan"])
-        XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), ["nas.internal"])
-        s.prefs.lan = false
-        XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "nas.internal", "netflix.com", "printer.lan"])
+        // Whatever the settings of the moment: devices on the own network never count; a name under a domain only does
+        // until that domain is the tailnet's own.
+        for lan in [true, false] {
+            s.prefs.lan = lan
+            XCTAssertEqual(StatsMath.countedSites(s), ["nas.corp.example", "netflix.com"])
+            XCTAssertEqual(SiteEdits.applied(BLOCK, in: s), ["tracker.lan"])
+            XCTAssertEqual(SiteEdits.applied(DIRECT, in: s), [])
+        }
+        s.home.tsSuffix = "corp.example"
+        XCTAssertEqual(StatsMath.countedSites(s), ["netflix.com"])
     }
 
     /// One decision for every part of the app: with Headscale's own domain accepted, a rule under it is not applied for
-    /// the compiler, the statistics, the route counts, the rows and the widgets alike; with Tailscale off it is.
+    /// the compiler, the statistics, the route counts, the rows and the widgets alike, with Tailscale on or off.
     func testEveryPartJudgesAWebsiteByTheSameTailnetDomain() throws {
         var s = Setup()
         s.routes = [Route(id: "us")]
@@ -148,8 +152,8 @@ final class StatsSitesTests: XCTestCase {
         XCTAssertFalse(config.contains("host.corp.example"))
         XCTAssertTrue(config.contains("tracker.corp.example"))
         s.home.tailscale = false
-        XCTAssertNil(Sites.tailnet(of: s))
-        XCTAssertEqual(StatsMath.countedSites(s), ["host.corp.example", "nas.corp.example", "netflix.com"])
+        XCTAssertEqual(Sites.tailnet(of: s), "corp.example")
+        XCTAssertEqual(StatsMath.countedSites(s), ["netflix.com"])
     }
 
     func testAWebsitesExitIsItsOwnRouteWhereRoutesShareATunnel() {

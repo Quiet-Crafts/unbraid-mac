@@ -46,7 +46,8 @@ final class SitesTests: XCTestCase {
             XCTAssertTrue(kept.map(Sites.isClean) ?? false, raw)
         }
         XCTAssertFalse(Sites.isClean("Example.com"))
-        XCTAssertFalse(Sites.isClean("www.example.com"))
+        // A saved name is read by its syntax alone (the list of shared endings may be missing): a leading "www." is kept.
+        XCTAssertTrue(Sites.isClean("www.example.com"))
         XCTAssertFalse(Sites.isClean("example.com/"))
     }
 
@@ -123,7 +124,7 @@ final class SitesTests: XCTestCase {
 
     func testOnlyAddressesAsTheAppWritesThemAreRead() throws {
         let json = #"{"routes":[{"id":"nl"}],"defaultRoute":"nl","sites":{"example.com":"nl","Example.org":"nl","a b.com":"nl","x\".com":"nl","1.2.3.4":"nl"},"#
-            + #""profiles":[{"name":"P","defaultRoute":"nl","sites":{"ok.example":"direct","www.bad.example":"nl"}}]}"#
+            + #""profiles":[{"name":"P","defaultRoute":"nl","sites":{"ok.example":"direct","bad..example":"nl"}}]}"#
         let s = try JSONDecoder().decode(Setup.self, from: Data(json.utf8))
         XCTAssertEqual(s.sites, ["example.com": "nl"])
         XCTAssertEqual(s.profiles.first?.sites, ["ok.example": DIRECT])
