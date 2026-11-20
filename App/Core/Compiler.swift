@@ -220,10 +220,16 @@ nonisolated enum Compiler {
         let defaultDns: String
         /// What no app rule claims is refused, connections and lookups (`denyAll`).
         let deny: Bool
+        /// The Tailscale exit node in use, judged as the rules judge which routes run (by the input's tailnet domain, not
+        /// the setup's own `tsExit`): a website alone on an exit route then always gets the Tailscale it is sent to.
+        let tsExit: String?
+        /// Tailscale runs for home access or for an exit route in use.
+        var tailscale: Bool { s.home.tailscale || tsExit != nil }
 
         init(_ i: Input, deny: Bool = false) throws {
-            let s = i.setup, active = s.activeRoutes(tailnet: i.websiteDomain).filter { !i.blocked.contains($0.id) }
+            let s = i.setup, running = s.activeRoutes(tailnet: i.websiteDomain), active = running.filter { !i.blocked.contains($0.id) }
             self.s = s; self.i = i; self.active = active; self.deny = deny
+            tsExit = running.lazy.compactMap(\.tsExit).first
             // Block is an app's choice, not a default: everything else would go Direct, or to tunnels that don't exist.
             guard s.defaultRoute != BLOCK else { throw Fail("Block can't be the default route. Make Direct or a VPN route the default.") }
             guard !s.routes.contains(where: { Compiler.reservedIds.contains($0.id) }) else { throw Fail("A route has a name unbraid keeps for itself. Remove that route, then connect again.") }
@@ -243,7 +249,7 @@ nonisolated enum Compiler {
             // default); a follower nested in a bundle routed elsewhere is grouped with the default route here (`nestedDefaults`).
             let routeOf = { (key: String) in s.apps[key] ?? s.defaultRoute }
             for (id, keys) in Dictionary(grouping: Array(s.apps.keys) + Compiler.nestedDefaults(s, i.apps), by: { routeOf($0) == DIRECT && s.prefs.effectiveFilter.through($0) ? Compiler.filteredDirect : routeOf($0) }).sorted(by: { $0.key < $1.key })
-            where id == DIRECT || id == Compiler.filteredDirect || id == BLOCK || s.activeRoutes.contains(where: { $0.id == id }) {
+            where id == DIRECT || id == Compiler.filteredDirect || id == BLOCK || running.contains(where: { $0.id == id }) {
                 let patterns = keys.sorted().flatMap { i.apps[$0] ?? [] }
                 if !patterns.isEmpty { byRoute.append((id, patterns)) }
             }
@@ -280,7 +286,7 @@ nonisolated enum Compiler {
             // including when STUN is blocked, so Direct joins any other.
             var probeTags: [String: String] = [:]
             for r in active where probeTags[Self.tag(r.id, s, shared)] == nil { probeTags[Self.tag(r.id, s, shared)] = Self.dns(r.id, s, shared, i.links) }
-            if s.tailscale, probeTags[tsTag] == nil { probeTags[tsTag] = defaultDns }
+            if s.home.tailscale || tsExit != nil, probeTags[tsTag] == nil { probeTags[tsTag] = defaultDns }
             if !probeTags.isEmpty { probeTags["direct"] = "local" }
             self.probeTags = probeTags
         }
@@ -348,8 +354,8 @@ nonisolated enum Compiler {
         // Tailscale's control plane and login pages never ride the tailnet for apps on a Tailscale exit: a not yet
         // signed-in exit node would otherwise block its own sign-in.
         var tsLogin: [(String, J)] = []
-        if s.tailscale && p.i.tsLoginPending {
-            if s.tsExit != nil && officialTs(s.home) { tsLogin.append(("domain_suffix", ["tailscale.com", "tailscale.io"])) }
+        if p.tailscale && p.i.tsLoginPending {
+            if p.tsExit != nil && officialTs(s.home) { tsLogin.append(("domain_suffix", ["tailscale.com", "tailscale.io"])) }
             if let h = s.home.tsControlUrl.flatMap({ URL(string: $0)?.host?.trimmingCharacters(in: CharacterSet(charactersIn: "[]")) }) {
                 // An address is matched as one; any other host by name, one starting with a digit ("1-control.example.com") too.
                 if !h.contains(":") || !h.contains("%") {
@@ -471,7 +477,7 @@ nonisolated enum Compiler {
             }
         }
         if let w = s.home.wg { endpoints.append(try wg("home-wg", w, "the home network")) }
-        if s.tailscale {
+        if p.tailscale {
             var ts: J = ["type": "tailscale", "tag": .s(tsTag), "state_directory": "tailscale", "hostname": "unbraid", "accept_routes": true]
             // Only until the node is enrolled: its identity, sealed, logs it in from then on (`TsEnrolment`).
             if let k = s.home.tsAuthKey, s.home.tsEnrolled == nil { ts["auth_key"] = .s(k) }
@@ -481,7 +487,7 @@ nonisolated enum Compiler {
                 guard let u = TsLogin.controlUrl(raw) else { throw Fail("Headscale needs an https:// address. Change it in Settings.") }
                 ts["control_url"] = .s(u)
             }
-            if let x = s.tsExit { ts["exit_node"] = .s(x); ts["exit_node_allow_lan_access"] = .b(s.prefs.lan) }
+            if let x = p.tsExit { ts["exit_node"] = .s(x); ts["exit_node_allow_lan_access"] = .b(s.prefs.lan) }
             endpoints.append(ts)
         }
         return (endpoints, outbounds)
