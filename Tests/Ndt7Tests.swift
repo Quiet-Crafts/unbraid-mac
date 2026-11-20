@@ -51,6 +51,8 @@ final class Ndt7Tests: XCTestCase {
     func testLocateAsksForTheExitsCountryStrictly() {
         XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: nil), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9")
         XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: "NL"), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9&country=NL&strict=true")
+        // Not held to the country: the server nearest it, also outside.
+        XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: "AT", strict: false), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9&country=AT")
         // Only a two-letter code is sent; anything else asks without a country rather than add to the request.
         for odd in ["SE&strict=false", "··", "N", "NLD", "N L"] {
             XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: odd), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9", odd)
@@ -126,6 +128,9 @@ final class Ndt7Tests: XCTestCase {
         XCTAssertNil(try Ndt7.locateReply(status: 200, body: Data(#"{"results":[]}"#.utf8), country: "NL"))
         // Not held to a country: no server is a failure, not a missing country.
         XCTAssertThrowsError(try Ndt7.locateReply(status: 500, body: noneThere, country: nil))
+        XCTAssertThrowsError(try Ndt7.locateReply(status: 500, body: noneThere, country: "AQ", strict: false))
+        // 429 is M-Lab's daily limit, as 204.
+        XCTAssertThrowsError(try Ndt7.locateReply(status: 429, body: Data(), country: "NL")) { XCTAssertTrue($0 is Ndt7.Limited) }
         // Rate limits, proxies and other failures are failures, whatever the country.
         for status in [403, 404, 429, 502, 503] {
             XCTAssertThrowsError(try Ndt7.locateReply(status: status, body: noneThere, country: "AQ"), "\(status)")

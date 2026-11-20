@@ -73,22 +73,25 @@ nonisolated enum Ndt7 {
 
     static func userAgent(_ version: String) -> String { "unbraid/\(version)" }
 
-    /// The M-Lab server nearest the exit's own address, inside `country` when given. Only a two-letter code is ever
-    /// sent: anything else (a damaged saved place) asks without a country rather than add to the request.
-    static func locatePath(version: String, country: String?) -> String {
+    /// The M-Lab server nearest the exit's own address, inside `country` when given; not `strict`, the one nearest that
+    /// country, also outside it (an exit's address alone can place it far away: an IVPN Vienna address got Doha). Only a
+    /// two-letter code is ever sent: anything else (a damaged saved place) asks without a country rather than add to
+    /// the request.
+    static func locatePath(version: String, country: String?, strict: Bool = true) -> String {
         let code = country.flatMap { c in c.utf8.count == 2 && c.unicodeScalars.allSatisfy { ("A"..."Z").contains($0) || ("a"..."z").contains($0) } ? c : nil }
-        return "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=\(version)" + (code.map { "&country=\($0)&strict=true" } ?? "")
+        return "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=\(version)" + (code.map { "&country=\($0)" + (strict ? "&strict=true" : "") } ?? "")
     }
 
     /// M-Lab's answer to a locate request: its first server; nil when a request held to `country` found none there.
     /// That answer is a 500 of type "nearest" (checked live in October 2026, for countries without servers). M-Lab
     /// gives the same for any failure of its own lookup, so "none there" is as far as it can be read. Anything else
     /// that isn't a 200 (rate limits, proxies, other errors) is a failure, not a missing server.
-    static func locateReply(status: Int, body: Data, country: String?) throws -> Server? {
-        if status == 204 { throw Limited() }
+    /// 204 and 429 are M-Lab's rate limit (`Limited`).
+    static func locateReply(status: Int, body: Data, country: String?, strict: Bool = true) throws -> Server? {
+        if status == 204 || status == 429 { throw Limited() }
         if status == 200 { return try parseLocate(body) }
         struct Failure: Decodable { struct Detail: Decodable { var type: String? }; var error: Detail? }
-        if status == 500, country != nil, (try? JSONDecoder().decode(Failure.self, from: body))?.error?.type == "nearest" { return nil }
+        if status == 500, strict, country != nil, (try? JSONDecoder().decode(Failure.self, from: body))?.error?.type == "nearest" { return nil }
         throw Http.Status(code: status)
     }
 

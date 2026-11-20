@@ -20,6 +20,9 @@ final class AppModel {
     private(set) var signedInAt: [String: Date] = [:]
     /// Provider ids with a sign-in in flight, and the last error per provider.
     private(set) var signing: Set<String> = []
+    /// An exit's page asked the Speed Test page to test that exit: its Stats id and name (`SpeedTestView` takes it).
+    struct SpeedTestRequest: Equatable { var exit: String; var name: String }
+    var speedTestRequest: SpeedTestRequest?
     var formError: [String: String] = [:]
     var formErrorURL: [String: String] = [:]
     var challenges: [String: Challenge] = [:]

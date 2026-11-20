@@ -106,6 +106,8 @@ final class SpeedTest {
 
     private struct Job {
         var exit: String, tag: String, country: String?, missing: String?
+        /// Held to `country` (the default), or `false`: the M-Lab server nearest that country, also outside it.
+        var strict = true
         var via: String, name: String, ip: String
         var epoch: Int, mine: Int, recordAs: String
         /// A Tailscale node test: what the engine ran when it switched (`Connection.engineEpoch`). Anything else since, and
@@ -134,12 +136,14 @@ final class SpeedTest {
         let route = setup.route(exit)
         let vpnServer = conn.state.servers[exit]
         // Provider routes know their country; imported servers and Tailscale nodes are located by their address alone.
-        let country = anywhere ? nil : route.flatMap { !$0.imported && $0.tsExit == nil ? $0.loc.countryCode?.uppercased() : nil }
+        // "Anywhere": the server nearest the exit's country (its address alone can place it far away), not held to it.
+        let country = route.flatMap { !$0.imported && $0.tsExit == nil ? $0.loc.countryCode?.uppercased() : nil }
         attempt += 1
         tests += 1
-        let job = Job(exit: exit, tag: tag, country: country, missing: route?.loc.country ?? country,
+        var job = Job(exit: exit, tag: tag, country: country, missing: route?.loc.country ?? country,
                       via: node != nil ? "Tailscale" : route?.source ?? "", name: node?.name ?? vpnServer?.name ?? route?.name ?? "",
                       ip: node?.ip ?? vpnServer?.ip ?? "", epoch: Stats.shared.epoch, mine: attempt, recordAs: StatsMath.idOf(exit, setup: setup))
+        job.strict = !anywhere
         run = Run(exit: exit)
         nodeEngine = nil
         trace.reset()
@@ -239,7 +243,7 @@ final class SpeedTest {
                             leg.server = try await Ndt7.locate(tag: j.tag, country: j.country, probe: probe)
                             if leg.server == nil && j.country != nil {
                                 leg.missing = true
-                                leg.server = try? await Ndt7.locate(tag: j.tag, country: nil, probe: probe)
+                                leg.server = try? await Ndt7.locate(tag: j.tag, country: j.country, strict: false, probe: probe)
                             }
                             if leg.server == nil && !leg.missing { leg.error = "M-Lab couldn't be reached through it." }
                         } catch is Ndt7.Limited { leg.limited = true }
@@ -445,11 +449,11 @@ final class SpeedTest {
                                   originalIP: j.ip, ip: conn.state.servers[j.exit]?.ip)
         }
         do {
-            let server = try await Ndt7.locate(tag: j.tag, country: j.country, probe: probe())
+            let server = try await Ndt7.locate(tag: j.tag, country: j.country, strict: j.strict, probe: probe())
             if stop() { return }
             // Only a test held to the exit's country can lack a server there; anywhere, none is a failure.
             guard let server else {
-                if j.country == nil { throw Fail("M-Lab found no test server") }
+                if j.country == nil || !j.strict { throw Fail("M-Lab found no test server") }
                 update(j.mine) { $0.phase = .failed; $0.missing = j.missing }
                 return
             }
@@ -672,9 +676,9 @@ nonisolated extension Ndt7 {
     static func abort() { live.cancelAll() }
 
     /// The M-Lab server nearest the exit's own address, inside `country` when given; nil if M-Lab found none there.
-    static func locate(tag: String, country: String?, probe: Probe.Endpoint?) async throws -> Server? {
-        let (status, body) = try await Probe.fetch(tag: tag, host: locateHost, path: locatePath(version: version, country: country), probe: probe)
-        return try locateReply(status: status, body: body, country: country)
+    static func locate(tag: String, country: String?, strict: Bool = true, probe: Probe.Endpoint?) async throws -> Server? {
+        let (status, body) = try await Probe.fetch(tag: tag, host: locateHost, path: locatePath(version: version, country: country, strict: strict), probe: probe)
+        return try locateReply(status: status, body: body, country: country, strict: strict)
     }
 
     /// Ookla-style ping: five TCP handshakes with the test server through the exit, after one untimed connection that

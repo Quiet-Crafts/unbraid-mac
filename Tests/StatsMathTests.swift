@@ -781,4 +781,18 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(StatsMath.testExit(node, switchedOn: [1, 2, 3], engine: [1, 2, 3]), node)
         XCTAssertNil(StatsMath.testExit(node, switchedOn: [1, 2, 3], engine: [1, 3, 3]))
     }
+
+    /// The Speed Test button on an exit's page tests that exit: the running route with that identity, a node as it is,
+    /// nothing when it isn't running (never another exit in its place).
+    func testAnExitsSpeedTestIsThatExit() {
+        var s = Setup()
+        s.routes = [Route(id: "it", loc: Location(countryCode: "IT", country: "Italy")), Route(id: "nl", loc: Location(countryCode: "NL", country: "Netherlands"))]
+        let it = StatsMath.idOf("it", setup: s)
+        XCTAssertEqual(StatsMath.speedTestExit(it, running: s), "it")
+        XCTAssertEqual(StatsMath.speedTestExit(StatsMath.tsNode + "100.64.0.9", running: s), StatsMath.tsNode + "100.64.0.9")
+        var moved = s
+        moved.routes[0].loc.countryCode = "FR"
+        XCTAssertNil(StatsMath.speedTestExit(it, running: moved))
+        XCTAssertNil(StatsMath.speedTestExit("gone@00", running: s))
+    }
 }

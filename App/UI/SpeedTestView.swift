@@ -16,6 +16,8 @@ struct SpeedTestView: View {
     @State private var nodeWarningAfterConsent = false
     @State private var history = false
     @State private var width: CGFloat = 800
+    /// An exit an exit's page asked for that isn't running: named, never swapped for another; taken as soon as it runs.
+    @State private var notRunning: AppModel.SpeedTestRequest?
 
     /// An exit the test can go through: a running routed exit, or a Tailscale node no route uses.
     fileprivate struct Choice: Identifiable {
@@ -32,7 +34,15 @@ struct SpeedTestView: View {
         VStack(spacing: 0) {
             PageHeader(title: "Speed Test", subtitle: "Measure a route's speed with M-Lab")
             Group {
-                if model.vpn.state.phase != .on {
+                if let notRunning, !test.testing {
+                    ContentUnavailableView {
+                        Label("\(notRunning.name) isn't running", systemImage: "gauge.with.dots.needle.0percent")
+                    } description: {
+                        Text("It can be tested while an app or website uses it, or while it is the default route.")
+                    } actions: {
+                        Button("Choose Another Route") { self.notRunning = nil }.contentButton()
+                    }
+                } else if model.vpn.state.phase != .on {
                     preparation
                 } else if let picked {
                     content(options, picked)
@@ -51,6 +61,10 @@ struct SpeedTestView: View {
             }
         }
         .focusedSceneValue(\.sceneActions, SceneActions(showHistory: { history = true }))
+        // An exit's page asked for its exit: that one, or a word that it isn't running, never another in its place.
+        .onAppear { takeRequest() }
+        .onChange(of: model.speedTestRequest) { _, _ in takeRequest() }
+        .onChange(of: options.map(\.id)) { _, _ in if let r = notRunning { take(r) } }
         // A finished test whose exit went away (its last app moved, a node offline) is cleared, never shown under another.
         .onChange(of: options.map(\.id)) { _, ids in
             if let e = test.run?.exit, !ids.contains(e), !test.testing { test.clear() }
@@ -121,6 +135,19 @@ struct SpeedTestView: View {
     }
 
     // MARK: Exits and starting
+
+    private func takeRequest() {
+        guard let r = model.speedTestRequest else { return }
+        model.speedTestRequest = nil
+        take(r)
+    }
+
+    private func take(_ r: AppModel.SpeedTestRequest) {
+        let running = model.vpn.state.phase == .on ? (Connection.shared.running ?? model.setup) : nil
+        if let id = running.flatMap({ StatsMath.speedTestExit(r.exit, running: $0) }), choices().contains(where: { $0.id == id }) {
+            chosen = id; notRunning = nil
+        } else { notRunning = r }
+    }
 
     private func choices() -> [Choice] {
         let conn = Connection.shared

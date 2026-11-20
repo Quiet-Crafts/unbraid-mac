@@ -411,7 +411,10 @@ private struct ExitDetail: View {
                 }
             }.padding(.horizontal, Layout.gutter).padding(.bottom, Layout.gap)
         } actions: {
-            Button("Speed Test") { dismiss(); navigate(.speed) }.contentButton()
+            Button("Speed Test") {
+                AppModel.shared.speedTestRequest = .init(exit: exit, name: ex?.name ?? exit)
+                dismiss(); navigate(.speed)
+            }.contentButton()
             Button("Done") { dismiss() }.contentButton(prominent: true).keyboardShortcut(.defaultAction)
         }
         .onExitCommand { dismiss() }

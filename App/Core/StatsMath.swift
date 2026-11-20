@@ -224,6 +224,13 @@ nonisolated enum StatsMath {
     static func idOf(_ id: String, setup: Setup) -> String { setup.route(id).map(idOf) ?? id }
     static func legacy(_ id: String) -> Bool { !id.contains("@") && id != home && id != DIRECT && !id.hasPrefix(tsNode) }
     static func routeId(_ id: String) -> String { String(id.split(separator: "@", maxSplits: 1, omittingEmptySubsequences: false)[0]) }
+    /// What the Speed Test page tests for a Stats exit (`idOf`): a Tailscale node as it is, a route by the running
+    /// configuration's route with that identity; nil when it isn't running, so it is never swapped for another exit.
+    static func speedTestExit(_ id: String, running: Setup) -> String? {
+        if id.hasPrefix(tsNode) { return id }
+        return matchingRoute(id, setup: running)?.id
+    }
+
     static func matchingRoute(_ id: String, setup: Setup) -> Route? {
         setup.routes.first { idOf($0) == id }
     }
