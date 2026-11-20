@@ -24,7 +24,7 @@ nonisolated enum Compiler {
     struct Input: Sendable {
         var setup: Setup
         var links: [String: Link]
-        /// Automatic port rotation per provider.
+        /// Automatic port rotation per tunnel (`LinkPicker.serverKey`).
         var portStep: [String: Int] = [:]
         /// Routes without a usable tunnel. Their traffic is refused until a tunnel is available.
         var blocked: Set<String> = []

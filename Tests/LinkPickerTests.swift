@@ -645,7 +645,7 @@ extension LinkPickerTests {
         var setup = Setup(routes: [route], defaultRoute: "r")
         setup.opts["mullvad"] = ["mtu": "1400"]
         let link = Link.wg(server, peer, ports: [51820, 443])
-        guard case .wg(_, let result, _, _) = LinkPicker.ported(setup, ["r": link], step: ["mullvad": 1])["r"] else { return XCTFail("missing link") }
+        guard case .wg(_, let result, _, _) = LinkPicker.ported(setup, ["r": link], step: [LinkPicker.serverKey(route, link): 1])["r"] else { return XCTFail("missing link") }
         XCTAssertEqual(result.endpoint, "198.51.100.1:443")
         XCTAssertEqual(result.mtu, 1400)
         setup.opts["mullvad"]?["mtu"] = "9000"
@@ -659,6 +659,32 @@ extension LinkPickerTests {
         XCTAssertTrue(ports.isEmpty); XCTAssertTrue(entries.isEmpty)
     }
 
+    func testPortStepsArePerTunnel() {
+        func link(_ ip: String) -> Link {
+            .wg(Server(name: ip, host: ip, ip: ip, publicKey: "key", load: 0),
+                WgPeer(name: ip, privateKey: "k", address: ["10.0.0.2/32"], publicKey: "key", endpoint: "\(ip):51820", allowedIps: ["0.0.0.0/0"]),
+                ports: [51820, 443, 80])
+        }
+        let setup = Setup(routes: [Route(id: "a", loc: Location(provider: "mullvad")), Route(id: "b", loc: Location(provider: "mullvad")),
+                                   Route(id: "c", loc: Location(provider: "mullvad"))], defaultRoute: "a")
+        let links = ["a": link("198.51.100.1"), "b": link("198.51.100.1"), "c": link("198.51.100.2")]
+        func endpoints(_ step: [String: Int]) -> [String] {
+            LinkPicker.ported(setup, links, step: step).sorted { $0.key < $1.key }.compactMap { if case .wg(_, let p, _, _) = $0.value { p.endpoint } else { nil } }
+        }
+        func key(_ id: String) -> String { LinkPicker.serverKey(setup.route(id)!, links[id]!) }
+        XCTAssertEqual(endpoints([:]), ["198.51.100.1:51820", "198.51.100.1:51820", "198.51.100.2:51820"])
+        // Routes on one server step together (never two ports for one server); another server keeps its port; a step past the list wraps.
+        XCTAssertEqual(key("a"), key("b")); XCTAssertNotEqual(key("a"), key("c"))
+        XCTAssertEqual(endpoints([key("a"): 1]), ["198.51.100.1:443", "198.51.100.1:443", "198.51.100.2:51820"])
+        XCTAssertEqual(endpoints([key("a"): 1, key("c"): 5]), ["198.51.100.1:443", "198.51.100.1:443", "198.51.100.2:80"])
+        // A route moved to another provider has another key, so it starts from the first port.
+        var moved = setup
+        moved.routes[0] = Route(id: "a", loc: Location(provider: "ivpn"))
+        XCTAssertNotEqual(LinkPicker.serverKey(moved.route("a")!, links["a"]!), key("a"))
+        guard case .wg(_, let p, _, _)? = LinkPicker.ported(moved, links, step: [key("a"): 1])["a"] else { return XCTFail("no tunnel") }
+        XCTAssertEqual(p.endpoint, "198.51.100.1:51820")
+    }
+
     func testIvpnFixedPortCanBeOutsideAutomaticFallbacks() {
         let server = Server(name: "x", host: "x", ip: "1.2.3.4", publicKey: "key", load: 0)
         let peer = WgPeer(name: "x", privateKey: "k", address: ["10.0.0.2/32"], publicKey: "key", endpoint: "1.2.3.4:2049", allowedIps: ["0.0.0.0/0"])
@@ -666,7 +692,7 @@ extension LinkPickerTests {
         var setup = Setup(routes: [route], defaultRoute: "r")
         setup.opts["ivpn"] = ["port": "9999"]
         let link = Link.wg(server, peer, ports: [2049, 443])
-        guard case .wg(_, let result, _, _) = LinkPicker.ported(setup, ["r": link], step: ["ivpn": 1])["r"] else { return XCTFail("missing link") }
+        guard case .wg(_, let result, _, _) = LinkPicker.ported(setup, ["r": link], step: [LinkPicker.serverKey(route, link): 1])["r"] else { return XCTFail("missing link") }
         XCTAssertEqual(result.endpoint, "1.2.3.4:9999")
     }
 

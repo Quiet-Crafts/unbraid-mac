@@ -48,9 +48,12 @@ nonisolated struct AirVpn: KeyProvider {
         // own transport and wrapper, and the standard entry's is the server's address.
         if case .ovpn(let server, let profile) = link {
             guard let a = try? keyAccount(account), a.apiKey != nil else { return false }
+            // The standard entry is the server's address; the alternative one is the address the profile was made for, kept with
+            // it: a saved profile without it (made before it was kept) isn't trusted and is made again.
             for kind in Self.openVpn.values {
-                guard let host = Self.dialled(profile, at: nil, kind) else { continue }
-                return kind.entry != 1 || host == server.ip
+                let at = kind.entry == 1 ? server.ip : profile.entry
+                guard let at, Self.dialled(profile, at: at, kind) != nil else { continue }
+                return kind.entry == 1 || at != server.ip
             }
             return false
         }
@@ -370,8 +373,9 @@ nonisolated struct AirVpn: KeyProvider {
             throw Fail("AirVPN didn't make an OpenVPN profile for \(sv.name). Try again later")
         }
         let mismatch = Fail("AirVPN's OpenVPN profile doesn't match \(sv.name). Try again")
-        guard let profile = try? Manual.parseOvpn(text, name: sv.name, username: "", password: "") else { throw mismatch }
+        guard var profile = try? Manual.parseOvpn(text, name: sv.name, username: "", password: "") else { throw mismatch }
         guard Self.dialled(profile, at: at, kind) != nil else { throw mismatch }
+        profile.entry = at
         return .ovpn(sv, profile)
     }
 

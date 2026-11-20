@@ -251,7 +251,9 @@ nonisolated enum LinkPicker {
         return peer.disguise != nil
     }
 
-    /// Applies the selected provider ports to the links.
+    /// Applies the selected provider ports to the links. `step` is the number of ports that have failed, per tunnel (provider and
+    /// server, `serverKey`): routes on one server share it, another server keeps its port, and a route changed to another
+    /// provider or server starts over.
     static func ported(_ setup: Setup, _ links: [String: Link], step: [String: Int]) -> [String: Link] {
         var lists: [String: [Int]] = [:]
         for id in links.keys.sorted() {
@@ -276,7 +278,7 @@ nonisolated enum LinkPicker {
                 let fixed = setup.opt(provider, "port").flatMap(Int.init).flatMap {
                     (offered.contains($0) || (provider == "ivpn" && (1...65535).contains($0))) ? $0 : nil
                 }
-                let offset = max(0, step[provider] ?? 0)
+                let offset = max(0, step[serverKey(route, link)] ?? 0)
                 let picked = fixed ?? (offered.isEmpty ? nil : offered[offset % offered.count])
                 // A port the server takes on one entry address only goes to that entry, whatever the entry setting says. A
                 // tunnel that doesn't know that entry would dial nowhere: it takes the first port any entry takes.

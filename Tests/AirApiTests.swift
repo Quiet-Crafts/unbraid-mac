@@ -416,6 +416,19 @@ final class AirVpnOpenVpnTests: XCTestCase {
         XCTAssertFalse(p.trusts(.ovpn(sv, tampered), blob))
         tampered.config = tcp.config.replacingOccurrences(of: "remote 1.2.3.5 443", with: "remote 10.0.0.5 443")
         XCTAssertFalse(p.trusts(.ovpn(sv, tampered), blob))
+        // The TCP profile is bound to the entry it was made for, kept with it: another public address is refused, and so is a
+        // saved one without the entry (made before it was kept), or with the server's own address instead.
+        XCTAssertEqual(tcp.entry, "1.2.3.5")
+        tampered = tcp
+        tampered.config = tcp.config.replacingOccurrences(of: "remote 1.2.3.5 443", with: "remote 1.2.3.9 443")
+        XCTAssertFalse(p.trusts(.ovpn(sv, tampered), blob))
+        var old = tcp; old.entry = nil
+        XCTAssertFalse(p.trusts(.ovpn(sv, old), blob))
+        var other = tcp; other.entry = "1.2.3.9"
+        XCTAssertFalse(p.trusts(.ovpn(sv, other), blob))
+        let saved = try JSONDecoder().decode(Link.self, from: JSONEncoder().encode(Link.ovpn(sv, old)))
+        XCTAssertFalse(p.trusts(saved, blob))
+        XCTAssertEqual(try JSONDecoder().decode(Link.self, from: JSONEncoder().encode(link)), link)
         // The standard entry's profile is bound to the server's own address.
         loc.proto = "openvpn_udp"
         guard case .ovpn(let udpServer, let udpProfile) = try await p.connect(loc, blob) else { return XCTFail("not OpenVPN") }
@@ -617,7 +630,7 @@ extension AirApiTests {
             ports: [1637, 47107, 51820], entries: entries)
     }
     private func endpoint(_ setup: Setup, _ link: Link, step: Int = 0) -> String? {
-        guard case .wg(_, let peer, _, _)? = LinkPicker.ported(setup, ["r": link], step: ["airvpn": step])["r"] else { return nil }
+        guard case .wg(_, let peer, _, _)? = LinkPicker.ported(setup, ["r": link], step: [LinkPicker.serverKey(setup.routes[0], link): step])["r"] else { return nil }
         return peer.endpoint
     }
     private func airSetup(_ opts: [String: String]) -> Setup {

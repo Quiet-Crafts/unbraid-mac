@@ -186,6 +186,7 @@ final class Connection {
     /// Later health and port policies can discard observations from the previous network.
     var onNetworkChange: (() -> Void)?
     private var healthReset = 0
+    /// Ports that failed so far, by tunnel (`LinkPicker.serverKey`).
     private var portStep: [String: Int] = [:]
     private var failing: Set<String> = []
     private var wakeObserver: NSObjectProtocol?
@@ -2694,15 +2695,15 @@ final class Connection {
                     // Automatic: WireGuard failed on every port it has on this network, so this route goes over OpenVPN TCP
                     // (the same server) until the network changes. Without the API key there is no TCP to go to.
                     if route.loc.proto == AutoProtocol.key, accounts[p].map(AirVpn.canOpenVpn) == true,
-                       AutoProtocol.exhausted(ports: ports.count, canStep: canStep, step: portStep[p] ?? 0), AutoProtocol.toTcp(id) {
+                       AutoProtocol.exhausted(ports: ports.count, canStep: canStep, step: portStep[LinkPicker.serverKey(route, link)] ?? 0), AutoProtocol.toTcp(id) {
                         switched = true
                         continue
                     }
                 }
-                if canStep { stepped.insert(p) }
+                if canStep { stepped.insert(LinkPicker.serverKey(route, link)) }
                 if route.movable { moved[id] = LinkPicker.serverKey(route, link) }
             }
-            for p in stepped { portStep[p, default: 0] += 1 }
+            for key in stepped { portStep[key, default: 0] += 1 }
             if !moved.isEmpty || !stepped.isEmpty || !revoked.isEmpty || switched {
                 await reload(dead: moved, avoid: Set(moved.values), checked: c, healthAction: true, revokedAction: !revoked.isEmpty)
             }

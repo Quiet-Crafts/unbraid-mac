@@ -107,6 +107,9 @@ nonisolated struct OvpnProfile: Codable, Hashable, Sendable {
     var config: String
     var username = ""
     var password = ""
+    /// The address a provider made the profile to dial, kept with it so a saved one can be checked against it. Nil for an
+    /// imported file, and for one saved before this was kept.
+    var entry: String?
 }
 
 /// A Shadowsocks server (e.g. an Outline access key).
