@@ -2684,8 +2684,9 @@ final class Connection {
                 refusedAccounts[p] = (account, .removed(name))
             }
             var moved: [String: String] = [:]
-            var stepped: Set<String> = []
+            var stepped: [String: Int] = [:]
             var switched = false
+            let stepFor = LinkPicker.steps(setup, links, step: portStep)
             for id in routeIds {
                 guard let route = setup.route(id), !route.imported, let link = links[id] else { continue }
                 let p = route.loc.provider
@@ -2695,15 +2696,22 @@ final class Connection {
                     // Automatic: WireGuard failed on every port it has on this network, so this route goes over OpenVPN TCP
                     // (the same server) until the network changes. Without the API key there is no TCP to go to.
                     if route.loc.proto == AutoProtocol.key, accounts[p].map(AirVpn.canOpenVpn) == true,
-                       AutoProtocol.exhausted(ports: ports.count, canStep: canStep, step: portStep[LinkPicker.serverKey(route, link)] ?? 0), AutoProtocol.toTcp(id) {
+                       AutoProtocol.exhausted(ports: ports.count, canStep: canStep, step: stepFor[id] ?? 0), AutoProtocol.toTcp(id) {
                         switched = true
                         continue
                     }
                 }
-                if canStep { stepped.insert(LinkPicker.serverKey(route, link)) }
+                if canStep {
+                    // Per tunnel: one dead server never moves the provider's healthy ones to a port this network may block.
+                    // A route that also moves to another server takes its step along.
+                    // The server goes one port on from its own step; the route, from the step it ran on.
+                    let server = LinkPicker.serverKey(route, link)
+                    stepped[server] = (portStep[server] ?? 0) + 1
+                    if route.movable { stepped[LinkPicker.routeStepKey(route)] = (stepFor[id] ?? 0) + 1 }
+                }
                 if route.movable { moved[id] = LinkPicker.serverKey(route, link) }
             }
-            for key in stepped { portStep[key, default: 0] += 1 }
+            for (key, next) in stepped { portStep[key] = max(portStep[key] ?? 0, next) }
             if !moved.isEmpty || !stepped.isEmpty || !revoked.isEmpty || switched {
                 await reload(dead: moved, avoid: Set(moved.values), checked: c, healthAction: true, revokedAction: !revoked.isEmpty)
             }

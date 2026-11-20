@@ -710,6 +710,47 @@ extension LinkPickerTests {
         XCTAssertEqual(p.endpoint, "198.51.100.1:51820")
     }
 
+    /// A dead route the health round moves to another server takes its port step along: the new server goes on from the
+    /// port the route had reached, not from the first one again; the other routes keep their own servers' steps.
+    func testAMovedRouteCarriesItsPortStep() {
+        func link(_ ip: String) -> Link {
+            .wg(Server(name: ip, host: ip, ip: ip, publicKey: "key", load: 0),
+                WgPeer(name: ip, privateKey: "k", address: ["10.0.0.2/32"], publicKey: "key", endpoint: "\(ip):51820", allowedIps: ["0.0.0.0/0"]),
+                ports: [51820, 443, 80])
+        }
+        let setup = Setup(routes: [Route(id: "a", loc: Location(provider: "mullvad")), Route(id: "c", loc: Location(provider: "mullvad"))], defaultRoute: "a")
+        let a = setup.route("a")!, c = setup.route("c")!
+        // Route a reached the third port on 198.51.100.1, then moved to 198.51.100.3.
+        let step = [LinkPicker.serverKey(a, link("198.51.100.1")): 2, LinkPicker.routeStepKey(a): 2]
+        let links = ["a": link("198.51.100.3"), "c": link("198.51.100.2")]
+        let out = LinkPicker.ported(setup, links, step: step)
+        guard case .wg(_, let pa, _, _)? = out["a"], case .wg(_, let pc, _, _)? = out["c"] else { return XCTFail("no tunnel") }
+        XCTAssertEqual(pa.endpoint, "198.51.100.3:80")
+        XCTAssertEqual(pc.endpoint, "198.51.100.2:51820")
+        // The larger of the server's and the route's steps counts.
+        let s3 = LinkPicker.serverKey(a, link("198.51.100.3"))
+        XCTAssertEqual(LinkPicker.steps(setup, links, step: [s3: 1, LinkPicker.routeStepKey(a): 2])["a"], 2)
+        XCTAssertEqual(LinkPicker.steps(setup, links, step: [s3: 3, LinkPicker.routeStepKey(a): 2])["a"], 3)
+        XCTAssertEqual(LinkPicker.steps(setup, links, step: step)["c"], 0)
+        // Automatic gives up on WireGuard once the carried step has been through every port.
+        XCTAssertTrue(AutoProtocol.exhausted(ports: 3, canStep: true, step: LinkPicker.steps(setup, links, step: step)["a"] ?? 0))
+
+        // Moved onto a server another route already uses: both take that server's step, one port for one server (two
+        // would clash and block one), and the route already there shows that port works on this network.
+        let both = ["a": link("198.51.100.2"), "c": link("198.51.100.2")]
+        let shared = LinkPicker.ported(setup, both, step: step)
+        guard case .wg(_, let sa, _, _)? = shared["a"], case .wg(_, let sc, _, _)? = shared["c"] else { return XCTFail("no tunnel") }
+        XCTAssertEqual(sa.endpoint, "198.51.100.2:51820")
+        XCTAssertEqual(sc.endpoint, "198.51.100.2:51820")
+        XCTAssertTrue(Compiler.clashes(setup, shared).isEmpty)
+
+        // A route the user sends to another provider or place starts from the first port: the carried step was its old one's.
+        var edited = setup
+        edited.routes[0] = Route(id: "a", loc: Location(provider: "mullvad", countryId: 153, countryCode: "NL", country: "Netherlands"))
+        XCTAssertNotEqual(LinkPicker.routeStepKey(edited.route("a")!), LinkPicker.routeStepKey(a))
+        XCTAssertEqual(LinkPicker.steps(edited, links, step: step)["a"], 0)
+    }
+
     func testIvpnFixedPortCanBeOutsideAutomaticFallbacks() {
         let server = Server(name: "x", host: "x", ip: "1.2.3.4", publicKey: "key", load: 0)
         let peer = WgPeer(name: "x", privateKey: "k", address: ["10.0.0.2/32"], publicKey: "key", endpoint: "1.2.3.4:2049", allowedIps: ["0.0.0.0/0"])

@@ -111,6 +111,26 @@ nonisolated enum LinkPicker {
 
     /// Fallback-cache key: a pinned route is its own entry, so it can never inherit another server's tunnel.
     static func serverKey(_ r: Route, _ l: Link) -> String { "\(r.loc.provider)|\(serverId(l.server))" }
+    /// A route's own count of Automatic's port steps, carried when a dead route moves to another server (`steps`): a new
+    /// server at the first port again would fail the same way on a network that blocks that port. Keyed by the route and
+    /// where the user sent it, so a route the user changes to another provider or place starts over.
+    static func routeStepKey(_ r: Route) -> String {
+        "route|\(r.id)|\(r.loc.provider)|\(r.loc.countryId ?? -1)|\(r.loc.cityId ?? -1)|\(r.loc.region ?? "")|\(r.loc.group ?? "")"
+    }
+    /// The port step each route's tunnel takes (route id → step): its server's, or more if the route brought steps from a
+    /// dead server and is alone on its new one. Routes that share a server take the server's step, so they never dial
+    /// two ports of one server (a clash that would block one of them), and one that answers there shows which port works.
+    static func steps(_ setup: Setup, _ links: [String: Link], step: [String: Int]) -> [String: Int] {
+        var onServer: [String: Int] = [:]
+        for (id, l) in links { if let r = setup.route(id), !r.imported { onServer[serverKey(r, l), default: 0] += 1 } }
+        var out: [String: Int] = [:]
+        for (id, l) in links {
+            guard let r = setup.route(id), !r.imported else { continue }
+            let key = serverKey(r, l), own = step[key] ?? 0
+            out[id] = onServer[key] == 1 ? max(own, step[routeStepKey(r)] ?? 0) : own
+        }
+        return out
+    }
 
     /// Bound to the account the tunnel was made with: another account of the same provider (signed in after a sign-out)
     /// never falls back on it. Keys saved before carry no account and simply miss.
@@ -258,9 +278,10 @@ nonisolated enum LinkPicker {
     }
 
     /// Applies the selected provider ports to the links. `step` is the number of ports that have failed, per tunnel (provider and
-    /// server, `serverKey`): routes on one server share it, another server keeps its port, and a route changed to another
-    /// provider or server starts over.
+    /// server, `serverKey`): routes on one server share it, another server keeps its port. A route the health round moved
+    /// to another server carries its own count (`routeStepKey`), so it goes on from the port it had reached (`steps`).
     static func ported(_ setup: Setup, _ links: [String: Link], step: [String: Int]) -> [String: Link] {
+        let stepFor = steps(setup, links, step: step)
         var lists: [String: [Int]] = [:]
         for id in links.keys.sorted() {
             guard let r = setup.route(id), !r.imported, case .wg(_, _, let ports, _) = links[id], !ports.isEmpty else { continue }
@@ -284,7 +305,7 @@ nonisolated enum LinkPicker {
                 let fixed = setup.opt(provider, "port").flatMap(Int.init).flatMap {
                     (offered.contains($0) || (provider == "ivpn" && (1...65535).contains($0))) ? $0 : nil
                 }
-                let offset = max(0, step[serverKey(route, link)] ?? 0)
+                let offset = max(0, stepFor[id] ?? 0)
                 let picked = fixed ?? (offered.isEmpty ? nil : offered[offset % offered.count])
                 // A port the server takes on one entry address only goes to that entry, whatever the entry setting says. A
                 // tunnel that doesn't know that entry would dial nowhere: it takes the first port any entry takes.
