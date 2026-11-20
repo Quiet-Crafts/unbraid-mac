@@ -9,6 +9,9 @@ dist/
 # (Frameworks/Libbox.sha256), the framework itself is not.
 Frameworks/Libbox.xcframework
 
+# The small Kyber library the app links (tools/build-kyber.sh); its hash is committed in Frameworks/Kyber.sha256.
+Frameworks/Kyber.xcframework
+
 # Your own signing team and bundle IDs (see Config/Signing.xcconfig)
 Config/Local.xcconfig
 

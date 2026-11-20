@@ -128,6 +128,8 @@ echo "  DMG      signed by $(awk -v h="$IDENTITY" '$1 == h { print substr($0, 42
 
 # The engine: the whole framework tools/build-libbox.sh recorded, built from this commit's patches.
 tools/engine-manifest.sh --check
+# The Kyber library the app links: the whole framework tools/build-kyber.sh recorded, built from tools/kyber as committed.
+tools/kyber-manifest.sh --check
 # Scan the patched engine with the same build tags before any release can be tagged.
 WORK="$WORK" tools/vulncheck.sh || { echo "Engine vulnerability scan failed"; exit 1; }
 # The tests, with the engine's command-line build required (missing, it fails the tests instead of skipping them), then

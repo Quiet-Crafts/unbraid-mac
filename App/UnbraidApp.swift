@@ -18,8 +18,8 @@ struct UnbraidApp: App {
         #if !DEBUG
         SingleCopy.handOverIfRunning()
         #endif
-        // IVPN's quantum-safe keys come from the engine's library; set before any provider is used.
-        Ivpn.engine = LibboxKyber()
+        // IVPN's quantum-safe keys come from the Kyber library; set before any provider is used.
+        Ivpn.engine = KyberLibrary()
         _model = State(wrappedValue: SingleCopy.outsideApplications ? nil : AppModel.shared)
     }
 

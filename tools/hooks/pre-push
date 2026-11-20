@@ -9,7 +9,7 @@ import sys
 # The first commit of the history kept private: nothing built on it is pushed.
 OLD_ROOT = "8cf8c446533df15916f84b23a050e1f5570df040"
 BAD = re.compile(
-    r"(^|/)(_INTERNAL|docs|\.secrets|secrets?|\.claude|build|dist|DerivedData|xcuserdata|Libbox\.xcframework)/"
+    r"(^|/)(_INTERNAL|docs|\.secrets|secrets?|\.claude|build|dist|DerivedData|xcuserdata|Libbox\.xcframework|Kyber\.xcframework)/"
     r"|(^|/)(CHANGELOG\.md|AGENTS\.md|CLAUDE\.md|\.DS_Store|\.env(\.[^/]*)?|id_(rsa|dsa|ecdsa|ed25519)(\.pub)?)$"
     r"|\.(p8|p12|pfx|pem|key|cer|ppk|jks|keystore|asc|gpg|kdbx|mobileprovision|provisionprofile|mobileconfig"
     r"|xcarchive|dmg|ipa|conf|ovpn|bundle|xcconfig)$"

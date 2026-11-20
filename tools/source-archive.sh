@@ -94,6 +94,10 @@ BIND=$("$GOCMD" list -m -f '{{.Version}}' github.com/sagernet/gomobile)
     GOOS=darwin GOARCH=$arch CGO_ENABLED=1 "$GOCMD" list -deps -tags "$TAGS" ./experimental/libbox github.com/sagernet/gomobile/bind/seq >/dev/null
   done
   cd "$D/gomobile-$GOMOBILE" && "$GOCMD" list -deps ./cmd/gomobile ./cmd/gobind >/dev/null
+  # The small Kyber library the app links (tools/kyber): circl and x/sys are the engine's own versions, so nothing new.
+  for arch in arm64 amd64; do
+    (cd "$U/tools/kyber" && GOOS=darwin GOARCH=$arch CGO_ENABLED=1 GOFLAGS=-mod=readonly "$GOCMD" list -deps . >/dev/null)
+  done
 )
 cp -R "$T/modcache/cache/download" "$D/goproxy"
 rm -rf "$D/goproxy/sumdb"
@@ -128,10 +132,17 @@ Go ${GO#go}, gomobile $GOMOBILE and XcodeGen. The licences of everything here ar
 $(sed 's/^/     /' <<< "$BIND_CMD")
    unbraid/tools/build-libbox.sh is the same build from a fresh clone; it also builds the OpenVPN module from a fixed
    folder and normalises the static library, so its hash matches unbraid/Frameworks/Libbox.sha256 with the same Xcode.
-2. The app: move Libbox.xcframework into unbraid/Frameworks/, then in unbraid/
+2. The Kyber library the app links for IVPN's quantum-safe key, Kyber.xcframework, from unbraid/tools/kyber (a small
+   Go module: its own go.mod and go.sum, the same Go, no patches). With the same Go and GOPROXY as in step 1:
+     (cd unbraid/tools/kyber && go test ./...)
+   unbraid/tools/build-kyber.sh builds it the way the release does (its hash is in unbraid/Frameworks/Kyber.sha256, the
+   same with the same Xcode). By hand: go build -buildmode=c-archive for arm64 and amd64, joined with lipo and packaged
+   with xcodebuild -create-xcframework, the headers from unbraid/tools/kyber.
+3. The app: move Libbox.xcframework and Kyber.xcframework into unbraid/Frameworks/, then in unbraid/
      tools/engine-manifest.sh --write
+     tools/kyber-manifest.sh --write
      xcodegen && xcodebuild -project unbraid.xcodeproj -scheme unbraid -configuration Release build${RELEASE_BUILD:+ CURRENT_PROJECT_VERSION=$RELEASE_BUILD}
-   The first command records your engine in Frameworks/Libbox.sha256, which the build checks: built as in step 1 its
+   The first two commands record your engine and Kyber library in Frameworks/Libbox.sha256 and Kyber.sha256, which the build checks: built as in step 1 its
    hash differs from the release's (the OpenVPN module's folder is named in it, and step 1 skips the normalisation).
    unbraid/README.md (Build) explains signing with your own team.
 EOF

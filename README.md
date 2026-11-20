@@ -199,6 +199,7 @@ exact toolchain, 1.26.11, itself through `GOTOOLCHAIN`).
 
 ```bash
 tools/build-libbox.sh     # Frameworks/Libbox.xcframework from sing-box v1.14.4 with the patches in tools/
+tools/build-kyber.sh     # Frameworks/Kyber.xcframework: the small Kyber-1024 library the app links (tools/kyber)
 xcodegen                  # unbraid.xcodeproj from project.yml
 tools/dev-install.sh      # Debug build into /Applications (system extensions run only from there)
 xcodebuild -project unbraid.xcodeproj -scheme UnbraidTests -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test

@@ -1,6 +1,6 @@
 #!/bin/bash
 # Writes Resources/notices.txt: every licence the app must carry. Run after tools/build-libbox.sh (it does).
-# Go modules are the ones actually linked into libbox, for the same build tags.
+# Go modules are the ones actually linked into libbox, for the same build tags, and into the Kyber library.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 SB=${WORK:-$HOME/Development/unbraid-mac-deps}/sing-box
@@ -15,7 +15,12 @@ licence() { ls "$1" | grep -iE '^(LICEN[CS]E|COPYING)' | head -1; }
 text() { awk 1 "$1"; }
 # A plain Apache-2.0 text is printed once, at the end; a longer file (extra licences appended) is kept whole.
 show() { if grep -q "Version 2.0, January 2004" "$1" && [ "$(wc -c < "$1")" -lt 11800 ]; then echo "Licensed under the Apache License, Version 2.0 (full text at the end)."; else text "$1"; fi; }
-deps() { (cd "$SB" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go list -modfile "$MOD/go.mod" -tags "$TAGS" -deps -f "$1" ./experimental/libbox) | sort -u; }
+# The engine's packages, and those of the small Kyber library the app links (tools/kyber; its own module is left out).
+deps() {
+  { (cd "$SB" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 go list -modfile "$MOD/go.mod" -tags "$TAGS" -deps -f "$1" ./experimental/libbox)
+    (cd "$ROOT/tools/kyber" && GOOS=darwin GOARCH=arm64 CGO_ENABLED=1 GOFLAGS=-mod=readonly go list -deps -f "{{if or (not .Module) (not .Module.Main)}}$1{{end}}" .)
+  } | grep . | sort -u
+}
 PKGS=$(mktemp); MOD=$(mktemp -d); trap 'rm -f "$PKGS"; rm -rf "$MOD"' EXIT
 # Read through a copy of go.mod without the patched sing-openvpn tools/build-libbox.sh builds in its place: that folder
 # is gone once the build ends. The module, its imports and its licence are the same unpatched; the checkout isn't written.

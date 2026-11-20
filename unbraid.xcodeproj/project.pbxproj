@@ -41,6 +41,7 @@
 		1C5C8D514DD31FD25753996A /* Rescans.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7E8A8C13C5A5F8C5BF3B8421 /* Rescans.swift */; };
 		1C5E3ABF92FCEF65BD8CC341 /* Lifecycle.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5634EAF2ED993743E460EB17 /* Lifecycle.swift */; };
 		1D620CFEB6CD141F09ACC904 /* Running.swift in Sources */ = {isa = PBXBuildFile; fileRef = 92714F48400E30DF67609D5F /* Running.swift */; };
+		1D72FBE9FF4B66B43611D0D1 /* KyberEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9554FC133A5819B4BC2CBF5 /* KyberEngine.swift */; };
 		1E229B8C0A790FA3F8E14F97 /* Catalog in Resources */ = {isa = PBXBuildFile; fileRef = 3C10D2FF6C86FAC61E84632E /* Catalog */; };
 		1E7C04E0C14525A6FCAE9FF6 /* UpdateCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BA11D9791601F194AE7176B /* UpdateCheck.swift */; };
 		1F98117F0654433B6E2B3685 /* Limits.swift in Sources */ = {isa = PBXBuildFile; fileRef = EA4E95A84176AFF3F55B31D8 /* Limits.swift */; };
@@ -131,6 +132,7 @@
 		5CEEE3F542465B75E76E1B7E /* Appearance.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD379A233842C7895C3A30DF /* Appearance.swift */; };
 		5E727B1279CFFDF30095EB2F /* PageRoomTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51BDD0D5E26EB7D7C65D1EB2 /* PageRoomTests.swift */; };
 		5E81B75BEB586E2248D6E54C /* AppGroup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98821B9E3C4EA8B23F047FA7 /* AppGroup.swift */; };
+		5EAAF6DF8BE57D01F33E8335 /* Kyber.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BAD53409AC867B8FADEE4349 /* Kyber.xcframework */; };
 		5ECAF4151CAFD1F393CDF722 /* SpeedTest.swift in Sources */ = {isa = PBXBuildFile; fileRef = 17E365433524B187D56B4755 /* SpeedTest.swift */; };
 		5F646CF9D53D367E2CD88397 /* SiteEdits.swift in Sources */ = {isa = PBXBuildFile; fileRef = F95657EF32180C38A822C694 /* SiteEdits.swift */; };
 		5FEB189B6F6C3465B700EF88 /* NetworkExtension.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = FEE9490FAF8A8ECACDA43011 /* NetworkExtension.framework */; };
@@ -173,7 +175,6 @@
 		7DAA37F6491CD93BFB6A8D5E /* ExitAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = D250DB2BE575D83AAA030C34 /* ExitAddress.swift */; };
 		7E280D8B2004CD669F187849 /* shared_suffixes.txt in Resources */ = {isa = PBXBuildFile; fileRef = 95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */; };
 		7E5C92FB78C4E71F8EA89AC2 /* Nudges.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B3636EDB6616452A8ABCD /* Nudges.swift */; };
-		7E65DA04B2EE72543F4D8C90 /* Libbox.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 971AFA913A4946CAAA14DD03 /* Libbox.xcframework */; };
 		7EFD225D2B7C81FD34697A68 /* AutoSwitch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACFD2671AE832A344B78692 /* AutoSwitch.swift */; };
 		7F344A358F279E4AF266F90C /* Provider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74E1A9850A23A9F05D2A74FD /* Provider.swift */; };
 		7F625C63BE5211F408173BBA /* Importer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E080581666848F23197258 /* Importer.swift */; };
@@ -213,17 +214,18 @@
 		9E07F7F82F24AAA4A832CE23 /* RouteHealthTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CDE31DD7B7E4762C01D557F6 /* RouteHealthTests.swift */; };
 		9F5232DCD7A84A5227A65B51 /* Units.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD7B6154941CC2FAC4C16927 /* Units.swift */; };
 		9FAD09817C39AE167DE90E07 /* AutoSwitchRunTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76B5D0B3FCCDDF2804629401 /* AutoSwitchRunTests.swift */; };
+		A02FFC92E49416341476DDAD /* KyberLibraryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 55E38896152C7B3729AC6EBB /* KyberLibraryTests.swift */; };
 		A0334B376022C2F529B6AA90 /* Sealed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62175C4168FC887F55A0FC1C /* Sealed.swift */; };
 		A072908FC85AC91E826B5CC0 /* BackupWeakensTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80D9283AAECFE0D84588DD42 /* BackupWeakensTests.swift */; };
 		A0923958EF2B852896B478C6 /* Windscribe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40089F2AF32B847A51B7520B /* Windscribe.swift */; };
 		A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DB22B20CCC8A1A75D50ABF /* Snapshot.swift */; };
 		A0B78BC1AF6E3BBD58A15B76 /* QRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBFF80940E76A337E1B5C0F /* QRTests.swift */; };
-		A18457EBB9864E40BB1F8713 /* libresolv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AD04A39FA2DCA7EE4F0D7977 /* libresolv.tbd */; };
 		A18D64B8F115707343AA471C /* Libbox.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 971AFA913A4946CAAA14DD03 /* Libbox.xcframework */; };
 		A2CA7154DEDCFA5103E345E4 /* Sealed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62175C4168FC887F55A0FC1C /* Sealed.swift */; };
 		A3AAACC8AA04D53D31995049 /* BackupTexts.swift in Sources */ = {isa = PBXBuildFile; fileRef = F286A6B6B293B7E0ABAC765F /* BackupTexts.swift */; };
 		A645026C2C5FA86C7BFC9710 /* KeyProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2CEBDFEB91507DEB06D7825 /* KeyProvider.swift */; };
 		A859AD974C47757CBC791A19 /* StatsMathTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9110D1C0A6F61915B2A89137 /* StatsMathTests.swift */; };
+		A984CFD5A8761762C077F7CC /* Kyber.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BAD53409AC867B8FADEE4349 /* Kyber.xcframework */; };
 		AB7F352BE40C8DE150EF45F0 /* WidgetSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADBC21CC6096733D97519366 /* WidgetSnapshot.swift */; };
 		AC578E27C5283D51B0C1A889 /* Manual.swift in Sources */ = {isa = PBXBuildFile; fileRef = F99A005A7B9ED8D631A41E22 /* Manual.swift */; };
 		AD8898F366D365A8AA226F99 /* StatsSitesTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4BBFB10D7CC0760276F8BBF3 /* StatsSitesTests.swift */; };
@@ -453,6 +455,7 @@
 		530DB6A7CEA03304A74FDC19 /* AirApiTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirApiTests.swift; sourceTree = "<group>"; };
 		5341561122D8DF8AA08C142D /* ExitProbe.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExitProbe.swift; sourceTree = "<group>"; };
 		5528086C681674B480FDE4BE /* PageRoom.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PageRoom.swift; sourceTree = "<group>"; };
+		55E38896152C7B3729AC6EBB /* KyberLibraryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KyberLibraryTests.swift; sourceTree = "<group>"; };
 		55EAD57B0E07186F433757E3 /* Proton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Proton.swift; sourceTree = "<group>"; };
 		56132231BD27DDAEDE916B3E /* FileWorkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWorkTests.swift; sourceTree = "<group>"; };
 		5634EAF2ED993743E460EB17 /* Lifecycle.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lifecycle.swift; sourceTree = "<group>"; };
@@ -541,6 +544,7 @@
 		B6EF40FAB7814AE98735D76C /* InstallPlace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InstallPlace.swift; sourceTree = "<group>"; };
 		B76773E1693159198244F444 /* LogCallTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LogCallTests.swift; sourceTree = "<group>"; };
 		B80896661F80629A5EEA1D81 /* FileWork.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWork.swift; sourceTree = "<group>"; };
+		BAD53409AC867B8FADEE4349 /* Kyber.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Kyber.xcframework; path = Frameworks/Kyber.xcframework; sourceTree = "<group>"; };
 		BAE2045B5F3FB8F071DA15C7 /* BackupFile.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BackupFile.swift; sourceTree = "<group>"; };
 		BD2ACFB5613385EB016CE9D6 /* Catalog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Catalog.swift; sourceTree = "<group>"; };
 		BD7B6154941CC2FAC4C16927 /* Units.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Units.swift; sourceTree = "<group>"; };
@@ -630,12 +634,19 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9070158008D7F850910C7784 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A984CFD5A8761762C077F7CC /* Kyber.xcframework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F761457F23306986211A088E /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7E65DA04B2EE72543F4D8C90 /* Libbox.xcframework in Frameworks */,
-				A18457EBB9864E40BB1F8713 /* libresolv.tbd in Frameworks */,
+				5EAAF6DF8BE57D01F33E8335 /* Kyber.xcframework in Frameworks */,
 				3FDFFCCF23675B2F6A4926FB /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -698,6 +709,7 @@
 				BF5C05FD84F2AFB3D73A0079 /* KeyProviders2Tests.swift */,
 				B449B9E3CA07552AF08BCD21 /* KeyProvidersTests.swift */,
 				0C0135DD921FDFC41F7A57A7 /* KeySourcesTests.swift */,
+				55E38896152C7B3729AC6EBB /* KyberLibraryTests.swift */,
 				16540D9011D973EC4593EA77 /* LifecycleTests.swift */,
 				3238D51D442617DAC17414C9 /* LimitsTests.swift */,
 				516BD53CBEFC31F6DF3D524B /* LinkPickerTests.swift */,
@@ -895,6 +907,7 @@
 			isa = PBXGroup;
 			children = (
 				C144C2108CEC8A3444209A82 /* AppIntents.framework */,
+				BAD53409AC867B8FADEE4349 /* Kyber.xcframework */,
 				971AFA913A4946CAAA14DD03 /* Libbox.xcframework */,
 				AD04A39FA2DCA7EE4F0D7977 /* libresolv.tbd */,
 				9A5A4F5A55C5A1BF4D84156A /* libsqlite3.tbd */,
@@ -1009,6 +1022,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 2B50F147B0EF5D101443DD42 /* Build configuration list for PBXNativeTarget "unbraid" */;
 			buildPhases = (
+				ECB0F78B4DA37FBB0FD6D78E /* Verify Kyber library */,
 				1BF26A78C5030D0991243D2F /* Sources */,
 				EF859F7ABFD4E5B9C818A24A /* Resources */,
 				F761457F23306986211A088E /* Frameworks */,
@@ -1050,8 +1064,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A9059A1925D53C0E85AECAD0 /* Build configuration list for PBXNativeTarget "UnbraidTests" */;
 			buildPhases = (
+				C1A04663C98C84003E704B64 /* Verify Kyber library */,
 				536235C4FD50B2D8C4B381DA /* Sources */,
 				FE598201413C5287FAF8569C /* Resources */,
+				9070158008D7F850910C7784 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -1158,6 +1174,50 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "\"$SRCROOT/tools/engine-manifest.sh\" --check && touch \"$DERIVED_FILE_DIR/engine-verified\"";
+		};
+		C1A04663C98C84003E704B64 /* Verify Kyber library */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/tools/kyber-manifest.sh",
+				"$(SRCROOT)/Frameworks/Kyber.sha256",
+			);
+			name = "Verify Kyber library";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/kyber-verified",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/tools/kyber-manifest.sh\" --check && touch \"$DERIVED_FILE_DIR/kyber-verified\"";
+		};
+		ECB0F78B4DA37FBB0FD6D78E /* Verify Kyber library */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/tools/kyber-manifest.sh",
+				"$(SRCROOT)/Frameworks/Kyber.sha256",
+			);
+			name = "Verify Kyber library";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/kyber-verified",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "\"$SRCROOT/tools/kyber-manifest.sh\" --check && touch \"$DERIVED_FILE_DIR/kyber-verified\"";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -1367,6 +1427,8 @@
 				2709DD7259624A1A6EBD1CBF /* KeyProviders2Tests.swift in Sources */,
 				774E9127B6F0CF1F79E7C90E /* KeyProvidersTests.swift in Sources */,
 				F0B248A5E1E14AB26BAF95F5 /* KeySourcesTests.swift in Sources */,
+				1D72FBE9FF4B66B43611D0D1 /* KyberEngine.swift in Sources */,
+				A02FFC92E49416341476DDAD /* KyberLibraryTests.swift in Sources */,
 				20BAED9E1BFBE84A6DCB9757 /* Lifecycle.swift in Sources */,
 				3AF0533F86E444C358E03085 /* LifecycleTests.swift in Sources */,
 				1F98117F0654433B6E2B3685 /* Limits.swift in Sources */,
@@ -1626,6 +1688,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1647,6 +1714,7 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Frameworks\"",
@@ -1755,6 +1823,11 @@
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1794,6 +1867,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/unbraid.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\"Frameworks\"",
