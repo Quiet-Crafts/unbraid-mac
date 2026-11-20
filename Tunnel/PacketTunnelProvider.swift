@@ -433,7 +433,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let usable = fallback.flatMap { f in (try? ConfigVet.check(f)).flatMap { ConfigVet.isFallback($0, blocks: true) ? $0 : nil } }
         switch SetupStamp.unattended(sealed: SetupStamp.of(sealed: data), fallbackCopy: c.3 && ConfigVet.isFallback(c.0), noted: note, hasFallback: usable != nil) {
         case .sealed:
-            Log.info(note == .none ? "start: the sealed copy (no setup noted)" : "start: the sealed copy, of the latest setup")
+            if note == .none { Log.info("start: the sealed copy (no setup noted)") } else { Log.info("start: the sealed copy, of the latest setup") }
             return c
         case .fallback:
             Log.info("start: the sealed copy predates the latest setup; running its fallback")
@@ -455,7 +455,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 return ["error": "The setup could not be noted"]
             }
             sweepSealedTemps()
-            Log.info(fallback.isEmpty ? "setup noted, without a fallback" : "setup noted")
+            if fallback.isEmpty { Log.info("setup noted, without a fallback") } else { Log.info("setup noted") }
             return ["result": "ok"]
         }
     }
