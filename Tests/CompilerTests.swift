@@ -361,10 +361,25 @@ final class CompilerTests: XCTestCase {
         let lan = try EngineWalk(try raw(s))
         XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["192.168.1.10", "203.0.113.5"]), "exit:direct 192.168.1.10")
         XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["203.0.113.5"]), "exit:r-nl 203.0.113.5")
+        // The same for a local IPv6 answer (fc00::/7); a public IPv6 one is refused with the rest of IPv6.
+        XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["fd12:3456::7", "2001:db8::5"]), "exit:direct fd12:3456::7")
+        XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["2001:db8::5"]), "reject")
         s.home.tailscale = true
         s.home.tsControlUrl = "https://hs.example"
         let ts = try EngineWalk(try raw(s))
         XCTAssertEqual(ts.dial(other, name: "nas.example.net", answer: ["100.64.0.7", "203.0.113.5"]), "exit:\(Compiler.tsTag) 100.64.0.7")
+    }
+
+    func testEngineWalkMatchesCidrsOfBothFamilies() {
+        XCTAssertTrue(EngineWalk.inCidr("fd12::1", "fc00::/7"))
+        XCTAssertFalse(EngineWalk.inCidr("2001:db8::1", "fc00::/7"))
+        XCTAssertTrue(EngineWalk.inCidr("fe80::1", "fe80::/10"))
+        XCTAssertFalse(EngineWalk.inCidr("fec0::1", "fe80::/10"))
+        XCTAssertTrue(EngineWalk.inCidr("192.168.1.10", "192.168.0.0/16"))
+        XCTAssertFalse(EngineWalk.inCidr("192.169.1.10", "192.168.0.0/16"))
+        XCTAssertFalse(EngineWalk.inCidr("192.168.1.10", "fc00::/7"), "families never mix")
+        XCTAssertFalse(EngineWalk.inCidr("fd12::1", "192.168.0.0/16"))
+        XCTAssertTrue(EngineWalk.inCidr("::1", "::1/128"))
     }
 
     /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name

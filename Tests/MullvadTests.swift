@@ -334,6 +334,28 @@ extension MullvadTests {
         XCTAssertEqual(p.linkOptions.map(\.key), ["adult", "gambling", "social", "owned", "port"])
     }
 
+    /// A list read anywhere decides which kept servers suit "owned servers only": unknown or rented ones don't.
+    func testOwnedSetFromAnyListReadDecidesWhatSuits() async throws {
+        let key = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        func body(owned: Bool) -> Data {
+            Data(#"{"locations":{"xx-aaa":{"country":"X","city":"A"}},"wireguard":{"relays":[{"hostname":"one","location":"xx-aaa","ipv4_addr_in":"1.1.1.1","public_key":"\#(key)","owned":\#(owned)}]}}"#.utf8)
+        }
+        let server = Server(name: "one", host: "one", ip: "1.1.1.1", publicKey: key, load: 0)
+        Mullvad.owned.reset()
+        var p = Mullvad()
+        XCTAssertTrue(p.suits(server, opts: [:]))
+        // No list read yet this launch: kept as before (turning the option on re-picks anyway).
+        XCTAssertTrue(p.suits(server, opts: ["owned": "on"]), "no list read yet")
+        for owned in [true, false] {
+            let list = try Mullvad.parse(body(owned: owned))
+            p.catalogue = { list }
+            _ = try await p.freshCountries("", opts: [:])
+            XCTAssertEqual(p.suits(server, opts: ["owned": "on"]), owned)
+            XCTAssertTrue(p.suits(server, opts: [:]))
+        }
+        Mullvad.owned.reset()
+    }
+
     func testOwnedFilterAndLegacyAccount() throws {
         let body = Data(#"{"locations":{"xx-aaa":{"country":"X","city":"A"}},"wireguard":{"relays":[{"hostname":"owned","location":"xx-aaa","ipv4_addr_in":"1.1.1.1","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","owned":true},{"hostname":"rented","location":"xx-aaa","ipv4_addr_in":"1.1.1.2","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","owned":false}]}}"#.utf8)
         let list = try Mullvad.parse(body)

@@ -125,7 +125,10 @@ nonisolated extension KeyProvider {
         if saved, all.contains(where: \.bundled) { return p }
         let host = Catalog.identity(p.host)
         var found = all.filter { host != nil && Catalog.identity($0.hostname) == host && ($0.serverName ?? String($0.hostname.split(separator: ".").first ?? "")) == p.name }
-        if found.isEmpty, !p.ip.isEmpty { found = all.filter { $0.ips.contains(p.ip) } }
+        // Servers that share a host name (AirVPN: one per country) are told apart by name alone: an address can move
+        // to another server, so a pin whose name is gone is gone rather than another server by its address.
+        let sharedHost = host != nil && Set(all.filter { Catalog.identity($0.hostname) == host }.map { $0.serverName ?? "" }).count > 1
+        if found.isEmpty, !p.ip.isEmpty, !sharedHost { found = all.filter { $0.ips.contains(p.ip) } }
         guard let first = found.first else { throw Catalog.Gone(provider: name, server: p.name) }
         // Unresolvable now: keep the pinned address, if it is one, but with the list's current key.
         guard let live = await usable(found, Location(provider: id)).first(where: { $0.hostname == first.hostname && $0.ipv4 != nil }) else {

@@ -347,7 +347,31 @@ nonisolated struct Mullvad: Provider {
     }
 
     var catalogue: @Sendable () async throws -> RelayList = { try Self.parse(try await Http.get("\(Self.api)/public/relays/wireguard/v2")) }
-    private func fetch() async throws -> RelayList { try await catalogue() }
+    private func fetch() async throws -> RelayList {
+        let list = try await catalogue()
+        Self.owned.set(Set(list.usable.filter(\.owned).map { Self.ownedKey($0.hostname, $0.ip, $0.publicKey) }))
+        return list
+    }
+
+    /// The relays Mullvad owns (host name, address, key) as the last list read said, wherever it was read; nil until one is.
+    static let owned = OwnedRelays()
+    private static func ownedKey(_ host: String, _ ip: String, _ key: String) -> String { "\(host)|\(ip)|\(key)" }
+
+    /// With "owned servers only" on, a kept tunnel suits only a server the last list confirmed Mullvad owns; before any
+    /// list was read this launch it is kept as before (turning the option on re-picks anyway), so an unreachable API at
+    /// launch never drops a tunnel the previous pick chose for its owned server.
+    func suits(_ server: Server, opts: [String: String]) -> Bool {
+        opts["owned"] != "on" || Self.owned.contains(Self.ownedKey(server.host, server.ip, server.publicKey)) ?? true
+    }
+
+    final class OwnedRelays: @unchecked Sendable {
+        private let lock = NSLock()
+        private var keys: Set<String>?
+        func set(_ new: Set<String>) { lock.lock(); keys = new; lock.unlock() }
+        /// Whether the last list read says Mullvad owns `key`'s relay; nil before any list was read.
+        func contains(_ key: String) -> Bool? { lock.lock(); defer { lock.unlock() }; return keys.map { $0.contains(key) } }
+        func reset() { lock.lock(); keys = nil; lock.unlock() }
+    }
 
     static func parse(_ body: Data) throws -> RelayList { try JSON.decode(RelayList.self, body, "Mullvad") }
 

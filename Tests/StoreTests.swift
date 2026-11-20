@@ -694,6 +694,22 @@ final class StoreTests: XCTestCase {
         XCTAssertTrue(exists("accounts.bin.bad"))
     }
 
+    /// What the widgets read (`setupStandIn`) is observed: once the keychain answers and the stand-in is gone, whoever
+    /// watched it is told, even where no other field changed.
+    func testTheStandInStateIsObserved() async throws {
+        _ = await signedIn()
+        let real = key.withLock { $0 }
+        key.withLock { $0 = nil }
+        let locked = store()
+        XCTAssertTrue(locked.setupStandIn)
+        key.withLock { $0 = real }
+        let told = Mutex(false)
+        withObservationTracking { _ = locked.setupStandIn } onChange: { told.withLock { $0 = true } }
+        locked.reloadHeld()
+        XCTAssertFalse(locked.setupStandIn)
+        XCTAssertTrue(told.withLock { $0 })
+    }
+
     /// Held at launch, then the file turns out not to open once the key answers: kept as ".bad" before anything replaces it.
     func testAFileFoundBadAfterUnlockIsKept() async throws {
         _ = await signedIn()

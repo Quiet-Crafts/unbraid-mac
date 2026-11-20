@@ -1,3 +1,4 @@
+import Network
 import XCTest
 
 /// The engine's first-match walk over a compiled config, independent of the app's own reading (`RestoreTraffic`): a
@@ -22,9 +23,24 @@ struct EngineWalk {
 
     private static func strings(_ v: Any?) -> [String] { (v as? [String]) ?? ((v as? String).map { [$0] } ?? []) }
 
-    private static func inCidr(_ ip: String, _ cidr: String) -> Bool {
-        guard !cidr.contains(":"), let n = Compiler.canonical(cidr), let bits = n.split(separator: "/").last else { return false }
-        return Compiler.canonical("\(ip)/\(bits)") == n
+    /// The address's bytes (4 or 16), nil if it is neither.
+    private static func bytes(_ ip: String) -> [UInt8]? {
+        if let a = IPv4Address(ip) { return Array(a.rawValue) }
+        if let a = IPv6Address(ip) { return Array(a.rawValue) }
+        return nil
+    }
+
+    /// Whether `ip` is inside `cidr`, for either family: a plain address is a host route. A different family never matches.
+    static func inCidr(_ ip: String, _ cidr: String) -> Bool {
+        let parts = cidr.split(separator: "/", maxSplits: 1).map(String.init)
+        guard let net = bytes(parts[0]), let addr = bytes(ip), net.count == addr.count else { return false }
+        guard let bits = parts.count == 2 ? Int(parts[1]) : net.count * 8, (0...net.count * 8).contains(bits) else { return false }
+        for i in 0..<net.count {
+            let take = min(8, max(0, bits - i * 8))
+            let mask = take == 0 ? 0 : UInt8(truncatingIfNeeded: 0xFF << (8 - take))
+            if net[i] & mask != addr[i] & mask { return false }
+        }
+        return true
     }
 
     /// Whether `r` matches.
@@ -47,7 +63,7 @@ struct EngineWalk {
             case "inbound": hit = hit && Self.strings(v).contains("tun")
             case "auth_user", "protocol": hit = false
             case "query_type": hit = hit && qtype.map { Self.strings(v).contains($0) } == true
-            case "ip_version": hit = hit && (v as? Int) == 4
+            case "ip_version": hit = hit && (ip.flatMap(Self.bytes).map { $0.count == ((v as? Int) == 6 ? 16 : 4) } ?? ((v as? Int) == 4))
             case "network": hit = hit && Self.strings(v).contains("tcp")
             case "port": hit = hit && ((v as? [Int])?.contains(443) ?? ((v as? Int) == 443))
             case "ip_cidr": hit = hit && ip.map { ip in Self.strings(v).contains { Self.inCidr(ip, $0) } } == true

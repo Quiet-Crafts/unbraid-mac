@@ -482,12 +482,23 @@ final class IvpnTests: XCTestCase {
         XCTAssertTrue(thrown { try Ivpn.link(nil, Location(provider: "ivpn", pinned: Server(name: "x", host: "x", ip: "203.0.113.20", publicKey: "", load: 0)), old) } is KeyNotReady)
     }
 
+    /// A challenge answers for the account it was asked for, not for one typed or scanned afterwards.
+    func testAChallengeFitsOnlyTheAccountItWasAskedFor() {
+        var challenge = Challenge(message: "m", field: Field(key: "code", label: "Code"))
+        challenge.asked = ["account": "i-AAAA-BBBB-CCCC"]
+        XCTAssertTrue(challenge.fits(["account": "i-AAAA-BBBB-CCCC"]))
+        XCTAssertFalse(challenge.fits(["account": "i-DDDD-EEEE-FFFF"]))
+        XCTAssertFalse(challenge.fits([:]))
+    }
+
     func testAFailedSignInSaysWhenItsSessionStaysOpen() async {
         var provider = Ivpn()
         provider.kyberOverride = IvpnFake()
         provider.newSession = { _ in (200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2"}}"#)) }
         provider.deleteSession = { _ in throw Fail("offline") }
         do { _ = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"]); XCTFail("signed in") } catch {
+            // Marked, so the app can still say so once the sign-in form has closed.
+            XCTAssertTrue(error is SessionLeftOpen)
             XCTAssertEqual(error.localizedDescription, "IVPN didn't send a quantum-safe key, so unbraid didn't finish signing in. Try again later. IVPN's new session couldn't be released either: remove it in the IVPN client area")
         }
         provider.deleteSession = { _ in (500, Data()) }

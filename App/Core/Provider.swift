@@ -27,9 +27,17 @@ nonisolated struct KeyNotReady: LocalizedError {
 
 /// What a failed sign-in tells the user: the provider's own reason, a status it answered with (then it isn't the
 /// connection), or that it couldn't be reached.
+/// A sign-in that failed after the provider opened a session unbraid then couldn't close: the slot needs removing by hand,
+/// so the app says so even when the form it started from has closed.
+nonisolated struct SessionLeftOpen: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
 nonisolated func signInFailure(_ error: Error, _ name: String) -> String {
     switch error {
     case let e as Fail: e.errorDescription ?? "\(name) didn't accept these details"
+    case let e as SessionLeftOpen: e.errorDescription ?? "\(name) didn't accept these details"
     case let e as AuthError: e.errorDescription ?? "\(name) didn't accept these details"
     case let e as SlotsFull: e.errorDescription ?? "\(name) didn't accept these details"
     case let e as Http.Status where e.code == 429: "\(name) is limiting sign-in attempts. Wait a few minutes, then try again."
@@ -76,6 +84,10 @@ nonisolated struct Challenge: Error, Sendable {
     var field: Field
     var image: Data? = nil
     var state: [String: String] = [:]
+    /// The sign-in fields as typed when this was asked: it answers for that account alone.
+    var asked: [String: String] = [:]
+    /// Whether `typed` (the sign-in fields now) are the ones this was asked for.
+    func fits(_ typed: [String: String]) -> Bool { asked.allSatisfy { typed[$0.key] == $0.value } }
 }
 
 /// A provider page setting and the values it accepts.
@@ -318,6 +330,9 @@ nonisolated protocol Provider: Sendable {
     func signOut(_ account: String) async -> Bool
     /// Whether a saved tunnel (from an earlier connection, or cached for when the provider is down) may be reused.
     func trusts(_ link: Link, _ account: String) -> Bool
+    /// Whether a server still suits the page settings `opts` as the provider's latest list says. Only an unpinned route's
+    /// kept tunnel is asked.
+    func suits(_ server: Server, opts: [String: String]) -> Bool
     /// Whether the account's key has a quantum-safe preshared key; nil = the provider has no quantum-safe exchange.
     func quantumSafe(_ account: String) -> Bool?
     /// The part of `trusts` that needs no account, for a tunnel taken over while the keychain can't be read yet.
@@ -400,6 +415,7 @@ nonisolated extension Provider {
     @concurrent func signOut(_ account: String) async -> Bool { true }
     func quantumSafe(_ account: String) -> Bool? { nil }
     func trusts(_ link: Link, _ account: String) -> Bool { true }
+    func suits(_ server: Server, opts: [String: String]) -> Bool { true }
     func vouches(_ link: Link) -> Bool { true }
     @concurrent func freshCountries(_ account: String) async throws -> (countries: [Country], live: Bool, published: Int64?, failed: Bool) { (try await countries(account), true, nil, false) }
     @concurrent func freshCountries(_ account: String, opts: [String: String]) async throws -> (countries: [Country], live: Bool, published: Int64?, failed: Bool) { try await freshCountries(account) }

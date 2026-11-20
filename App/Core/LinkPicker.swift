@@ -167,6 +167,7 @@ nonisolated enum LinkPicker {
                 } else if let k = keep[r.id], let a = applied?.route(r.id), !a.imported, a.loc == r.loc,
                           appliedAccounts[r.loc.provider] == accounts[r.loc.provider],
                           (r.loc.provider != "mullvad" || r.loc.pinned != nil || applied?.opt("mullvad", "owned") == setup.opt("mullvad", "owned")),
+                          r.loc.pinned != nil || providers(r.loc.provider)?.suits(k.server, opts: setup.opts[r.loc.provider] ?? [:]) != false,
                           (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, k))), dialable(k), trusted(k, r, accounts, providers),
                           disguised(setup, r, k), AutoProtocol.matches(r, k) {
                     // `trusted` also requires the provider and a signed-in account: it vouches for a server, not for the

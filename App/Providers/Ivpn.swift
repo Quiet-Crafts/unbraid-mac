@@ -216,7 +216,7 @@ nonisolated struct Ivpn: Provider {
             // The session IVPN just opened is of no use: freed, or the user is told it still holds one of the account's devices.
             if let freed = try? await deleteSession(token), Self.released(freed) { throw error }
             let said = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-            throw Fail("\(said). IVPN's new session couldn't be released either: remove it in the IVPN client area")
+            throw SessionLeftOpen("\(said). IVPN's new session couldn't be released either: remove it in the IVPN client area")
         }
     }
 

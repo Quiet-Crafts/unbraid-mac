@@ -125,6 +125,23 @@ final class AirApiTests: XCTestCase {
         XCTAssertTrue(invalidRevoked)
     }
 
+    /// Servers share one host name per country: a pin is found by host and name, and one whose name is gone is not
+    /// matched to another server that now has its address.
+    func testPinOnASharedHostIsNotFoundByAddressAlone() async throws {
+        let key = String(repeating: "A", count: 43) + "="
+        let nl = ["Alpha": "203.0.113.1", "Beta": "203.0.113.2"].map { name, ip in
+            Catalog.Entry(vpn: "wireguard", country: "Netherlands", serverName: name, hostname: "nl.example.net", wgpubkey: key, ips: [ip])
+        }
+        let account = KeyAccount(privateKey: key, address: ["10.0.0.2/32"], dns: ["10.0.0.1"], port: 1637, mtu: 1420)
+        let p = AirVpn()
+        func pinned(_ name: String, ip: String) -> Location {
+            Location(provider: "airvpn", pinned: Server(name: name, host: "nl.example.net", ip: ip, publicKey: key, load: 0))
+        }
+        let found = try await p.link(pinned("Beta", ip: "203.0.113.9"), account) { nl }
+        XCTAssertEqual(found.server.name, "Beta")
+        await ProviderFixtures.rejects { _ = try await p.link(pinned("Gamma", ip: "203.0.113.2"), account) { nl } }
+    }
+
     func testOldAccountDecodes() throws {
         let old = #"{"privateKey":"p","address":[],"dns":[],"port":1637,"mtu":1420}"#
         let a = try AirVpn().keyAccount(old)

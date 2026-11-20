@@ -158,10 +158,13 @@ final class AppModel {
             signing.remove(id)
             if resetWaiting, signing.isEmpty { resetWaiting = false; resetIfEmpty() }
         }
+        let typed = Dictionary(uniqueKeysWithValues: provider.fields.map { f in
+            (f.key, f.secret ? input[f.key] ?? "" : (input[f.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        })
+        // A challenge (captcha, second step) belongs to the account it was asked for: another account's sign-in starts over.
+        if let challenge = challenges[id], !challenge.fits(typed) { challenges[id] = nil }
         do {
-            var clean = Dictionary(uniqueKeysWithValues: provider.fields.map { f in
-                (f.key, f.secret ? input[f.key] ?? "" : (input[f.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
-            })
+            var clean = typed
             if let challenge = challenges[id] {
                 clean.merge(challenge.state) { _, new in new }
                 clean[challenge.field.key] = challengeAnswer(challenge.field, input[challenge.field.key] ?? "")
@@ -202,12 +205,16 @@ final class AppModel {
             refreshCountries(id)
             Task { await countInUse(id) }
         } catch let challenge as Challenge {
-            if forms.version(id) == formVersion { challenges[id] = challenge }
+            // Only for the form and account it was asked for: a reply to an earlier one is dropped.
+            if forms.version(id) == formVersion { var c = challenge; c.asked = typed; challenges[id] = c }
             refuseSecrets(provider, input)
         } catch {
             if forms.version(id) == formVersion {
                 challenges[id] = nil
                 if let full = error as? SlotsFull { slotsFull[id] = full }
+            } else if error is SessionLeftOpen {
+                // The form was closed meanwhile, so its error will never show: the app's notice says the slot is still held.
+                warn(signInFailure(error, provider.name))
             }
             refuseSecrets(provider, input)
             showError(signInFailure(error, provider.name), url: (error as? AuthError)?.url ?? (error as? SlotsFull)?.url)

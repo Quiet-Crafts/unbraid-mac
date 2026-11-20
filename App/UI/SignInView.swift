@@ -310,6 +310,8 @@ private struct ProviderForm: View {
             model.formError[provider.id] = "No QR code found in the picture"
             return
         }
+        // A scanned account replaces what was typed: a challenge asked for the other one goes, as when typing.
+        if let challenge = model.challenges[provider.id], key != challenge.field.key { model.closeProviderForm(provider.id); values[challenge.field.key] = nil }
         values[key] = value
         pastedQR = changeCount.map { (key, value, $0) }
         model.formError[provider.id] = nil

@@ -24,7 +24,7 @@ final class Store {
     /// Sealed files that exist but couldn't be opened because the keychain couldn't be read at launch, or that won't
     /// open and couldn't be kept as ".bad". Never written over (an empty setup would replace the real one); read again
     /// once the key is available, and they replace what is in memory, which was never saved.
-    @ObservationIgnored private var held: Set<String> = []
+    private var held: Set<String> = []
     /// The setup file was saved by a newer unbraid (`Setup.Newer`): what shows is a stand-in, the file is never copied
     /// as ".bad" nor written over, and nothing may connect with the stand-in until the user updates or starts fresh.
     private(set) var newerSetup = false

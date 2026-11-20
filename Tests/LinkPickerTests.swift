@@ -15,6 +15,8 @@ private struct Fake: Provider {
     var failIfCalled = false
     var cancelBeforeReturning = false
     var missingPin = false
+    /// What the provider's latest list says about a kept server under the page settings.
+    var suitsServer = true
     /// What the provider says about taking a disguised tunnel; nil = nothing.
     var disguise: Disguise? = nil
     var id = "fake"
@@ -40,6 +42,7 @@ private struct Fake: Provider {
         return best
     }
     func trusts(_ link: Link, _ account: String) -> Bool { trusted }
+    func suits(_ server: Server, opts: [String: String]) -> Bool { suitsServer }
 }
 
 final class LinkPickerTests: XCTestCase {
@@ -216,6 +219,24 @@ final class LinkPickerTests: XCTestCase {
             accounts: ["fake": "acc"], last: [:], offline: true) { _ in Fake(best: [], failIfCalled: true) }
         XCTAssertEqual(result.links["1"]?.server, a)
         XCTAssertEqual(result.blocked, ["2": .waiting])
+    }
+
+    /// A kept tunnel on a server the provider's latest list no longer suits (Mullvad's owned-only setting) isn't kept;
+    /// a pinned route's server always stays.
+    func testKeptLinkOnAServerThatNoLongerSuitsIsNotKept() async throws {
+        let s = setup(route("1")), a = self.a
+        let run: (Setup, Bool) async throws -> LinkPicker.Result = { s, suits in
+            try await LinkPicker.pick(s, keep: ["1": link(a)], applied: s, appliedAccounts: ["fake": "acc"],
+                accounts: ["fake": "acc"], last: [:], offline: true) { _ in Fake(best: [], failIfCalled: true, suitsServer: suits) }
+        }
+        let kept = try await run(s, true)
+        XCTAssertEqual(kept.links["1"]?.server, a)
+        let dropped = try await run(s, false)
+        XCTAssertTrue(dropped.links.isEmpty)
+        XCTAssertEqual(dropped.blocked["1"], .waiting)
+        let pinned = setup(route("1", pinned: a))
+        let stays = try await run(pinned, false)
+        XCTAssertEqual(stays.links["1"]?.server, a)
     }
 
     func testOfflinePickingUsesOnlyTheCurrentAccountsTrustedCache() async throws {
