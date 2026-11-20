@@ -372,6 +372,7 @@ final class Connection {
                     fallback = ""
                 }
                 if await tunnel.noteSetup(stamp, fallback: fallback) {
+                    Log.info("setup stamp: the extension has the latest")
                     notedStamp = stamp
                     failures = 0
                 } else {
