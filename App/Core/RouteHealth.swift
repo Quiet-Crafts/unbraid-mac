@@ -33,7 +33,9 @@ nonisolated enum RouteHealth: Equatable, Sendable {
         let cause = othersAnswer ? " Your other routes answer, so the trouble is at the server or its own connection."
             : " unbraid can't tell whether the server or this network is the cause."
         // An own server has no other server to go to; a pinned server or a dedicated address is the user's choice to change.
-        let why = r.map { $0.imported ? " It never moves your own server's route somewhere else." : " To use another server, click the pin at the top of its page (Change Location…)." } ?? ""
+        // A file downloaded from a provider (PureVPN's, unused for a while) may simply have expired. Not for a Tailscale exit.
+        let expired = r.map { $0.imported && $0.tsExit == nil } == true ? " If this file came from a provider, it may have expired: download a new one." : ""
+        let why = r.map { $0.imported ? " It never moves your own server's route somewhere else." + expired : " To use another server, click the pin at the top of its page (Change Location…)." } ?? ""
         return first + cause + " unbraid keeps checking." + why
     }
 

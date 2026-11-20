@@ -1179,6 +1179,7 @@ extension AppModel {
             for w in NSApp.windows { w.undoManager?.removeAllActions() }
             guard let self else { return }
             refusedProfile = nil
+            autoSwitch.replaced()
             notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n")
         }, finished: { [weak self] applied in
             if !applied { self?.warn("The backup wasn't restored. Nothing changed.") }

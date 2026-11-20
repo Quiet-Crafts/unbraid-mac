@@ -121,6 +121,25 @@ final class AutoSwitchRunTests: XCTestCase {
 
     /// Taken for unrecognised, then its own routers answer for no remembered network: the same network still, so a hand
     /// pick made meanwhile stays; a remembered network answering is real news.
+    func testReplacedSetupIsDecidedAgainAndRetiresWhatWasDecided() {
+        var run = settled()
+        let before = run.generation
+        _ = run.handle(.pickedByHand, now: at(8))
+        XCTAssertTrue(run.picked)
+        XCTAssertNotNil(run.acted)
+        // A restore with the same rules: the hand pick and the decision are forgotten, the rule is applied again.
+        let action = run.handle(.replaced, now: at(10))
+        XCTAssertNil(run.acted)
+        XCTAssertFalse(run.picked)
+        XCTAssertGreaterThan(run.generation, before)
+        XCTAssertEqual(action, .wait(at(15)), "after the settle time")
+        XCTAssertEqual(run.handle(.timer, now: at(15)), .decide(mark: rules.identity("a,b"), acted: nil))
+        // A switch decided before the restore no longer matches the generation, so its report changes nothing.
+        let stale = run.generation
+        _ = run.handle(.replaced, now: at(20))
+        XCTAssertNotEqual(run.generation, stale)
+    }
+
     func testALateFingerprintOfTheSameNetwork() {
         var run = Run(rules: rules, now: t0)
         XCTAssertEqual(drive(&run, [(0, [.profiles(names), .connected(true), pending(Self.cafe)])], until: 25), [unrecognised])

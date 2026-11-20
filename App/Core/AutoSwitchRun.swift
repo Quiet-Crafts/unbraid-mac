@@ -45,6 +45,9 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
         case profiles([String])
         /// A profile was chosen by hand (the menu bar, the window, Control Center, Shortcuts).
         case pickedByHand
+        /// The whole setup was replaced (a restore): what was decided or waiting is retired, and the rule for this network is
+        /// followed again from the start.
+        case replaced
         /// The switch asked for decision `generation` wasn't made (the connection or the network changed meanwhile).
         case unapplied(Int)
         /// Nothing may be decided now: a profile switch is still pending, or the setup is a stand-in.
@@ -150,6 +153,11 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
                 generation += 1
                 picked = reading != .offline
                 if let here = here(at: now) { acted = AutoSwitch.Acted(mark: here, rules: rules) }
+            case .replaced:
+                generation += 1
+                acted = nil
+                picked = false
+                since = now
             case .unapplied(let g):
                 // Owed again, after the settle time, unless something newer was decided or picked meanwhile.
                 if g == generation, acted != nil { acted = nil; since = now }

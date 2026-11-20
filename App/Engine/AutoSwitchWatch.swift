@@ -79,6 +79,12 @@ final class AutoSwitchWatch {
         apply(run.handle(.pickedByHand))
     }
 
+    /// The setup was replaced (a restore): any switch still waiting is dropped and the network's rule is applied again.
+    func replaced() {
+        own = nil
+        apply(run.handle(.replaced))
+    }
+
     private func reconcile() {
         guard let m = model else { return }
         let store = m.store

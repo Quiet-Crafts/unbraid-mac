@@ -414,6 +414,8 @@ nonisolated struct ImportGuide: Hashable, Sendable {
     var openVpn: Bool
     var `where`: String
     var url: String
+    /// What to know before downloading, shown under the provider's name.
+    var note: String? = nil
 }
 
 nonisolated enum Providers {
@@ -426,7 +428,8 @@ nonisolated enum Providers {
     }
 
     static let imports = [
-        ImportGuide(id: "purevpn", name: "PureVPN", openVpn: false, where: "Member Area → Manual configuration → WireGuard", url: "https://my.purevpn.com/"),
+        ImportGuide(id: "purevpn", name: "PureVPN", openVpn: false, where: "Member Area → Manual configuration → WireGuard", url: "https://my.purevpn.com/",
+                    note: "Import and connect within about 30 minutes of downloading: PureVPN files that aren't used soon stop working."),
         ImportGuide(id: "cyberghost", name: "CyberGhost", openVpn: true, where: "My Devices → Configure new device → OpenVPN", url: "https://my.cyberghostvpn.com/"),
     ]
 }

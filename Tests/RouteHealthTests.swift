@@ -25,9 +25,9 @@ final class RouteHealthTests: XCTestCase {
     /// The card's text counts what can't connect, and says why the route stays where it is.
     func testExplanationCountsAndReason() {
         XCTAssertEqual(RouteHealth.explanation(home, apps: 3, sites: 1),
-                       "Its 3 apps and 1 website can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else.")
+                       "Its 3 apps and 1 website can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else. If this file came from a provider, it may have expired: download a new one.")
         XCTAssertEqual(RouteHealth.explanation(home, apps: 1, sites: 0),
-                       "Its 1 app can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else.")
+                       "Its 1 app can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. It never moves your own server's route somewhere else. If this file came from a provider, it may have expired: download a new one.")
         XCTAssertEqual(RouteHealth.explanation(pinned, apps: 0, sites: 2),
                        "Its 2 websites can't connect until it answers again. unbraid can't tell whether the server or this network is the cause. unbraid keeps checking. To use another server, click the pin at the top of its page (Change Location…).")
         XCTAssertEqual(RouteHealth.explanation(pinned, apps: 0, sites: 0),
@@ -35,7 +35,22 @@ final class RouteHealthTests: XCTestCase {
         XCTAssertFalse(RouteHealth.explanation(nil, apps: 0, sites: 0).contains("Change Location"))
         // Another route answering meanwhile: the network reaches the internet, so the server's side is the likelier.
         XCTAssertEqual(RouteHealth.explanation(home, apps: 1, sites: 0, othersAnswer: true),
-                       "Its 1 app can't connect until it answers again. Your other routes answer, so the trouble is at the server or its own connection. unbraid keeps checking. It never moves your own server's route somewhere else.")
+                       "Its 1 app can't connect until it answers again. Your other routes answer, so the trouble is at the server or its own connection. unbraid keeps checking. It never moves your own server's route somewhere else. If this file came from a provider, it may have expired: download a new one.")
+    }
+
+    /// A file imported from a provider may have expired; a provider's own route and a Tailscale exit say nothing of it.
+    func testExplanationMentionsExpiryForImportedFilesOnly() {
+        var ts = Route(id: "ts")
+        ts.tsExit = "100.64.0.1"
+        XCTAssertTrue(RouteHealth.explanation(home, apps: 1, sites: 0).contains("it may have expired: download a new one."))
+        XCTAssertFalse(RouteHealth.explanation(pinned, apps: 1, sites: 0).contains("expired"))
+        XCTAssertFalse(RouteHealth.explanation(ts, apps: 1, sites: 0).contains("expired"))
+    }
+
+    /// The PureVPN guide warns that its files expire when not used soon.
+    func testPureVpnGuideNotesExpiry() {
+        XCTAssertTrue(Providers.imports.first { $0.id == "purevpn" }?.note?.contains("30 minutes") == true)
+        XCTAssertNil(Providers.imports.first { $0.id == "cyberghost" }?.note)
     }
 
     /// The switch is offered for an own server, not for a provider route or a Tailscale exit; it shows what is checked.

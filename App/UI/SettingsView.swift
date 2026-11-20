@@ -332,7 +332,7 @@ private struct ConnectionsTab: View {
             }
             Section {
                 ForEach(Providers.imports, id: \.id) { g in
-                    SettingsRow(title: g.name, caption: g.where, symbol: "person", mark: String(g.name.prefix(1))) {
+                    SettingsRow(title: g.name, caption: g.note.map { g.where + "\n" + $0 } ?? g.where, symbol: "person", mark: String(g.name.prefix(1))) {
                         if let u = URL(string: g.url) { SwiftUI.Link("Download Config", destination: u).contentButton().controlSize(.small) }
                         Button("Import File…") { importer.file(g.openVpn ? .ovpn : .wg, prefix: g.name) }.contentButton().controlSize(.small)
                     }
