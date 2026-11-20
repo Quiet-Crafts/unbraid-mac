@@ -660,4 +660,75 @@ final class LimitsTests: XCTestCase {
         XCTAssertTrue(try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(setup)).testing.isEmpty)
     }
 
+    // MARK: Other apps' connections
+
+    private func airSetup(routes: Int, default id: String = "a") -> Setup {
+        var s = Setup()
+        s.routes = (0..<routes).map { Route(id: ["a", "b", "c", "d"][$0], loc: Location(provider: "airvpn")) }
+        s.defaultRoute = id
+        s.apps = Dictionary(uniqueKeysWithValues: s.routes.map { ("app.\($0.id)", $0.id) })
+        return s
+    }
+
+    func testWarningCountsTheConnectionsOtherAppsHold() {
+        let limit = Limit(unit: "connection", perTunnel: true, value: 5)
+        let old = airSetup(routes: 1), new = airSetup(routes: 2)
+        // Alone, two tunnels are fine; with four held elsewhere the change would make six.
+        XCTAssertNil(Limits.over(old, new) { _ in limit })
+        let over = Limits.over(old, new, others: { _ in 4 }) { _ in limit }
+        XCTAssertEqual(over, Limits.Over(provider: "airvpn", limit: 5, count: 6, unit: "connection", others: 4))
+        XCTAssertEqual(Limits.warning("AirVPN", 5, "connection", 6, others: 4),
+                       "AirVPN allows 5 connections. This would make it 6, 4 of them in your other apps. Over the limit, routes can stop working without an error.")
+        XCTAssertTrue(Limits.warning("AirVPN", 5, "connection", 6, others: 1).contains("6, 1 of them in your other apps."))
+        XCTAssertEqual(Limits.warning("AirVPN", 5, "connection", 6), "AirVPN allows 5 connections. This would make it 6. Over the limit, routes can stop working without an error.")
+        // Other apps' connections never make a change that adds no tunnel of unbraid's a question.
+        XCTAssertNil(Limits.over(new, new, others: { _ in 4 }) { _ in limit })
+        XCTAssertNil(Limits.over(new, old, others: { _ in 4 }) { _ in limit })
+        XCTAssertTrue(AutoSwitchRun.over(new, others: { _ in 4 }) { _ in limit })
+        XCTAssertFalse(AutoSwitchRun.over(new) { _ in limit })
+        XCTAssertEqual(TestingRoutes.choose(["b"], setup: { var s = old; s.routes.append(Route(id: "b", loc: Location(provider: "airvpn"))); return s }(), others: { _ in 4 }) { _ in limit }.routes, [])
+    }
+
+    func testOtherAppsCountIsTiedToTheAccountAndTrustedForHalfAnHour() {
+        let p = "airvpn-test-cache", t0 = Date(timeIntervalSince1970: 1_000_000)
+        // 5 open, 2 of them unbraid's own: 3 are other apps'.
+        Limits.counted(p, account: "acc", all: 5, own: 2, now: t0)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0.addingTimeInterval(60)), 3)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0.addingTimeInterval(29 * 60)), 3)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0.addingTimeInterval(30 * 60)), 0)
+        // Another sign-in starts from nothing; a clock set back isn't trusted.
+        XCTAssertEqual(Limits.others(p, account: "other", now: t0.addingTimeInterval(60)), 0)
+        XCTAssertEqual(Limits.others(p, account: nil, now: t0.addingTimeInterval(60)), 0)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0.addingTimeInterval(-60)), 0)
+        // The provider counted fewer than unbraid says it runs: none, never negative.
+        Limits.counted(p, account: "acc", all: 1, own: 2, now: t0)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0), 0)
+        // Unbraid's tunnels changed while it was asked: the figure is about neither moment, so it is dropped.
+        Limits.counted(p, account: "acc", all: 5, own: 2, now: t0)
+        Limits.counted(p, account: "acc", all: 6, own: 2, ownAfter: 3, now: t0)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0), 0)
+        // A provider that didn't say drops the old figure too.
+        Limits.counted(p, account: "acc", all: 5, own: 2, now: t0)
+        Limits.counted(p, account: "acc", all: nil, own: 2, now: t0)
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0), 0)
+        Limits.counted(p, account: "acc", all: 5, own: 2, now: t0)
+        Limits.forgetExcept(["nord"])
+        XCTAssertEqual(Limits.others(p, account: "acc", now: t0), 0)
+    }
+
+    func testTheLimitLineNeverShowsFewerInUseThanUnbraidsOwn() {
+        XCTAssertEqual(Limits.line("AirVPN", 5, "connection", 1, all: 3), "AirVPN allows 5 connections. 3 are in use, 1 of them by unbraid.")
+        XCTAssertEqual(Limits.line("AirVPN", 5, "connection", 2, all: 1), "AirVPN allows 5 connections. 2 are in use, by unbraid.")
+        XCTAssertEqual(Limits.line("AirVPN", 5, "connection", 0, all: 1), "AirVPN allows 5 connections. 1 is in use, 0 of them by unbraid.")
+    }
+
+    func testOnlyRunningTunnelsCountAsUnbraidsOwn() {
+        let setup = airSetup(routes: 3)
+        let server = Server(name: "x", host: "h", ip: "1.2.3.4", publicKey: "k", load: 0)
+        let peer = WgPeer(name: "x", privateKey: "p", address: ["10.0.0.2/32"], publicKey: "k", endpoint: "1.2.3.4:1637", allowedIps: ["0.0.0.0/0"])
+        // One route has a tunnel, one is blocked (no link) and one is not started: only the first is unbraid's.
+        XCTAssertEqual(Limits.running(setup, "airvpn", links: ["a": .wg(server, peer)]), 1)
+        XCTAssertEqual(Limits.running(setup, "airvpn", links: [:]), 0)
+        XCTAssertEqual(Limits.running(setup, "nord", links: ["a": .wg(server, peer)]), 0)
+    }
 }

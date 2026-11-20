@@ -111,6 +111,15 @@ final class AppModel {
             }
         }
         apps.onChange = { AppModel.shared.appsChanged() }
+        // What providers say other apps hold, for the warning before a change that would go over a limit: asked now, and again
+        // before the half hour it is trusted for runs out.
+        Task {
+            while !Task.isCancelled {
+                Limits.forgetExcept(Set(accounts.keys))
+                for id in accounts.keys.sorted() { await countInUse(id) }
+                try? await Task.sleep(for: .seconds(1500))
+            }
+        }
         // A menu bar app can stay open for days; check the daily catalogue cache each hour.
         Task {
             while !Task.isCancelled {
@@ -191,6 +200,7 @@ final class AppModel {
                         let i = s.routes.firstIndex(where: { $0.id == d.id }) { s.routes[i].loc = Location(provider: id) }
             }
             refreshCountries(id)
+            Task { await countInUse(id) }
         } catch let challenge as Challenge {
             if forms.version(id) == formVersion { challenges[id] = challenge }
             refuseSecrets(provider, input)
@@ -232,7 +242,7 @@ final class AppModel {
             defer { signingOut.remove(blob); signOutTasks[blob] = nil }
             if last { await vpn.disconnect() }
             // Only the account this sign-out was for: one signed in again meanwhile stays.
-            if accounts[provider] == blob { store.account(provider, nil) }
+            if accounts[provider] == blob { store.account(provider, nil); Limits.forgetExcept(Set(accounts.keys)) }
             // Released alongside the extension's erase (which can take a minute), not after it.
             let released = Task {
                 guard let p = Providers.get(provider) else { return true }
@@ -453,14 +463,14 @@ final class AppModel {
                 guard let live else { return [:] }
                 return live.links.filter { id, link in s.route(id)?.loc == live.setup.route(id)?.loc && currentServers[id] == link.server }
             }
-            let over = Limits.over(old, new, oldLinks: usable(old), newLinks: usable(new)) { limits[$0] }
+            let over = Limits.over(old, new, oldLinks: usable(old), newLinks: usable(new), others: { Limits.others($0, account: currentAccounts[$0]) }) { limits[$0] }
             if let over, over != accepted {
                 let name = Providers.get(over.provider)?.name ?? over.provider
                 let candidate = live.flatMap { Limits.shareAnchor(old, running: $0.setup, servers: vpn.state.servers, provider: over.provider) }
                 let anchor = candidate?.0
                 let server = candidate?.1
                 waiting = true
-                limitQueue.append(LimitAsk(valid: { [weak self] in self?.routeEdits.targets(ticket) == targets && valid() }, text: Limits.warning(name, over.limit, over.unit, over.count), server: server?.name,
+                limitQueue.append(LimitAsk(valid: { [weak self] in self?.routeEdits.targets(ticket) == targets && valid() }, text: Limits.warning(name, over.limit, over.unit, over.count, others: over.others), server: server?.name,
                     confirm: { [weak self] in self?.checkLimit(change, ticket: ticket, after: after, accepted: over, valid: valid, finished: finished) },
                     share: anchor.flatMap { a in server.map { sv in { [weak self] in
                         var handed = false
@@ -1053,6 +1063,32 @@ final class AppModel {
         let list = names.joined(separator: ", ")
         let which = device.map { " The device is named \($0)." } ?? ""
         warn("Couldn't release this Mac's device slot at \(list). Remove it in your \(list) account\(names.count > 1 ? "s" : "").\(which)")
+    }
+
+    // MARK: Connections other apps hold
+
+    /// Separate tunnels unbraid runs now to `provider`: those with a link installed, none while the VPN is off. Nil when
+    /// the running record can't be read to tell.
+    private func ownTunnels(_ provider: String) async -> Int? {
+        guard vpn.state.phase == .on, let running = vpn.running else { return 0 }
+        guard let record = await Running.load(), record.setup == running else { return nil }
+        let servers = vpn.state.servers
+        return Limits.running(running, provider, links: record.links.filter { servers[$0.key] == $0.value.server })
+    }
+
+    /// What the provider counts in use for this account, every app's (nil where it doesn't say), kept for the warning before
+    /// a change. Dropped when unbraid's own tunnels changed while it was asked: the figure is then about neither.
+    @discardableResult
+    func countInUse(_ id: String) async -> Int? {
+        guard let account = accounts[id], let provider = Providers.get(id) else { return nil }
+        guard let own = await ownTunnels(id) else { return nil }
+        // The account is looked at again right before it is used: a sign-out meanwhile sends nothing.
+        guard accounts[id] == account else { return nil }
+        let all = (try? await provider.inUse(account)) ?? nil
+        let after = await ownTunnels(id)
+        guard accounts[id] == account else { return nil }
+        Limits.counted(id, account: account, all: all, own: own, ownAfter: after ?? -1)
+        return all
     }
 
     private func retryAirCleanup() {

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// AirVPN issues an address and preshared key per device. Sign-in accepts an API key or the whole .conf. All servers share its
 /// [Peer] PublicKey: neither a live list nor a catalogue or pin can replace it. Status supplies healthy `ip_v4_in1`
@@ -58,7 +59,9 @@ nonisolated struct AirVpn: KeyProvider {
               let port = Int(peer.endpoint[peer.endpoint.index(after: colon)...]) else { return false }
         let host = String(peer.endpoint[..<colon])
         guard host == server.ip || (entries.contains(host) && Catalog.Entry.publicIPv4(host)) else { return false }
-        guard port == a.port || ([1637, 47107].contains(port) && ports.contains(port)) else { return false }
+        // 51820 only on the alternative entry, the one AirVPN's servers take it on.
+        let onAlternative = entries.count == 2 && host == entries[1]
+        guard port == a.port || ([1637, 47107].contains(port) && ports.contains(port)) || (port == 51820 && ports.contains(port) && onAlternative) else { return false }
         return peer.publicKey == peerKey(server, a)
     }
 
@@ -80,7 +83,12 @@ nonisolated struct AirVpn: KeyProvider {
         }
     }
     struct Reply: Decodable { var devices: [DeviceInfo]?; var id: String?; var error: String? }
-    struct UserInfo: Decodable { struct User: Decodable { var premium: Bool?; var expiration_unix: Int64? }; var user: User?; var error: String? }
+    /// The open connections of the account, every app's: only how many is read, whatever each one holds.
+    struct Sessions: Decodable {
+        var count: Int?
+        init(from decoder: Decoder) throws { count = (try? decoder.unkeyedContainer())?.count }
+    }
+    struct UserInfo: Decodable { struct User: Decodable { var premium: Bool?; var expiration_unix: Int64? }; var user: User?; var sessions: Sessions?; var error: String? }
     var api: @Sendable (String, String, [String: String]) async throws -> Data = { service, key, query in
         let q = query.sorted { $0.key < $1.key }.map { "\(Http.enc($0.key))=\(Http.enc($0.value))" }.joined(separator: "&")
         return try await Http.get("https://airvpn.org/api/\(service)/" + (q.isEmpty ? "" : "?" + q), headers: ["API-KEY": key])
@@ -254,6 +262,7 @@ nonisolated struct AirVpn: KeyProvider {
         a.apiKey = key; a.device = d.name; a.deviceKey = deviceKey; a.deviceId = d.id; a.ownDevice = own
         return JSON.encode(a)
     }
+
     @concurrent func signOut(_ account: String) async -> Bool {
         guard let a = try? keyAccount(account), a.ownDevice == true, let key = a.apiKey, let id = a.deviceId else { return true }
         let item = AirCleanup.Record(key: key, id: id)
@@ -279,7 +288,15 @@ nonisolated struct AirVpn: KeyProvider {
         guard let u = info.user, u.premium == true, let expiration = u.expiration_unix, expiration > 0 else { return "No active plan" }
         return "\(Date().timeIntervalSince1970 > Double(expiration) ? "Ended on" : "Paid until") \(ProviderStatus.publishedOn(expiration))"
     }
-    /// WireGuard on 1637 and 47107. OpenVPN comes from AirVPN's generator, made for this device when a route connects: UDP
+    /// The connections the account has open now, every app's, as AirVPN counts them. Nil when it can't say: no API key
+    /// (a pasted config), AirVPN refusing or failing. An error reply is never read as none in use.
+    @concurrent func inUse(_ account: String) async throws -> Int? {
+        guard let key = try keyAccount(account).apiKey else { return nil }
+        guard let info = try? JSON.decode(UserInfo.self, try await api("userinfo", key, [:]), "AirVPN"), info.error == nil else { return nil }
+        return info.sessions?.count
+    }
+
+    /// WireGuard on 1637 and 47107, and 51820 on the alternative entry. OpenVPN comes from AirVPN's generator, made for this device when a route connects: UDP
     /// 443 on the standard entry (tls-auth), TCP 443 on the alternative one (tls-crypt, which hides even the OpenVPN
     /// start). It needs the API key. Automatic is WireGuard, and OpenVPN TCP once a network blocks it (`AutoProtocol`).
     var protocols: [ProtocolChoice] {
@@ -301,6 +318,9 @@ nonisolated struct AirVpn: KeyProvider {
         "openvpn_udp": OpenVpnKind(generator: "openvpn_1_udp_443", entry: 1, transport: "udp", wrap: "tls-auth"),
         "openvpn_tcp": OpenVpnKind(generator: "openvpn_3_tcp_443", entry: 2, transport: "tcp", wrap: "tls-crypt"),
     ]
+    /// A port the servers take on one entry address only, with that entry's number (1 standard, 2 alternative, in the order
+    /// of the server's addresses). A tunnel that doesn't know that entry takes another port instead.
+    static let portEntry: [Int: Int] = [51820: 2]
     static let noKey = "AirVPN's OpenVPN needs a sign-in with an API key. Sign in again with one, or choose WireGuard for this route"
 
     /// Whether the signed-in account can ask for OpenVPN profiles: it has an API key and a device.
@@ -327,7 +347,7 @@ nonisolated struct AirVpn: KeyProvider {
         if loc.pinned == nil { all = try await entries(a) } else { all = try? await entries(a) }
         let link = try await link(loc, a) { if let all { return all }; throw Fail("AirVPN server list unavailable") }
         guard case .wg(let sv, let peer, _, _) = link else { return link }
-        let offered = a.port == 47107 ? [47107, 1637] : [1637, 47107]
+        let offered: [Int] = (a.port == 47107 ? [47107, 1637] : [1637, 47107]) + [51820]
         let found = all?.first { $0.ips.contains(sv.ip) && $0.serverName == sv.name }
         let addresses = found?.ips.count == 2 ? found!.ips : []
         guard let kind, let key = a.apiKey else { return .wg(sv, peer, ports: offered, entries: addresses) }
@@ -353,6 +373,45 @@ nonisolated struct AirVpn: KeyProvider {
         guard let profile = try? Manual.parseOvpn(text, name: sv.name, username: "", password: "") else { throw mismatch }
         guard Self.dialled(profile, at: at, kind) != nil else { throw mismatch }
         return .ovpn(sv, profile)
+    }
+
+    // MARK: Server history
+
+    var reportsQuality: Bool { true }
+    /// AirVPN's public history of one server, no login: delay and packet loss, hourly, over a week.
+    var history: @Sendable (String) async throws -> Data = { name in
+        try await Http.get("https://airvpn.org/api/server/?name=\(Http.enc(name))&range=week&window=3600&panels=ploss,rtt&format=json")
+    }
+    private static let qualities = Mutex<[String: (at: Date, quality: Quality)]>([:])
+    static let qualityKept: TimeInterval = 600
+
+    /// The server's last week as AirVPN measured it. Kept ten minutes per server; nil when the name is odd or AirVPN can't say.
+    @concurrent func quality(_ server: String) async -> Quality? {
+        guard server.wholeMatch(of: /[A-Za-z][A-Za-z0-9]{1,30}/) != nil else { return nil }
+        if let kept = Self.qualities.withLock({ $0[server] }), Date().timeIntervalSince(kept.at) < Self.qualityKept { return kept.quality }
+        guard let data = try? await history(server), let found = try? Self.parseQuality(data) else { return nil }
+        Self.qualities.withLock { $0[server] = (Date(), found) }
+        return found
+    }
+
+    /// The two series as values, oldest first; a missing or non-numeric sample is NaN (a gap, not zero). Nil on an error
+    /// reply, or when neither series has a sample.
+    static func parseQuality(_ body: Data) throws -> Quality? {
+        guard let root = try JSON.object(body, "AirVPN") as? [String: Any] else { throw Fail("Unexpected reply from AirVPN") }
+        if root["error"] != nil { return nil }
+        func values(_ panel: String, _ series: String) -> [Float] {
+            let rows = (((root["panels"] as? [String: Any])?[panel] as? [String: Any])?["series"] as? [String: Any])?[series] as? [Any] ?? []
+            return rows.map { row in
+                guard let pair = row as? [Any], pair.count > 1 else { return .nan }
+                let v: Double?
+                if let n = pair[1] as? NSNumber, CFGetTypeID(n) != CFBooleanGetTypeID() { v = n.doubleValue }
+                else if let t = pair[1] as? String { v = Double(t) }
+                else { v = nil }
+                return v.flatMap { $0.isFinite && $0 >= 0 ? Float($0) : nil } ?? .nan
+            }
+        }
+        let delay = values("rtt", "rtt"), loss = values("ploss", "ploss")
+        return delay.isEmpty && loss.isEmpty ? nil : Quality(delay: delay, loss: loss, days: 7)
     }
 
     /// The one address a profile dials, read from what the engine will run (the parsed profile, never the text): a single

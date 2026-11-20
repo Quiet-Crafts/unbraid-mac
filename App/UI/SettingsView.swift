@@ -540,6 +540,8 @@ private struct ProviderDetail: View {
     @State private var device: String?
     @State private var facts: String?
     @State private var deviceCount: Int?
+    /// What the provider counts in use for the account, every app's (AirVPN, with an API key).
+    @State private var inUse: Int?
     @State private var listDate: Int64?
     @State private var revoked = false
     @State private var limit: Limit?
@@ -585,9 +587,11 @@ private struct ProviderDetail: View {
                 }
                 if let limit {
                     let links = runningLinks.filter { route, _ in s.route(route)?.loc == runningSetup?.route(route)?.loc }
-                    let n = limit.perTunnel ? Limits.tunnels(s, id, links: links) : 1
+                    // With the provider's own count, unbraid's share is what runs now: none while the VPN is off.
+                    let planned = limit.perTunnel ? Limits.tunnels(s, id, links: links) : 1
+                    let n = limit.perTunnel && inUse != nil ? (model.vpn.state.phase == .on ? Limits.running(s, id, links: links) : 0) : planned
                     Section("Limit") {
-                        SettingsRow(title: limit.unit == "device" ? "Devices" : "Connections", caption: Limits.line(provider.name, Limits.effective(limit, s.opt(id, "limit")), limit.unit, n, all: deviceCount), symbol: "number") {
+                        SettingsRow(title: limit.unit == "device" ? "Devices" : "Connections", caption: Limits.line(provider.name, Limits.effective(limit, s.opt(id, "limit")), limit.unit, n, all: deviceCount ?? inUse), symbol: "number") {
                             Button("Edit Limit…") { limitText = s.opt(id, "limit") ?? ""; editingLimit = true }.contentButton()
                         }
                     }
@@ -665,6 +669,11 @@ private struct ProviderDetail: View {
             if running == model.vpn.running, record?.setup == running, record?.accounts == Running.fingerprints(model.accounts), model.vpn.state.phase == .on {
                 runningSetup = record?.setup; runningLinks = (record?.links ?? [:]).filter { id, link in model.vpn.state.servers[id] == link.server }
             } else { runningSetup = nil; runningLinks = [:] }
+        }
+        // Asked apart from the rest, so a slow answer doesn't hold back the device's own line.
+        .task(id: model.accounts[id]) {
+            guard model.accounts[id] != nil else { return }
+            inUse = await model.countInUse(id)
         }
         .task(id: model.accounts[id]) {
             guard let account = model.accounts[id] else { return }

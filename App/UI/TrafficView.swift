@@ -389,9 +389,22 @@ private struct ExitDetail: View {
     let exit: String
     let period: Period
     @State private var servers: [ServerBytes] = []
+    /// The provider's own measurements of the route's main server, asked for only by the click: it names the server to the provider.
+    @State private var asked: String?
+    @State private var quality: Quality?
+    @State private var answered = false
+
+    /// The provider of today's route with this Stats id (an id carries a digest of what carried it, so a route changed since has none).
+    private var provider: (any Provider)? {
+        let model = AppModel.shared
+        let route = (model.setup.routes + (model.vpn.running?.routes ?? [])).first { StatsMath.idOf($0) == exit }
+        guard let route, !route.imported, let p = Providers.get(route.loc.provider), p.reportsQuality else { return nil }
+        return p
+    }
 
     var body: some View {
         let ex = v.exits[exit]
+        let top = servers.first?.name
         let test = v.tests[exit]
         SheetFrame(title: ex?.name ?? "Route", subtitle: "\(ex?.via ?? "") · \(period.label)", width: SheetWidth.form) {
             VStack(alignment: .leading, spacing: 16) {
@@ -409,6 +422,25 @@ private struct ExitDetail: View {
                         HStack(spacing: 12) { Text(s.name).monospaced(); Spacer(); Text("\(Int(100 * s.bytes / sum))%").monospacedDigit().foregroundStyle(Ink.dim) }
                     }
                 }
+                if let provider, let top {
+                    Card {
+                        if asked != top {
+                            Text("\(provider.name) publishes how each of its servers did. Asking sends the name \(top) to \(provider.name), from this Mac's own connection.")
+                                .font(.system(size: 12)).foregroundStyle(Ink.dim)
+                            Button("Ask \(provider.name) about \(top)") { asked = top; answered = false; quality = nil }.contentButton()
+                        } else if !answered {
+                            Text("Asking \(provider.name)…").foregroundStyle(Ink.dim)
+                        } else if let q = quality {
+                            Text("\(top) as \(provider.name) measured it · last \(q.days) days").overline()
+                            QualityChart(title: "Delay · ms", values: q.delay, color: ex?.color ?? Ink.accent)
+                            QualityChart(title: "Packet loss · %", values: q.loss, color: Ink.failedText)
+                            Text(q.line)
+                        } else {
+                            Text("\(provider.name) didn't say how \(top) did. Try again later.").foregroundStyle(Ink.dim)
+                            Button("Ask Again") { asked = nil }.contentButton()
+                        }
+                    }
+                }
             }.padding(.horizontal, Layout.gutter).padding(.bottom, Layout.gap)
         } actions: {
             Button("Speed Test") {
@@ -420,6 +452,32 @@ private struct ExitDetail: View {
         .onExitCommand { dismiss() }
         .font(.system(size: 13)).monospacedDigit()
         .task { servers = await Stats.shared.servers(exit: exit, from: v.from, to: v.to) } // epoch days
+        .task(id: asked) {
+            guard let name = asked, let provider else { return }
+            let found = await provider.quality(name)
+            // Only for the server it was asked about: the page may have moved on meanwhile.
+            guard asked == name else { return }
+            quality = found; answered = true
+        }
+    }
+}
+
+/// One series of a provider's measurements as a line; a missing sample is a gap, not zero.
+private struct QualityChart: View {
+    let title: String
+    let values: [Float]
+    let color: Color
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 12)).foregroundStyle(Ink.dim)
+            Chart(Array(values.enumerated()), id: \.offset) { i, value in
+                if !value.isNaN { LineMark(x: .value("Hour", i), y: .value(title, value)).foregroundStyle(color) }
+            }
+            .chartXAxis(.hidden).chartYScale(domain: 0...(max(values.filter { !$0.isNaN }.max() ?? 1, 0.1) * 1.1))
+            .frame(height: 48)
+            .accessibilityLabel(title)
+        }
     }
 }
 

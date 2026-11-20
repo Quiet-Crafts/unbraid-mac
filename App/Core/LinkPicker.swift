@@ -270,14 +270,21 @@ nonisolated enum LinkPicker {
                 var host = String(peer.endpoint[..<colon])
                 // A tunnel that was disguised dials its V2Ray server's WireGuard port: not one to go back to.
                 let oldPort = peer.vmess == nil ? String(peer.endpoint[peer.endpoint.index(after: colon)...]) : String(Ivpn.port)
-                if let value = setup.opt(provider, "entry"), let index = Int(value), index > 0, index <= entries.count { host = entries[index - 1] }
                 let offered = ports.isEmpty ? (lists[provider] ?? []) : ports
                 // IVPN's fixed-port choices come from the complete server list; its automatic list is a smaller subset.
                 let fixed = setup.opt(provider, "port").flatMap(Int.init).flatMap {
                     (offered.contains($0) || (provider == "ivpn" && (1...65535).contains($0))) ? $0 : nil
                 }
                 let offset = max(0, step[provider] ?? 0)
-                let port = fixed.map(String.init) ?? (offered.isEmpty ? oldPort : String(offered[offset % offered.count]))
+                let picked = fixed ?? (offered.isEmpty ? nil : offered[offset % offered.count])
+                // A port the server takes on one entry address only goes to that entry, whatever the entry setting says. A
+                // tunnel that doesn't know that entry would dial nowhere: it takes the first port any entry takes.
+                let only = provider == "airvpn" ? AirVpn.portEntry : [:]
+                let needs = picked.flatMap { only[$0] }
+                let fits = needs.map { $0 <= entries.count } ?? true
+                let port = (fits ? picked : offered.first { only[$0] == nil }).map(String.init) ?? oldPort
+                let entry = fits ? needs : nil
+                if let index = entry ?? setup.opt(provider, "entry").flatMap(Int.init), index > 0, index <= entries.count { host = entries[index - 1] }
                 peer.endpoint = "\(host):\(port)"
             }
             peer.mtu = Int(setup.opt(provider, "mtu") ?? "") ?? 1280

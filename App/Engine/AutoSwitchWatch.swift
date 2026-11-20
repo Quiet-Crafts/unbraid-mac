@@ -162,7 +162,10 @@ final class AutoSwitchWatch {
 
     private func decide(_ mark: String, _ acted: AutoSwitch.Acted?) {
         guard let m = model else { return }
-        let step = AutoSwitch.decide(m.setup, rules: run.rules, mark: mark, acted: acted) { [limits] in AutoSwitchRun.over($0) { limits[$0] } }
+        let accounts = m.accounts
+        let step = AutoSwitch.decide(m.setup, rules: run.rules, mark: mark, acted: acted) { [limits] in
+            AutoSwitchRun.over($0, others: { Limits.others($0, account: accounts[$0]) }) { limits[$0] }
+        }
         switch step {
         case .none: break
         case .to(let name): make(name, for: mark)

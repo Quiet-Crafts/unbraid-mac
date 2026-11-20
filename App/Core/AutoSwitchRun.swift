@@ -233,9 +233,9 @@ nonisolated struct AutoSwitchRun: Equatable, Sendable {
 }
 
 extension AutoSwitchRun {
-    /// Whether the setup after a switch needs more connections than a provider allows, counted against nothing in use:
+    /// Whether the setup after a switch needs more connections than a provider allows, counted against what other apps hold (where the provider says) and nothing of unbraid's own in use:
     /// a switch the app would ask about (its limit question) is never started by itself, where no one is there to answer.
-    static func over(_ next: Setup, limits: (String) -> Limit?) -> Bool {
-        Limits.over(Setup(routes: [], defaultRoute: DIRECT), next, limits: limits) != nil
+    static func over(_ next: Setup, others: (String) -> Int = { _ in 0 }, limits: (String) -> Limit?) -> Bool {
+        Limits.over(Setup(routes: [], defaultRoute: DIRECT), next, others: others, limits: limits) != nil
     }
 }

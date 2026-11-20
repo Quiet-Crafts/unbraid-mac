@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// A newer edit supersedes an older one only where their targets overlap. Moves keep their remaining apps or websites.
 nonisolated struct RouteEdits {
@@ -182,13 +183,44 @@ nonisolated enum Limits {
     struct Over: Equatable, Sendable {
         var provider: String
         var limit: Int
+        /// What the change would make it: unbraid's tunnels and the connections other apps hold.
         var count: Int
         var unit: String
+        /// How many of `count` are other apps' connections, where the provider says.
+        var others = 0
     }
+
+    /// Connections a provider last counted for the account beyond unbraid's own (its other apps'), and when: trusted for
+    /// half an hour, so a change is checked without asking the provider.
+    private struct Count { var account: String; var others: Int; var at: Date }
+    private static let counts = Mutex<[String: Count]>([:])
+    static let fresh: TimeInterval = 30 * 60
+
+    /// Only for the account it was counted for: another sign-in starts from nothing.
+    static func others(_ provider: String, account: String?, now: Date = .now) -> Int {
+        counts.withLock { all in
+            guard let c = all[provider], c.account == account, (0..<fresh).contains(now.timeIntervalSince(c.at)) else { return 0 }
+            return c.others
+        }
+    }
+
+    /// Notes what `provider` counts in use for `account` (`all`, nil = not known) while unbraid runs `own` tunnels to it.
+    /// `ownAfter`: unbraid's tunnels once the answer came: a different figure makes the count unreliable, and it is dropped.
+    static func counted(_ provider: String, account: String, all: Int?, own: Int, ownAfter: Int? = nil, now: Date = .now) {
+        counts.withLock { counts in
+            guard let all, own == (ownAfter ?? own) else { counts[provider] = nil; return }
+            counts[provider] = Count(account: account, others: max(all - own, 0), at: now)
+        }
+    }
+
+    /// Forgets the counts of providers no longer signed in.
+    static func forgetExcept(_ providers: Set<String>) { counts.withLock { $0 = $0.filter { providers.contains($0.key) } } }
 
     static func units(_ n: Int, _ unit: String) -> String { "\(n) \(unit)\(n == 1 ? "" : "s")" }
 
+    /// `all`: what the provider counts in use, never shown as fewer than unbraid's own (a count can lag a moment behind).
     static func line(_ name: String, _ limit: Int?, _ unit: String, _ n: Int, all: Int? = nil) -> String {
+        let all = all.map { max($0, n) }
         if let limit, let all {
             return "\(name) allows \(units(limit, unit)). \(all == 1 ? "1 is" : "\(all) are") in use, \(all == n ? "" : "\(n) of them ")by unbraid."
         }
@@ -196,8 +228,10 @@ nonisolated enum Limits {
         return "unbraid is using \(n) \(name) \(unit)\(n == 1 ? "" : "s"). Check how many your plan allows: over the limit, routes can stop working without an error."
     }
 
-    static func warning(_ name: String, _ limit: Int, _ unit: String, _ n: Int) -> String {
-        "\(name) allows \(units(limit, unit)). This would make it \(n). Over the limit, routes can stop working without an error."
+    /// `others` of the `n` are other apps' connections, where the provider says.
+    static func warning(_ name: String, _ limit: Int, _ unit: String, _ n: Int, others: Int = 0) -> String {
+        let share = others > 0 ? ", \(others == 1 ? "1 of them" : "\(others) of them") in your other apps" : ""
+        return "\(name) allows \(units(limit, unit)). This would make it \(n)\(share). Over the limit, routes can stop working without an error."
     }
     static func full(_ name: String, _ limit: Int?, _ unit: String) -> String {
         "All \(limit.map { "\($0) " } ?? "")\(name) \(unit)s are in use. Sign out another device, then try again."
@@ -224,6 +258,11 @@ nonisolated enum Limits {
         }).count
     }
 
+    /// Separate tunnels actually running to `provider`: routes with an installed link, sharing one when they share a tunnel.
+    static func running(_ setup: Setup, _ provider: String, links: [String: Link]) -> Int {
+        Set(setup.activeRoutes.filter { !$0.imported && $0.loc.provider == provider }.compactMap { r in links[r.id].map { Compiler.linkKey(r, $0) } }).count
+    }
+
     static func shareAnchor(_ setup: Setup, running: Setup?, servers: [String: Server], provider: String) -> (Route, Server)? {
         let running = running?.activeRoutes ?? []
         let routes = setup.activeRoutes.filter { r in
@@ -234,13 +273,16 @@ nonisolated enum Limits {
         return (route, server)
     }
 
-    static func over(_ old: Setup, _ new: Setup, oldLinks: [String: Link] = [:], newLinks: [String: Link] = [:], limits: (String) -> Limit?) -> Over? {
+    /// The first provider counted per tunnel that `new` takes over its known limit with more tunnels than `old` had, counting
+    /// the connections its other apps hold (`others`, 0 where the provider doesn't say).
+    static func over(_ old: Setup, _ new: Setup, oldLinks: [String: Link] = [:], newLinks: [String: Link] = [:],
+                     others: (String) -> Int = { _ in 0 }, limits: (String) -> Limit?) -> Over? {
         var seen: Set<String> = []
         for route in new.activeRoutes where !route.imported {
             let p = route.loc.provider
             guard seen.insert(p).inserted, let l = limits(p), l.perTunnel, let max = effective(l, new.opt(p, "limit")) else { continue }
-            let count = tunnels(new, p, links: newLinks)
-            if count > max && count > tunnels(old, p, links: oldLinks) { return Over(provider: p, limit: max, count: count, unit: l.unit) }
+            let own = tunnels(new, p, links: newLinks), other = others(p)
+            if own + other > max && own > tunnels(old, p, links: oldLinks) { return Over(provider: p, limit: max, count: own + other, unit: l.unit, others: other) }
         }
         return nil
     }
@@ -262,7 +304,7 @@ nonisolated struct TestingOwner: Sendable {
 
 nonisolated enum TestingRoutes {
     struct Selection { var routes: Set<String> = []; var errors: [String: String] = [:] }
-    static func choose(_ ids: [String], setup: Setup, limits: (String) -> Limit?) -> Selection {
+    static func choose(_ ids: [String], setup: Setup, others: (String) -> Int = { _ in 0 }, limits: (String) -> Limit?) -> Selection {
         var result = Selection()
         let active = Set(setup.activeRoutes.map(\.id))
         for id in ids {
@@ -271,7 +313,7 @@ nonisolated enum TestingRoutes {
             var next = old; next.testing.insert(id)
             if let node = route.tsExit, let used = old.tsExit, node != used {
                 result.errors[id] = "Tailscale has one exit node at a time, and another route uses it."
-            } else if let over = Limits.over(old, next, limits: limits) {
+            } else if let over = Limits.over(old, next, others: others, limits: limits) {
                 let name = Providers.get(over.provider)?.name ?? over.provider
                 result.errors[id] = "\(name) allows \(Limits.units(over.limit, over.unit)), all in use."
             } else { result.routes.insert(id) }

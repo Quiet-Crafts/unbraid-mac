@@ -11,6 +11,9 @@ private actor FakeAir {
     var wrongAddress = false
     var added = 0
     var refusedKey: String?
+    /// Open connections `userinfo` lists (nil: none listed at all); an error reply when `userinfoFails`.
+    var sessions: Int? = 3
+    var userinfoFails = false
     func configure(refuse: Bool = false, generatorFails: Bool = false, deleteFails: Bool = false) {
         self.refuse = refuse; self.generatorFails = generatorFails; self.deleteFails = deleteFails
     }
@@ -38,11 +41,18 @@ private actor FakeAir {
             if generatorFails { return Data(#"{"error":"failed"}"#.utf8) }
             let ip = wrongAddress ? "10.99.0.1" : (devices.first { $0.name == query["device"] }?.ip ?? "10.0.0.1")
             return Data(ProviderFixtures.conf("\(ip)/32", endpoint: "1.2.3.4:1637", preshared: true).utf8)
-        case "userinfo": return Data(#"{"user":{"premium":true,"expiration_unix":1795348998}}"#.utf8)
+        case "userinfo":
+            if userinfoFails { return Data(#"{"error":"Try later"}"#.utf8) }
+            let list = sessions.map { n in #","sessions":[\#((0..<n).map { #"{"id":\#($0),"server":"Alpha"}"# }.joined(separator: ","))]"# } ?? ""
+            return Data(#"{"user":{"premium":true,"expiration_unix":1795348998}\#(list)}"#.utf8)
         default: throw Fail("Unexpected fixture call")
         }
     }
     func returnWrongAddress() { wrongAddress = true }
+    func setUp(sessions: Int?? = nil, userinfoFails: Bool? = nil) {
+        if let sessions { self.sessions = sessions }
+        if let userinfoFails { self.userinfoFails = userinfoFails }
+    }
     func names() -> [String] { devices.map(\.name) }
     func addAnonymousDevice() { devices.append(("other", "New device", "10.0.0.9", "otherkey")) }
     func addUserDevice() { devices.append(("phone", "Phone", "10.0.0.3", "phonekey")) }
@@ -69,7 +79,7 @@ final class AirApiTests: XCTestCase {
         let revoked = try await p.revoked(blob); XCTAssertFalse(revoked)
         let link = try await p.connect(Location(provider: "airvpn"), blob)
         guard case .wg(_, _, let ports, let entries) = link else { return XCTFail("not WireGuard") }
-        XCTAssertEqual(ports, [1637, 47107]); XCTAssertEqual(entries, ["1.2.3.4", "1.2.3.5"])
+        XCTAssertEqual(ports, [1637, 47107, 51820]); XCTAssertEqual(entries, ["1.2.3.4", "1.2.3.5"])
         let removed = await p.signOut(blob); XCTAssertTrue(removed)
         let names = await fake.names(); XCTAssertEqual(names, ["Default"])
         let left = try await journal.records(); XCTAssertTrue(left.isEmpty)
@@ -580,3 +590,119 @@ final class AirVpnOpenVpnTests: XCTestCase {
     }
 }
 
+
+// MARK: Port 51820, connections in use, server history
+
+extension AirApiTests {
+    private func airLink(entries: [String] = ["1.2.3.4", "1.2.3.5"]) -> Link {
+        .wg(Server(name: "Alpha", host: "h", ip: "1.2.3.4", publicKey: "k", load: 1),
+            WgPeer(name: "Alpha", privateKey: "p", address: ["10.0.0.2/32"], publicKey: "k", endpoint: "1.2.3.4:1637", allowedIps: ["0.0.0.0/0"]),
+            ports: [1637, 47107, 51820], entries: entries)
+    }
+    private func endpoint(_ setup: Setup, _ link: Link, step: Int = 0) -> String? {
+        guard case .wg(_, let peer, _, _)? = LinkPicker.ported(setup, ["r": link], step: ["airvpn": step])["r"] else { return nil }
+        return peer.endpoint
+    }
+    private func airSetup(_ opts: [String: String]) -> Setup {
+        var s = Setup(routes: [Route(id: "r", loc: Location(provider: "airvpn"))], defaultRoute: "r")
+        s.opts["airvpn"] = opts
+        return s
+    }
+
+    func testPort51820GoesToTheAlternativeEntryWhateverTheEntrySettingSays() {
+        guard case .choice(let choices)? = Providers.get("airvpn")?.option("port")?.kind else { return XCTFail("no port choice") }
+        XCTAssertTrue(choices.contains { $0.value == "51820" })
+        for entry in ["1", "2"] {
+            XCTAssertEqual(endpoint(airSetup(["port": "51820", "entry": entry]), airLink()), "1.2.3.5:51820")
+        }
+        // Other ports follow the entry setting as before.
+        XCTAssertEqual(endpoint(airSetup(["port": "1637", "entry": "1"]), airLink()), "1.2.3.4:1637")
+        XCTAssertEqual(endpoint(airSetup(["port": "47107", "entry": "2"]), airLink()), "1.2.3.5:47107")
+        // Automatic tries it after 1637 and 47107.
+        let auto = airSetup(["port": "auto", "entry": "1"])
+        XCTAssertEqual([0, 1, 2, 3].map { endpoint(auto, airLink(), step: $0) },
+                       ["1.2.3.4:1637", "1.2.3.4:47107", "1.2.3.5:51820", "1.2.3.4:1637"])
+    }
+
+    func testPort51820WithoutKnownEntriesFallsBackToAnotherPort() {
+        for step in [0, 2] {
+            XCTAssertEqual(endpoint(airSetup(["port": "auto"]), airLink(entries: []), step: step), "1.2.3.4:1637")
+        }
+        XCTAssertEqual(endpoint(airSetup(["port": "51820", "entry": "1"]), airLink(entries: [])), "1.2.3.4:1637")
+        XCTAssertEqual(endpoint(airSetup(["port": "51820"]), airLink(entries: ["1.2.3.4"])), "1.2.3.4:1637")
+    }
+
+    func testASavedTunnelOn51820IsTrustedOnlyAtTheAlternativeEntry() async throws {
+        let fake = FakeAir(); let (p, _, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        let blob = try await p.signIn(["key": key])
+        let link = try await p.connect(Location(provider: "airvpn"), blob)
+        let ported = try XCTUnwrap(LinkPicker.ported(airSetup(["port": "51820"]), ["r": link], step: [:])["r"])
+        guard case .wg(let sv, var peer, let ports, let entries) = ported else { return XCTFail("not WireGuard") }
+        XCTAssertEqual(peer.endpoint, "1.2.3.5:51820")
+        XCTAssertTrue(p.trusts(ported, blob))
+        peer.endpoint = "1.2.3.4:51820"
+        XCTAssertFalse(p.trusts(.wg(sv, peer, ports: ports, entries: entries), blob))
+        peer.endpoint = "1.2.3.5:51820"
+        XCTAssertFalse(p.trusts(.wg(sv, peer, ports: [1637, 47107], entries: entries), blob))
+    }
+
+    func testConnectionsInUseCountEveryAppsSessions() async throws {
+        let fake = FakeAir(); let (p, _, dir) = try provider(fake); defer { try? FileManager.default.removeItem(at: dir) }
+        let blob = try await p.signIn(["key": key])
+        let three = try await p.inUse(blob); XCTAssertEqual(three, 3)
+        await fake.setUp(sessions: .some(0))
+        let none = try await p.inUse(blob); XCTAssertEqual(none, 0)
+        // An error reply is unknown, never none in use; so is a reply without the list, and a pasted config.
+        await fake.setUp(userinfoFails: true)
+        let failed = try await p.inUse(blob); XCTAssertNil(failed)
+        await fake.setUp(sessions: .some(nil), userinfoFails: false)
+        let missing = try await p.inUse(blob); XCTAssertNil(missing)
+        let pasted = try p.parseKey(["key": ProviderFixtures.conf("10.0.0.1/32", endpoint: "1.2.3.4:1637", preshared: true)])
+        let unknown = try await p.inUse(pasted); XCTAssertNil(unknown)
+        // The plan still reads the same reply.
+        let plan = try await p.plan(blob); XCTAssertNotNil(plan)
+        XCTAssertEqual(Limits.line("AirVPN", 5, "connection", 1, all: 3), "AirVPN allows 5 connections. 3 are in use, 1 of them by unbraid.")
+    }
+
+    // Server history
+
+    private var history: String { #"{"result":"ok","panels":{"rtt":{"series":{"rtt":[[1,1.8],[2,"2.0"],[3,4],[4,null],[5,-1],[6,"x"]]}},"ploss":{"series":{"ploss":[[1,0],[2,0.2],[3,null]]}}}}"# }
+
+    func testServerHistoryIsParsedIntoDelayAndLossWithGaps() throws {
+        let q = try XCTUnwrap(try AirVpn.parseQuality(Data(history.utf8)))
+        XCTAssertEqual(q.days, 7)
+        XCTAssertEqual(q.delay.count, 6); XCTAssertEqual(Array(q.delay.prefix(3)), [1.8, 2.0, 4.0])
+        XCTAssertTrue(q.delay[3...].allSatisfy(\.isNaN))
+        XCTAssertEqual(q.loss.count, 3); XCTAssertTrue(q.loss[2].isNaN)
+        XCTAssertEqual(q.line, "Delay 2.6 ms on average (1.8 to 4), packet loss 0.1% (at most 0.2%)")
+        XCTAssertEqual(Quality(delay: [2.1, 2.1], loss: [0, 0], days: 7).line, "Delay 2.1 ms on average (2.1 to 2.1), packet loss 0%")
+        XCTAssertEqual(Quality(delay: [], loss: [], days: 7).line, "No measurements in this period")
+        XCTAssertNil(try AirVpn.parseQuality(Data(#"{"error":"nope"}"#.utf8)))
+        XCTAssertNil(try AirVpn.parseQuality(Data(#"{"panels":{}}"#.utf8)))
+        XCTAssertThrowsError(try AirVpn.parseQuality(Data("[1]".utf8)))
+    }
+
+    func testServerHistoryIsAskedByNameCheckedAndKeptTenMinutes() async throws {
+        var p = AirVpn()
+        let asked = Mutex<[String]>([])
+        p.history = { [history] name in asked.withLock { $0.append(name) }; return Data(history.utf8) }
+        XCTAssertTrue(p.reportsQuality)
+        let first = await p.quality("Chara")
+        XCTAssertEqual(first?.delay.count, 6)
+        let again = await p.quality("Chara")
+        XCTAssertEqual(again, first)
+        XCTAssertEqual(asked.withLock { $0 }, ["Chara"])
+        // A name that isn't a plain server name is never sent.
+        for odd in ["", "a", "Chara&x=1", "../x", "1Chara", "Cha ra", String(repeating: "a", count: 40)] {
+            let none = await p.quality(odd); XCTAssertNil(none)
+        }
+        XCTAssertEqual(asked.withLock { $0 }, ["Chara"])
+        // A failed or unreadable answer is "can't say", and isn't kept.
+        p.history = { _ in throw URLError(.notConnectedToInternet) }
+        let failed = await p.quality("Diadema"); XCTAssertNil(failed)
+        p.history = { _ in Data("not json".utf8) }
+        let bad = await p.quality("Diadema"); XCTAssertNil(bad)
+        // Providers that publish nothing say so.
+        XCTAssertFalse(Providers.get("mullvad")?.reportsQuality ?? true)
+    }
+}

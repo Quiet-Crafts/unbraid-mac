@@ -185,6 +185,35 @@ nonisolated enum AutoProtocol {
     static func exhausted(ports: Int, canStep: Bool, step: Int) -> Bool { !canStep || step + 1 >= ports }
 }
 
+/// A server's delay (ms) and packet loss (%) as its provider measured them, oldest first; NaN where it has no sample.
+/// `days`: the period they cover.
+nonisolated struct Quality: Equatable, Sendable {
+    var delay: [Float]
+    var loss: [Float]
+    var days: Int
+
+    private static func known(_ values: [Float]) -> [Float] { values.filter { !$0.isNaN } }
+    var delayAverage: Float? { let k = Self.known(delay); return k.isEmpty ? nil : k.reduce(0, +) / Float(k.count) }
+    var delayRange: (low: Float, high: Float)? { let k = Self.known(delay); return k.min().flatMap { lo in k.max().map { (lo, $0) } } }
+    var lossAverage: Float? { let k = Self.known(loss); return k.isEmpty ? nil : k.reduce(0, +) / Float(k.count) }
+    var lossMost: Float? { Self.known(loss).max() }
+
+    private static func number(_ v: Float) -> String {
+        let text = v >= 10 ? String(format: "%.0f", v) : String(format: "%.1f", v)
+        return text.hasSuffix(".0") ? String(text.dropLast(2)) : text
+    }
+
+    /// One plain line: "Delay 2.1 ms on average (1.8 to 4), packet loss 0%".
+    var line: String {
+        var parts: [String] = []
+        if let a = delayAverage { parts.append("Delay \(Self.number(a)) ms on average" + (delayRange.map { " (\(Self.number($0.low)) to \(Self.number($0.high)))" } ?? "")) }
+        if let a = lossAverage { parts.append("packet loss \(Self.number(a))%" + (lossMost.flatMap { $0 > 0 ? " (at most \(Self.number($0))%)" : nil } ?? "")) }
+        guard !parts.isEmpty else { return "No measurements in this period" }
+        let text = parts.joined(separator: ", ")
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+}
+
 /// A ready tunnel for one exit, produced at connect time.
 nonisolated enum Link: Codable, Hashable, Sendable {
     case wg(Server, WgPeer, ports: [Int] = [], entries: [String] = [])
@@ -261,6 +290,12 @@ nonisolated protocol Provider: Sendable {
     var deviceURL: String? { get }
     func device(_ account: String) async throws -> String?
     func deviceCount(_ account: String) async throws -> Int?
+    /// The connections the account has open now, every app's, where the provider says (nil: it doesn't, or can't now).
+    func inUse(_ account: String) async throws -> Int?
+    /// Whether the provider publishes how its servers performed (`quality`).
+    var reportsQuality: Bool { get }
+    /// What the provider measured of one server over the last week; nil when it can't say. Asks the provider.
+    func quality(_ server: String) async -> Quality?
     func plan(_ account: String) async throws -> String?
     func limit(_ account: String) async throws -> Limit?
     func revoked(_ account: String) async throws -> Bool
@@ -323,6 +358,9 @@ nonisolated extension Provider {
     var deviceURL: String? { nil }
     @concurrent func device(_ account: String) async throws -> String? { nil }
     @concurrent func deviceCount(_ account: String) async throws -> Int? { nil }
+    @concurrent func inUse(_ account: String) async throws -> Int? { nil }
+    var reportsQuality: Bool { false }
+    @concurrent func quality(_ server: String) async -> Quality? { nil }
     @concurrent func plan(_ account: String) async throws -> String? { nil }
     @concurrent func limit(_ account: String) async throws -> Limit? {
         switch id {
@@ -352,7 +390,7 @@ nonisolated extension Provider {
             result.append(.disguise)
         }
         if id == "airvpn" {
-            result.append(ProviderOption(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic"), .init(value: "1637", label: "UDP 1637"), .init(value: "47107", label: "UDP 47107")]), defaultValue: "auto", advanced: true))
+            result.append(ProviderOption(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic"), .init(value: "1637", label: "UDP 1637"), .init(value: "47107", label: "UDP 47107"), .init(value: "51820", label: "UDP 51820 (Alternative entry)")]), defaultValue: "auto", advanced: true, help: "Automatic tries each in turn when a network blocks one. 51820 always goes to the alternative entry address"))
             result.append(ProviderOption(key: "entry", label: "Entry address", kind: .choice([.init(value: "1", label: "Standard"), .init(value: "2", label: "Alternative")]), defaultValue: "1", advanced: true))
         }
         return result

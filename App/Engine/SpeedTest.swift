@@ -213,7 +213,7 @@ final class SpeedTest {
                 if let account = accounts[provider], let p = Providers.get(provider), let limit = try? await p.limit(account) { limits[provider] = limit }
             }
             guard attempt == mine, !Task.isCancelled else { return }
-            let choice = TestingRoutes.choose(ids, setup: setup) { limits[$0] }
+            let choice = TestingRoutes.choose(ids, setup: setup, others: { Limits.others($0, account: accounts[$0]) }) { limits[$0] }
             for (id, error) in choice.errors { updateLeg(mine, id) { $0.error = error } }
             if !choice.routes.isEmpty {
                 let token = await conn.beginTesting(choice.routes)
