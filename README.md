@@ -185,7 +185,9 @@ own. IPv6 follows an app's route or is refused. Only the default route and the r
 connected.
 
 A website rule matches the name unbraid itself answered with a fake address, never a name read from the connection,
-so an app can't claim another site's route. Blocked apps are refused before any other rule, a website's included.
+so an app can't claim another site's route. A name whose answer holds both local and public addresses goes to your local
+network or home with its local addresses only: the public ones never leave outside the app's route. Blocked apps are
+refused before any other rule, a website's included.
 
 Server lists come from each provider's public API where there is one, and otherwise from
 [gluetun-servers](https://github.com/qdm12/gluetun-servers).
@@ -208,7 +210,8 @@ connections opened for an app by another process to that app, hand the Tailscale
 refuse files sent through Taildrop, give an OpenVPN tunnel a resolver inside it when its server pushes none, and let
 the app's connection checks look up their servers through the tunnel being checked. They also put the network's IPv4
 DNS servers first, narrow how UDP traffic is matched to its app, keep a test or Tailscale sign-out that overlaps a
-reload from stopping the engine, bound OpenVPN's exit notifications and take security fixes of some dependencies (the
+reload from stopping the engine, bound OpenVPN's exit notifications, send a connection that the local network or home
+rules take to only the addresses those rules cover, and take security fixes of some dependencies (the
 full list: `tools/notices/changes-sing-box.txt`). `tools/build-cli.sh` builds the engine's command-line version, which
 the tests use to check every generated configuration.
 

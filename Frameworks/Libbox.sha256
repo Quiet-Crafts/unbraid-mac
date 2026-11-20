@@ -1,4 +1,4 @@
-86385e1a5d162340413d6b74eae1c272ec67f7b9187345c4ac8bc28b2712da91  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
+2b3b3e2da58c5920f0a2854f03c7e9a19a7f0cf3e284ab8431962a7b2f2d2745  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
 54808197c77fea31eb2c22504c5f2b8c817d8eef1c06dd40affb23d2619a76cf  Libbox.xcframework/Info.plist
 link Versions/Current/Headers  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Headers
 link Versions/Current/Libbox  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Libbox
@@ -12,6 +12,7 @@ f996dc8b58879482dc049a160223adb37ea9c3324147ae1d13cde9f5b8e4178f  Libbox.xcframe
 23daf32c4ca1678d1d486f32bc32e069722f4418854a208828753f3efb7e1eb8  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Resources/Info.plist
 link A  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/Current
 source c005f35300ce76427dc285481ec5695f5b179cd2
+patch sing-box-address-rule-dials-its-addresses.patch a00ffed79fa7f571299c0f998ee23036b735a8c51f9ab1e6663cb8651b9a9e1c
 patch sing-box-darwin-effective-pid.patch a7237c6327deffed7d0c0486c19321f7491e16a4f2dcb7ca550a9618905f44e7
 patch sing-box-darwin-local-dns-ipv4-first.patch bd751722b396e6596731f373649e2f351562123e46b54592bb3b3e8705ccd6ac
 patch sing-box-darwin-udp-owner.patch 9358ab87ff382815eebafce11927d27b4716c0d45416ee7aa41d3800336ee48c

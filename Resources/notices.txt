@@ -698,6 +698,11 @@ the unbraid authors with the patches in the tools folder of unbraid's source (pu
   WireGuard and OpenVPN devices they built.
 - sing-box-z-deps-security.patch, 2026-10-27, last changed 2026-11-10: gRPC, Go networking and cryptography, and
   compression (brotli, klauspost/compress) dependencies receive security fixes.
+- sing-box-fakeip-no-reuse.patch, 2026-11-17, last changed 2026-11-18: a stand-in (fake) address is never handed to a
+  second name while its range is unchanged; a used-up range answers new names with a failure, and the engine tells
+  the app how many addresses are left.
+- sing-box-address-rule-dials-its-addresses.patch, 2026-11-18: a connection that a local-network or home rule takes
+  by address dials only the addresses that rule covers, never the public ones of the same name's answer.
 
 === lzokay (the LZO code in github.com/anchore/go-lzo derives from it)
 The MIT License

@@ -352,6 +352,21 @@ final class CompilerTests: XCTestCase {
         XCTAssertNil(Sites.notApplied("example.org", in: s))
     }
 
+    /// A name whose answer holds a local address and a public one: the local route gets the local one, never the public
+    /// one outside the app's VPN route; the same for the tailnet. A wholly public answer keeps the app's route.
+    func testAMixedAnswerTakesNoPublicAddressOutOfTheVpn() throws {
+        var s = withSites
+        s.prefs.lan = true
+        let other = "/Applications/Other.app/Contents/MacOS/other"
+        let lan = try EngineWalk(try raw(s))
+        XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["192.168.1.10", "203.0.113.5"]), "exit:direct 192.168.1.10")
+        XCTAssertEqual(lan.dial(other, name: "nas.example.net", answer: ["203.0.113.5"]), "exit:r-nl 203.0.113.5")
+        s.home.tailscale = true
+        s.home.tsControlUrl = "https://hs.example"
+        let ts = try EngineWalk(try raw(s))
+        XCTAssertEqual(ts.dial(other, name: "nas.example.net", answer: ["100.64.0.7", "203.0.113.5"]), "exit:\(Compiler.tsTag) 100.64.0.7")
+    }
+
     /// A name is only ever the one a lookup gave: nothing is read off a connection, where an app could write any name
     /// to take a website's route.
     func testNoNameIsReadOffAConnection() throws {

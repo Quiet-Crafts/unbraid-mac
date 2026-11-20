@@ -85,6 +85,30 @@ struct EngineWalk {
         return "exit:\(routeFinal) via \(resolver)"
     }
 
+    /// Where a connection to `name` (a fake address) goes once a resolve answers it with `answer`, and the addresses it
+    /// then dials: "exit:<tag> <address,…>" or "reject". An address rule matches when any address is covered; one that
+    /// picks an outbound by its own `ip_cidr` alone dials only the addresses it covers (the engine's address-rule patch).
+    func dial(_ process: String?, name: String, answer: [String]) -> String {
+        var addresses = [Self.fake], resolved = false
+        for r in route where addresses.contains(where: { matches(r, process: process, name: name, ip: $0, qtype: nil) }) {
+            if let o = r["outbound"] as? String {
+                let cidrs = Self.strings(r["ip_cidr"])
+                if resolved, !cidrs.isEmpty, r["invert"] == nil, r["type"] == nil, r["domain"] == nil, r["domain_suffix"] == nil, addresses.count > 1 {
+                    let covered = addresses.filter { a in cidrs.contains { Self.inCidr(a, $0) } }
+                    if !covered.isEmpty { addresses = covered }
+                }
+                return "exit:\(o) \(addresses.joined(separator: ","))"
+            }
+            switch r["action"] as? String {
+            case "reject": return "reject"
+            case "resolve": addresses = answer; resolved = true
+            case "sniff", "route-options", "hijack-dns": continue
+            default: XCTFail("unknown action \(String(describing: r["action"]))"); return "?"
+            }
+        }
+        return "exit:\(routeFinal) \(addresses.joined(separator: ","))"
+    }
+
     /// The whole outcome for `name` from `process`: its A and TXT answers and where the connection goes.
     func outcome(_ process: String?, _ name: String) -> String {
         let a = lookup(name, "A"), txt = lookup(name, "TXT")
