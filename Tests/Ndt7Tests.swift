@@ -51,6 +51,10 @@ final class Ndt7Tests: XCTestCase {
     func testLocateAsksForTheExitsCountryStrictly() {
         XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: nil), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9")
         XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: "NL"), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9&country=NL&strict=true")
+        // Only a two-letter code is sent; anything else asks without a country rather than add to the request.
+        for odd in ["SE&strict=false", "··", "N", "NLD", "N L"] {
+            XCTAssertEqual(Ndt7.locatePath(version: "1.9", country: odd), "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=1.9", odd)
+        }
     }
 
     func testLocateTakesTheFirstServer() throws {

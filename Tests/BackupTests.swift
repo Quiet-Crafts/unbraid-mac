@@ -194,6 +194,16 @@ final class BackupTests: XCTestCase {
         var renamed = here
         renamed.servers[2].ss?.name = "Other"
         XCTAssertEqual(Backup.restored(onto: renamed, from: b, keepPrevious: false, now: .now).servers.filter(\.keyless).map(\.id), ["s3"])
+        // Nor one with other allowed addresses (a narrow tunnel for a full one), or another Shadowsocks plugin.
+        var wider = here
+        wider.servers[0].wg?.allowedIps = ["10.0.0.0/8"]
+        wider.servers[2].ss?.plugin = "v2ray-plugin"
+        XCTAssertEqual(Backup.restored(onto: wider, from: b, keepPrevious: false, now: .now).servers.filter(\.keyless).map(\.id), ["s1", "s3"])
+        // Keys and plugin options differing are what a keyless file never holds: still the same server.
+        var rekeyed = here
+        rekeyed.servers[0].wg?.privateKey = "other-key"
+        rekeyed.servers[2].ss?.pluginOpts = "other"
+        XCTAssertTrue(Backup.restored(onto: rekeyed, from: b, keepPrevious: false, now: .now).servers.allSatisfy { !$0.keyless })
     }
 
     func testAFileSavedWithoutKeysMustHoldNone() throws {
@@ -340,6 +350,34 @@ final class BackupTests: XCTestCase {
 
     /// No route may carry a name the compiler reads as Direct, Block or a refusal: a Tailscale route called so would
     /// show as that route and run as Direct.
+    /// A provider route's place or a starred place from a file: a country code that would add to the speed test's request,
+    /// or names that look empty or like another, are refused; what unbraid itself saves passes.
+    func testAPlaceFromAFileIsAsAProviderListGivesIt() throws {
+        func with(_ change: (inout Location) -> Void) -> Setup {
+            var s = full()
+            var l = Location(provider: "nord", countryId: 1, countryCode: "SE", country: "Sweden", city: "Malmö", region: "se-mma")
+            change(&l)
+            s.routes.append(Route(id: "place", loc: l))
+            return s
+        }
+        XCTAssertNoThrow(try Backup.valid(with { _ in }))
+        XCTAssertNoThrow(try Backup.valid(with { $0.countryCode = "··"; $0.region = "New York"; $0.group = "legacy_p2p" }))
+        XCTAssertNoThrow(try Backup.valid(with { $0.city = "Zürich 🇨🇭" }))
+        XCTAssertNoThrow(try Backup.valid(with { $0.city = "Zürich 👩\u{200D}💻"; $0.country = "می\u{200C}خواهم" }))
+        for bad in [with { $0.countryCode = "SE&strict=false" }, with { $0.countryCode = "x&y=z" }, with { $0.countryCode = "" },
+                    with { $0.country = "\u{200B}" }, with { $0.city = "Ma\u{2060}lmö" }, with { $0.country = "  " },
+                    with { $0.group = "p2p\u{202E}" }, with { $0.city = "\u{200D}" }, with { $0.pinned = Server(name: "se1\u{FEFF}", host: "h", ip: "1.2.3.4", publicKey: "k", load: 1) }] {
+            XCTAssertEqual(refused(bad), "a route's place is damaged")
+        }
+        var starred = full()
+        starred.favorites = [Location(countryCode: "US&x=1", country: "United States")]
+        XCTAssertEqual(refused(starred), "a favorite place is damaged")
+        // A name that only looks like one: refused as an own server's name too.
+        var server = full()
+        server.servers[0].wg?.name = "\u{3164}"
+        XCTAssertNotNil(failure { try Backup.valid(server) })
+    }
+
     func testARouteCantTakeAnInternalName() throws {
         for id in ["__filtered_direct", "denied", DIRECT, BLOCK] {
             var s = full()
@@ -702,8 +740,17 @@ final class BackupTests: XCTestCase {
         // No room: the plan says so before anything changes, and restores without it.
         let full20 = b.with { c in c.setup.profiles = (1...Setup.maxProfiles).map { Profile(name: "P\($0)", defaultRoute: "nl") }; c.setup.profile = nil }
         let none = Backup.plan(onto: here, from: full20, keepPrevious: true, now: .now)
-        XCTAssertTrue(none.unkept); XCTAssertNil(none.keptAs)
+        XCTAssertTrue(none.unkept); XCTAssertNil(none.keptAs); XCTAssertFalse(none.tooBig)
         XCTAssertEqual(none.setup, Backup.plan(onto: here, from: full20, keepPrevious: false, now: .now).setup)
+        // The backup's routes and this Mac's together more than a backup holds: not kept, so the next backup restores.
+        let full200 = b.with { c in
+            let model = c.setup.routes[0]
+            c.setup.routes += (c.setup.routes.count..<Backup.maxRoutes).map { i in var r = model; r.id = "many\(i)"; return r }
+        }
+        let big = Backup.plan(onto: here, from: full200, keepPrevious: true, now: .now)
+        XCTAssertTrue(big.unkept); XCTAssertTrue(big.tooBig); XCTAssertNil(big.keptAs)
+        XCTAssertEqual(big.setup, Backup.plan(onto: here, from: full200, keepPrevious: false, now: .now).setup)
+        XCTAssertNoThrow(try Backup.valid(big.setup))
         // A new install has nothing to keep.
         XCTAssertEqual(Backup.plan(onto: Setup(), from: b, keepPrevious: true, now: .now), Backup.plan(onto: Setup(), from: b, keepPrevious: false, now: .now))
         XCTAssertFalse(Backup.setUp(Setup())); XCTAssertTrue(Backup.setUp(here))
@@ -940,8 +987,9 @@ final class BackupTests: XCTestCase {
     func testTheSheetsWords() throws {
         var utc = Calendar(identifier: .gregorian)
         utc.timeZone = TimeZone(identifier: "UTC")!
-        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_794_960_000), calendar: utc), "unbraid-backup-2026-11-18.unbraidbackup")
-        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_767_225_600), calendar: utc), "unbraid-backup-2026-01-01.unbraidbackup")
+        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_794_960_000), calendar: utc), "unbraid-backup-2026-11-18-0000.unbraidbackup")
+        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_767_225_600), calendar: utc), "unbraid-backup-2026-01-01-0000.unbraidbackup")
+        XCTAssertEqual(BackupTexts.fileName(Date(timeIntervalSince1970: 1_794_960_000 + 9 * 3600 + 5 * 60), calendar: utc), "unbraid-backup-2026-11-18-0905.unbraidbackup")
         let c = try read(full())
         XCTAssertEqual(BackupTexts.restoreFacts(file: "b.unbraidbackup", c, locale: Locale(identifier: "en_GB"), timeZone: TimeZone(identifier: "UTC")!),
                        "b.unbraidbackup · saved 14 Nov 2023 with unbraid 1.2.0")

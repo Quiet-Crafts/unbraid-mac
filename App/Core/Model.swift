@@ -262,12 +262,10 @@ nonisolated struct OwnServer: Codable, Hashable, Identifiable, Sendable {
     var kind: String { wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : "Shadowsocks" }
     var code: String { wg != nil ? "WG" : ovpn != nil ? "OVPN" : "SS" }
 
-    /// The same server as `o` by what can be told without keys: kind, name and, for WireGuard and Shadowsocks, where
-    /// it is and (WireGuard) its public key.
-    func sameAs(_ o: OwnServer) -> Bool {
-        kind == o.kind && name == o.name && (wg == nil || (wg?.endpoint == o.wg?.endpoint && wg?.publicKey == o.wg?.publicKey))
-            && (ss == nil || (ss?.server == o.ss?.server && ss?.port == o.ss?.port && ss?.method == o.ss?.method))
-    }
+    /// The same server as `o` in everything a backup without keys keeps: id, kind, name, address, public key, allowed
+    /// addresses, MTU, DNS, Shadowsocks plugin and the rest (`withoutSecrets`), so a keyless server never takes the keys
+    /// of another one that only shares its name or address.
+    func sameAs(_ o: OwnServer) -> Bool { withoutSecrets() == o.withoutSecrets() }
 }
 
 nonisolated struct Profile: Codable, Hashable, Sendable, Identifiable {

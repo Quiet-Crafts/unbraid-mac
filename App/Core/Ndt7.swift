@@ -73,9 +73,11 @@ nonisolated enum Ndt7 {
 
     static func userAgent(_ version: String) -> String { "unbraid/\(version)" }
 
-    /// The M-Lab server nearest the exit's own address, inside `country` when given.
+    /// The M-Lab server nearest the exit's own address, inside `country` when given. Only a two-letter code is ever
+    /// sent: anything else (a damaged saved place) asks without a country rather than add to the request.
     static func locatePath(version: String, country: String?) -> String {
-        "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=\(version)" + (country.map { "&country=\($0)&strict=true" } ?? "")
+        let code = country.flatMap { c in c.utf8.count == 2 && c.unicodeScalars.allSatisfy { ("A"..."Z").contains($0) || ("a"..."z").contains($0) } ? c : nil }
+        return "/v2/nearest/ndt/ndt7?client_name=unbraid&client_version=\(version)" + (code.map { "&country=\($0)&strict=true" } ?? "")
     }
 
     /// M-Lab's answer to a locate request: its first server; nil when a request held to `country` found none there.

@@ -23,6 +23,7 @@ nonisolated enum BackupTexts {
     static let keysOn = "On: anyone with the file and its passphrase can use your own servers."
     /// The limit is the backup's: its profiles replace this Mac's, so deleting one here makes no room.
     static let keepUnavailable = "No room to keep it: this backup already has \(Setup.maxProfiles) profiles. Restore without keeping it."
+    static let keepTooBig = "No room to keep it: this backup's routes and your own together are more than unbraid keeps (\(Backup.maxRoutes) routes, \(Backup.maxServers) own servers). Restore without keeping it."
     static let keepCaption = "It keeps your routes and your app and website choices, not your settings. You can switch back to it from Profiles."
     static let needsConfig = "Needs its config again"
 
@@ -61,10 +62,11 @@ nonisolated enum BackupTexts {
     /// How many of the strength meter's three segments are lit.
     static func segments(_ s: Backup.Strength) -> Int { switch s { case .easy: 1; case .fair: 2; case .hard: 3 } }
 
-    /// "unbraid-backup-2026-11-17.unbraidbackup", by this Mac's calendar.
+    /// "unbraid-backup-2026-11-17-0930.unbraidbackup", by this Mac's calendar and clock (as Android names it), so a
+    /// second backup the same day gets a name of its own.
     static func fileName(_ date: Date, calendar: Calendar = .current) -> String {
-        let c = calendar.dateComponents([.year, .month, .day], from: date)
-        return String(format: "unbraid-backup-%04d-%02d-%02d.", c.year ?? 0, c.month ?? 0, c.day ?? 0) + BackupFile.fileExtension
+        let c = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        return String(format: "unbraid-backup-%04d-%02d-%02d-%02d%02d.", c.year ?? 0, c.month ?? 0, c.day ?? 0, c.hour ?? 0, c.minute ?? 0) + BackupFile.fileExtension
     }
 
     /// Why a file won't open, in a plain sentence.

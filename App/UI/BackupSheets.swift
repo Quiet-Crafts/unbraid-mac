@@ -437,7 +437,7 @@ private struct RestoreSheet: View {
             .background(Ink.surface, in: .rect(cornerRadius: Corner.inner, style: .continuous))
             .accessibilityElement(children: .combine)
             if here {
-                SwitchCard(title: BackupTexts.keepTitle(keeping.keptAs), caption: canKeep ? BackupTexts.keepCaption : BackupTexts.keepUnavailable,
+                SwitchCard(title: BackupTexts.keepTitle(keeping.keptAs), caption: canKeep ? BackupTexts.keepCaption : keeping.tooBig ? BackupTexts.keepTooBig : BackupTexts.keepUnavailable,
                            isOn: canKeep ? $keep : .constant(false), enabled: canKeep)
             }
             if !plan.weak.isEmpty {

@@ -199,8 +199,26 @@ nonisolated enum Backup {
     private static func need(_ ok: Bool, _ why: @autoclosure () -> String) throws { if !ok { throw Failure.invalid(why()) } }
 
     nonisolated(unsafe) private static let idPattern = /[A-Za-z0-9._-]{1,64}/
-    /// Characters no name, address or key of a saved setup has: control and direction characters.
-    private static let strange = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}\u{061C}\u{2028}\u{2029}"))
+    /// Characters no name, address or key of a saved setup has: control and format characters (zero-width ones, the
+    /// byte-order mark and the soft hyphen among them), direction characters, and the Hangul fillers, letters that
+    /// show nothing, so a name can't look empty or like another.
+    private static let strange = CharacterSet.controlCharacters.union(CharacterSet(charactersIn: "\u{200E}\u{200F}\u{202A}\u{202B}\u{202C}\u{202D}\u{202E}\u{2066}\u{2067}\u{2068}\u{2069}\u{061C}\u{2028}\u{2029}"
+        + "\u{3164}\u{115F}\u{1160}\u{FFA0}"))
+    nonisolated(unsafe) private static let countryCodePattern = /[\p{L}\p{N}·]{1,3}/
+    /// A provider route's place as a provider list would give it: a country code of at most three letters or digits
+    /// ("··" for a country unbraid has no code for), the rest without control or invisible characters. The country
+    /// code reaches a request (the speed test asks M-Lab for a server in it, `Ndt7.locatePath`), the rest is shown.
+    private static func placeOk(_ l: Location) -> Bool {
+        (l.countryCode.map { $0.wholeMatch(of: countryCodePattern) != nil } ?? true)
+            && [l.group, l.region, l.country, l.city, l.proto, l.pinned?.name, l.pinned?.city, l.pinned?.country, l.pinned?.host, l.pinned?.ip].allSatisfy { $0.map { placeName($0) } ?? true }
+            && (l.country.map { !$0.trimmingCharacters(in: .whitespaces).isEmpty } ?? true)
+    }
+    /// A place's name as a provider list may write it: as `plain`, but the zero-width joiner and non-joiner, which
+    /// some scripts and emoji need, may stand between visible characters.
+    private static func placeName(_ s: String) -> Bool {
+        s.utf8.count <= 1024 && s.unicodeScalars.allSatisfy { $0 == "\u{200C}" || $0 == "\u{200D}" || !strange.contains($0) }
+            && (s.isEmpty || s.unicodeScalars.contains { $0 != "\u{200C}" && $0 != "\u{200D}" && !CharacterSet.whitespaces.contains($0) })
+    }
     private static func plain(_ s: String, max: Int) -> Bool { s.utf8.count <= max && s.unicodeScalars.allSatisfy { !strange.contains($0) } }
     private static func plainName(_ n: String) -> Bool { !n.trimmingCharacters(in: .whitespaces).isEmpty && plain(n, max: 256) }
 
@@ -222,7 +240,10 @@ nonisolated enum Backup {
         for r in s.routes {
             let n = [r.wg != nil, r.ovpn != nil, r.ss != nil, r.tsExit != nil].filter { $0 }.count
             try need(n <= 1, "a route has more than one exit")
-            if n == 0 { try need(Providers.get(r.loc.provider) != nil, "a route uses a provider this unbraid doesn't know") }
+            if n == 0 {
+                try need(Providers.get(r.loc.provider) != nil, "a route uses a provider this unbraid doesn't know")
+                try need(placeOk(r.loc), "a route's place is damaged")
+            }
             if let x = r.tsExit { try need(!x.isEmpty && plain(x, max: 253) && plain(r.tsName ?? "", max: 256), "a Tailscale route is damaged") }
             // A route saved without keys gets them back only through its own server, which must be saved without them too.
             let own = s.servers.first { $0.id == r.own }
@@ -232,6 +253,8 @@ nonisolated enum Backup {
             if r.keyless, let own { try need(r.wg == own.wg && r.ovpn == own.ovpn && r.ss == own.ss, "a route and its own server don't match") }
             if r.wg != nil || r.ovpn != nil || r.ss != nil { try check(r.name, r.wg, r.ovpn, r.ss, keyless: r.keyless) }
         }
+        // Starred places become a route's place when picked.
+        try need(s.favorites.allSatisfy(placeOk), "a favorite place is damaged")
         if let w = s.home.wg { try check(w.name, w, nil, nil, keyless: false) }
         // An app or a website may be on Block; a default route never is.
         let known = Set(s.routes.map(\.id))
@@ -328,6 +351,8 @@ nonisolated enum Backup {
         var keptAs: String?
         /// Keeping this Mac's setup was asked, but the backup's profiles leave no room or name for it: it would go.
         var unkept = false
+        /// Unkept because the backup's routes or own servers and this Mac's together are more than a backup holds.
+        var tooBig = false
         /// What the backup holds, and what of this Mac's it replaces.
         var holds: Summary
         var replaces: Summary
@@ -572,6 +597,11 @@ nonisolated enum Backup {
                 c.id = fresh("r", routeIds)
             }
             r.routes.append(c); routeIds.insert(c.id); rt[x.id] = c.id
+        }
+        // Together more than a backup holds: the next backup of it couldn't be restored, so nothing is kept and the
+        // backup is restored on its own (the plan's setup is still that one).
+        guard r.routes.count <= maxRoutes, r.servers.count <= maxServers else {
+            plan.unkept = true; plan.tooBig = true; plan.needConfig = needConfig(plan.setup); return plan
         }
         let m = { (id: String) in rt[id] ?? id }
         let valid = Set(current.routes.map(\.id) + [DIRECT, BLOCK])
