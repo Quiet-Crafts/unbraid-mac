@@ -40,25 +40,36 @@ nonisolated struct RouteRetry<Key: Equatable> {
     mutating func clear() { entries.removeAll() }
 }
 
-/// Suppresses the initial observation and coalesces a burst to its final identity.
+/// Suppresses the initial observation and coalesces a burst to its final identity. A return to the identity last
+/// delivered is no change, unless the network was down in between: another Wi-Fi on the same interface with a router
+/// at the same address looks the same once joined, and is still a move that may fix blocked routes.
 nonisolated struct NetworkChanges<Identity: Equatable> {
     private var delivered: Identity?
+    private var deliveredDown = false
     private var pending: Identity?
+    private var pendingDown = false
+    private var wentDown = false
     private(set) var deadline: Date?
 
-    mutating func observe(_ identity: Identity, now: Date) {
-        guard let delivered else { self.delivered = identity; return }
-        if identity == delivered { pending = nil; deadline = nil; return }
+    /// `down`: no network at all in this observation (no Wi-Fi or Ethernet), so what comes after it is another joining.
+    /// A drop seen while the last delivered state was down already is nothing new.
+    mutating func observe(_ identity: Identity, down: Bool = false, now: Date) {
+        guard let delivered else { self.delivered = identity; deliveredDown = down; return }
+        if down && !deliveredDown { wentDown = true }
+        if identity == delivered && !wentDown { pending = nil; deadline = nil; return }
         guard pending != identity else { return }
         pending = identity
+        pendingDown = down
         deadline = now.addingTimeInterval(2)
     }
 
     mutating func take(now: Date) -> Bool {
         guard let deadline, deadline <= now, let pending else { return false }
         delivered = pending
+        deliveredDown = pendingDown
         self.pending = nil
         self.deadline = nil
+        wentDown = false
         return true
     }
 }

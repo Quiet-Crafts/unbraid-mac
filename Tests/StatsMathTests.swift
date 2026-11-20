@@ -771,4 +771,14 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(StatsMath.routeId("nl"), "nl")
         XCTAssertEqual(StatsMath.routeId("home"), "home")
     }
+
+    /// A node test's traffic counts to the node only after the switch to it landed, on that engine; other exits as tested.
+    func testANodeTestCountsOnlyOnTheEngineItSwitched() {
+        let node = StatsMath.tsNode + "100.64.0.9"
+        XCTAssertNil(StatsMath.testExit(nil, switchedOn: nil, engine: [1, 2, 3]))
+        XCTAssertEqual(StatsMath.testExit("it", switchedOn: nil, engine: [1, 2, 3]), "it")
+        XCTAssertNil(StatsMath.testExit(node, switchedOn: nil, engine: [1, 2, 3]))
+        XCTAssertEqual(StatsMath.testExit(node, switchedOn: [1, 2, 3], engine: [1, 2, 3]), node)
+        XCTAssertNil(StatsMath.testExit(node, switchedOn: [1, 2, 3], engine: [1, 3, 3]))
+    }
 }

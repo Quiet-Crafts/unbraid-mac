@@ -109,4 +109,33 @@ final class RouteRetryTests: XCTestCase {
         changes.observe("ethernet", now: start.addingTimeInterval(5))
         XCTAssertFalse(changes.take(now: start.addingTimeInterval(10)))
     }
+
+    /// Another Wi-Fi on the same interface, its router at the same address: the Mac drops off one network and joins the
+    /// other within two seconds, and both look the same once joined. Still a move; a change of nothing else isn't.
+    func testANetworkJoinedAgainAfterADropIsAMove() {
+        var changes = NetworkChanges<String>()
+        let start = Date(timeIntervalSince1970: 1000)
+        changes.observe("wifi", now: start)
+        changes.observe("none", down: true, now: start.addingTimeInterval(0.5))
+        changes.observe("wifi", now: start.addingTimeInterval(1))
+        XCTAssertFalse(changes.take(now: start.addingTimeInterval(2)))
+        XCTAssertTrue(changes.take(now: start.addingTimeInterval(3)))
+        // Taken: the same network again without a drop is nothing.
+        changes.observe("wifi", now: start.addingTimeInterval(4))
+        XCTAssertNil(changes.deadline)
+        // Down long enough to be delivered, then updates while still down: no move until a network comes.
+        changes.observe("none", down: true, now: start.addingTimeInterval(5))
+        XCTAssertTrue(changes.take(now: start.addingTimeInterval(7)))
+        changes.observe("none", down: true, now: start.addingTimeInterval(8))
+        XCTAssertNil(changes.deadline)
+        // Another kind of nothing while still down (the interface list changed while offline): no move either.
+        changes.observe("none, other", down: true, now: start.addingTimeInterval(8.5))
+        XCTAssertTrue(changes.take(now: start.addingTimeInterval(10.5)))
+        changes.observe("wifi", now: start.addingTimeInterval(11))
+        XCTAssertTrue(changes.take(now: start.addingTimeInterval(13)))
+        // A blip that isn't a drop (a tunnel reloading: the Wi-Fi stays) and back: nothing.
+        changes.observe("wifi, blip", now: start.addingTimeInterval(14))
+        changes.observe("wifi", now: start.addingTimeInterval(14.5))
+        XCTAssertNil(changes.deadline)
+    }
 }

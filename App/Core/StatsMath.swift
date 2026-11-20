@@ -158,6 +158,15 @@ nonisolated struct StatsSource {
 // MARK: - Calendar, formatting, attribution
 
 nonisolated enum StatsMath {
+    /// The exit a speed test's traffic counts to (`StatsContext.testExit`): a test of a Tailscale exit node counts to the
+    /// node only once the switch to it landed (`switchedOn`, the engine it landed on) and while that engine still runs
+    /// (`engine`), never before the switch nor from an engine that restarted since; any other exit counts as tested.
+    static func testExit(_ exit: String?, switchedOn: [Int]?, engine: [Int]) -> String? {
+        guard let exit else { return nil }
+        guard exit.hasPrefix(tsNode) else { return exit }
+        return switchedOn == engine ? exit : nil
+    }
+
     static let hour: Int64 = 3_600_000
     /// Exit id of the home network (Tailscale and the home WireGuard).
     static let home = "home"

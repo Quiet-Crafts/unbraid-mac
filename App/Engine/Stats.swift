@@ -127,7 +127,7 @@ final class Stats {
         let c = Connection.shared, t = SpeedTest.shared
         let setup = Store.shared.setup
         let running = c.running ?? setup
-        let testExit = t.testing ? t.run?.exit : nil
+        let testExit = StatsMath.testExit(t.testing ? t.run?.exit : nil, switchedOn: t.nodeEngine, engine: c.engineEpoch)
         let tools = Set((Array(setup.apps.keys) + Array(running.apps.keys)).filter { $0.hasPrefix("/") })
         return StatsContext(
             setup: setup, running: running, tags: c.tags, servers: c.state.servers.mapValues(\.name),

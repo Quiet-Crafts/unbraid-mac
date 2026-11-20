@@ -65,6 +65,9 @@ final class SpeedTest {
     private var pathMonitor: NWPathMonitor?
     private var metered = true
     private(set) var run: Run?
+    /// The engine a node test's switch to its node landed on (`Connection.engineEpoch`); nil before it did, or for a test
+    /// of anything else. Statistics count traffic to the node only while that engine runs (`StatsMath.testExit`).
+    private(set) var nodeEngine: [Int]?
     /// The readings of the test under way. Apart from `run`, so four readings a second redraw what shows them and not the page.
     let trace = SpeedTrace()
 
@@ -138,6 +141,7 @@ final class SpeedTest {
                       via: node != nil ? "Tailscale" : route?.source ?? "", name: node?.name ?? vpnServer?.name ?? route?.name ?? "",
                       ip: node?.ip ?? vpnServer?.ip ?? "", epoch: Stats.shared.epoch, mine: attempt, recordAs: StatsMath.idOf(exit, setup: setup))
         run = Run(exit: exit)
+        nodeEngine = nil
         trace.reset()
         task = Task { [self] in
             defer { if attempt == job.mine { task = nil } }
@@ -165,7 +169,7 @@ final class SpeedTest {
             // Switching is a blocking call; give Tailscale a moment to reach the new node before measuring.
             if switched { try? await Task.sleep(for: .milliseconds(1500)) }
             if attempt != job.mine { return }
-            if switched { await measure(job) } else {
+            if switched { nodeEngine = job.engine; await measure(job) } else {
                 run = Run(exit: exit, phase: .failed, error: ok == false ? "Tailscale couldn't switch to \(node.name)." : "Tailscale didn't confirm the switch to \(node.name).")
             }
             // A test stopped meanwhile was put back by `cancel()`; this one mustn't undo the next test's switch.

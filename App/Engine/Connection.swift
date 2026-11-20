@@ -188,10 +188,13 @@ final class Connection {
         var expensive: Bool
         var constrained: Bool
         var gateways: [String]
+        /// No Wi-Fi, Ethernet or other real network at all (a tunnel's own interface doesn't count): a drop that a
+        /// reload of unbraid's own tunnel never causes, and a move to another network always does.
+        var down = false
     }
 
     private func observeNetwork(_ identity: NetworkIdentity) {
-        networkChanges.observe(identity, now: .now)
+        networkChanges.observe(identity, down: identity.down, now: .now)
         armNetworkWake()
     }
 
@@ -347,7 +350,8 @@ final class Connection {
             let identity = NetworkIdentity(
                 interfaces: path.availableInterfaces.map { "\($0.name)|\($0.type)" }.sorted(),
                 status: String(describing: path.status), expensive: path.isExpensive,
-                constrained: path.isConstrained, gateways: path.gateways.map { String(describing: $0) }.sorted())
+                constrained: path.isConstrained, gateways: path.gateways.map { String(describing: $0) }.sorted(),
+                down: !path.availableInterfaces.contains { $0.type != .other })
             let up = path.status == .satisfied && path.availableInterfaces.contains { $0.type != .other }
             Task { @MainActor in self?.networkUp = up; self?.observeNetwork(identity) }
         }
