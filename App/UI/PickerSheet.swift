@@ -7,16 +7,12 @@ private enum Choice: Hashable {
     case ts(ip: String, name: String)
 }
 
-private let nordProtocols: [(key: String?, label: String, note: String)] = [
-    (nil, "NordLynx", "Fastest. Built on WireGuard"),
-    ("openvpn_udp", "OpenVPN UDP", "Wider compatibility"),
-    ("openvpn_tcp", "OpenVPN TCP", "For networks that block VPNs"),
-]
-
-/// Double VPN and Onion only run over OpenVPN: UDP unless TCP was chosen. Other providers have no choice.
+/// Double VPN and Onion only run over OpenVPN: UDP unless TCP was chosen. A provider with a protocol choice (`Provider.protocols`)
+/// keeps a choice it offers; the others have none.
 private func effectiveProtocol(_ provider: String?, group: String?, choice: String?) -> String? {
-    guard provider == "nord" else { return nil }
-    return group.map(Nord.openVpnOnly.contains) == true ? (choice?.hasPrefix("openvpn") == true ? choice : "openvpn_udp") : choice
+    if provider == "nord" { return group.map(Nord.openVpnOnly.contains) == true ? (choice?.hasPrefix("openvpn") == true ? choice : "openvpn_udp") : choice }
+    guard let choice, let p = provider.flatMap(Providers.get), p.protocols.contains(where: { $0.key == choice }) else { return nil }
+    return choice
 }
 
 /// A city saved before regions were stored: Mullvad, IVPN and PIA can't tell which city it was, so it is picked again.
@@ -192,17 +188,18 @@ struct PickerSheet: View {
             HStack(spacing: 12) {
                 if let p = provider {
                     Menu {
-                        Picker("Provider", selection: Binding(get: { p.id }, set: { chosen = $0; expanded = []; keepSelection(mine: false, provider: $0) })) {
+                        Picker("Provider", selection: Binding(get: { p.id }, set: { chosen = $0; expanded = []; protocolChoice = current?.provider == $0 ? current?.proto : nil; keepSelection(mine: false, provider: $0) })) {
                             ForEach(signed, id: \.id) { Text($0.name).tag($0.id) }
                         }.pickerStyle(.inline)
                         Divider()
                         Button("Add a Provider…", action: addProvider)
                     } label: { Text(p.name) }
                         .fixedSize().accessibilityLabel("Provider")
-                    if p.id == "nord" {
+                    if p.id == "nord" || p.protocols.count > 1 {
                         Button { withAnimation(reduceMotion ? nil : .smooth(duration: 0.18)) { optionsOpen.toggle() } } label: {
                             HStack(spacing: 4) {
-                                Text("Options: \(nordProtocols.first { $0.key == proto }?.label ?? ""), \(group == nil ? "standard" : nordGroups.first { $0.key == group }?.label ?? "") servers")
+                                Text(p.id == "nord" ? "Options: \(p.protocols.first { $0.key == proto }?.label ?? ""), \(group == nil ? "standard" : nordGroups.first { $0.key == group }?.label ?? "") servers"
+                                     : "Protocol: \(p.protocols.first { $0.key == proto }?.label ?? "")")
                                 Image(systemName: "chevron.right").imageScale(.small).rotationEffect(.degrees(optionsOpen ? 90 : 0))
                             }
                             .foregroundStyle(.secondary).font(.callout)
@@ -216,7 +213,7 @@ struct PickerSheet: View {
                 Spacer()
                 search("Country or city")
             }
-            if optionsOpen, provider?.id == "nord" { nordOptions }
+            if optionsOpen, let p = provider, p.id == "nord" || p.protocols.count > 1 { protocolOptions(p) }
             HStack {
                 if let r = route, !r.imported, r.loc.provider == provider?.id, let p = provider, p.protection != nil {
                     let shown: Bool? = filterChoice ?? r.filter
@@ -234,12 +231,13 @@ struct PickerSheet: View {
     }
 
     /// The protocol rides on the pending place; server type only narrows the next place picked.
-    private var nordOptions: some View {
-        let openVpnOnly = group.map(Nord.openVpnOnly.contains) ?? false
+    private func protocolOptions(_ provider: any Provider) -> some View {
+        let nord = provider.id == "nord"
+        let openVpnOnly = nord && (group.map(Nord.openVpnOnly.contains) ?? false)
         return HStack(alignment: .top, spacing: 24) {
             VStack(alignment: .leading, spacing: 6) {
                 Text("Protocol").font(.caption).foregroundStyle(.secondary)
-                ForEach(nordProtocols, id: \.label) { p in
+                ForEach(provider.protocols, id: \.label) { p in
                     let ok = p.key != nil || !openVpnOnly
                     Button { setProtocol(p.key) } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -252,26 +250,26 @@ struct PickerSheet: View {
                     }.buttonStyle(.plain).disabled(!ok)
                 }
             }
-            VStack(alignment: .leading, spacing: 6) {
+            if nord { VStack(alignment: .leading, spacing: 6) {
                 Text("Server type").font(.caption).foregroundStyle(.secondary)
                 Picker("Server type", selection: Binding(get: { groupChoice }, set: { setGroup($0) })) {
                     ForEach(nordGroups, id: \.label) { Text($0.label).tag($0.key) }
                 }.labelsHidden().fixedSize()
                 Text("Lists only the countries that offer it. Pick a location to use it.").font(.caption).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true).frame(width: 240, alignment: .leading)
-            }
+            } }
         }
         .padding(12).frame(maxWidth: .infinity, alignment: .leading)
         .background(Ink.surface, in: .rect(cornerRadius: Corner.inner))
     }
 
-    /// The pending Nord place follows the options, so "Use" applies what the sheet shows.
+    /// The pending place follows the options, so "Use" applies what the sheet shows.
     private func retag() {
-        guard case .loc(var l) = selection, l.provider == "nord" else { return }
-        l.group = groupChoice
-        l.proto = effectiveProtocol("nord", group: groupChoice, choice: protocolChoice)
+        guard case .loc(var l) = selection, l.provider == provider?.id, provider?.protocols.isEmpty == false else { return }
+        if l.provider == "nord" { l.group = groupChoice }
+        l.proto = effectiveProtocol(l.provider, group: l.group, choice: protocolChoice)
         // A server found over OpenVPN may have no NordLynx key: under NordLynx it is picked again instead.
-        if l.proto == nil, l.pinned?.publicKey.isEmpty == true { l.pinned = nil }
+        if l.provider == "nord", l.proto == nil, l.pinned?.publicKey.isEmpty == true { l.pinned = nil }
         selection = .loc(l)
     }
 

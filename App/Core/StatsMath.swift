@@ -174,6 +174,13 @@ nonisolated enum StatsMath {
     static let tsNode = "ts:"
     static let testsKept = 100
 
+    /// What carried a route, for its history's label: the source, and an OpenVPN or Automatic protocol, whose history is apart
+    /// ("AirVPN · OpenVPN TCP"). A route's own server shows its kind alone.
+    static func via(_ r: Route) -> String {
+        let protocolName = r.imported ? nil : ["openvpn_udp": "OpenVPN", "openvpn_tcp": "OpenVPN TCP", AutoProtocol.key: "Automatic"][r.loc.proto ?? ""]
+        return [r.source, protocolName].compactMap { $0 }.joined(separator: " · ")
+    }
+
     /// Identifies the carrier without keeping credentials in the statistics file.
     static func idOf(_ route: Route) -> String {
         let l = route.loc
@@ -375,7 +382,7 @@ nonisolated enum StatsMath {
         if let known = capturedLabel(id, setup: setup, tsNames: tsNames) { return known }
         if let captured { return captured }
         if let stored { return stored }
-        if let r = matchingRoute(id, setup: running) { return StoredExit(id: id, code: r.code, name: r.name, hue: r.hue, via: r.source) }
+        if let r = matchingRoute(id, setup: running) { return StoredExit(id: id, code: r.code, name: r.name, hue: r.hue, via: via(r)) }
         if id == home { return StoredExit(id: id, code: "HM", name: "Home network", hue: 3, via: "Tailscale") }
         if id.hasPrefix(tsNode) { return StoredExit(id: id, code: "TS", name: String(id.dropFirst(tsNode.count)), hue: -1, via: "Tailscale") }
         return nil
@@ -386,7 +393,7 @@ nonisolated enum StatsMath {
     /// WireGuard; once removed, the last one stands; a Tailscale exit node used by a route is not how home is reached)
     /// or a listed Tailscale node. Never the running setup's copy, which may still carry a name the user changed.
     static func capturedLabel(_ id: String, setup: Setup, tsNames: [String: String]) -> StoredExit? {
-        if let r = matchingRoute(id, setup: setup) { return StoredExit(id: id, code: r.code, name: r.name, hue: r.hue, via: r.source) }
+        if let r = matchingRoute(id, setup: setup) { return StoredExit(id: id, code: r.code, name: r.name, hue: r.hue, via: via(r)) }
         if id == home {
             let via = [setup.home.tailscale ? "Tailscale" : nil, setup.home.wg != nil ? "WireGuard" : nil].compactMap { $0 }.joined(separator: " & ")
             return via.isEmpty ? nil : StoredExit(id: id, code: "HM", name: "Home network", hue: 3, via: via)
@@ -400,9 +407,10 @@ nonisolated enum StatsMath {
     static func providerOf(_ id: String, _ ex: ExitInfo?) -> String {
         if id == DIRECT { return "Direct, no VPN" }
         if id == home { return "Home network" }
-        guard let ex, !ex.via.isEmpty else { return "Other" }
-        if ["WireGuard", "OpenVPN", "Shadowsocks"].contains(ex.via) { return "My Servers" }
-        return Providers.all.first { Providers.short($0.id) == ex.via }?.name ?? ex.via
+        // The label may end in the protocol ("AirVPN · OpenVPN TCP"): the provider is what comes first.
+        guard let ex, let via = ex.via.components(separatedBy: " · ").first, !via.isEmpty else { return "Other" }
+        if ["WireGuard", "OpenVPN", "Shadowsocks"].contains(via) { return "My Servers" }
+        return Providers.all.first { Providers.short($0.id) == via }?.name ?? via
     }
 
     // MARK: Attribution
@@ -519,7 +527,7 @@ nonisolated enum StatsMath {
         // Each route's id is worked out once (it reads a whole OpenVPN config), not once per stored exit.
         let byId = Dictionary(setup.routes.map { (idOf($0), $0) }, uniquingKeysWith: { first, _ in first })
         for id in Set(stored.keys).union(byId.keys).union([DIRECT]) {
-            if let r = byId[id] { exits[id] = ExitInfo(id: id, code: r.code, name: r.name, via: r.source, tone: .route(r.hue)) }
+            if let r = byId[id] { exits[id] = ExitInfo(id: id, code: r.code, name: r.name, via: via(r), tone: .route(r.hue)) }
             else if id == DIRECT { exits[id] = ExitInfo(id: id, code: "··", name: "Direct", via: "outside the VPN", tone: .direct) }
             // The home network as reached now, even before its next traffic rewrites the stored label.
             else if id == home, let h = capturedLabel(id, setup: setup, tsNames: [:]) {

@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 
 /// Credentials were refused: the user must sign in again.
 nonisolated struct AuthError: LocalizedError {
@@ -120,6 +121,70 @@ nonisolated struct ProviderOption: Hashable, Sendable {
     static let limit = ProviderOption(key: "limit", label: "Your plan's limit", kind: .number(1...999), defaultValue: "", advanced: true, affectsLinks: false)
 }
 
+/// One entry of a provider's protocol choice: what is stored in `Location.proto` (nil = the provider's WireGuard), its
+/// name and the line that explains it.
+nonisolated struct ProtocolChoice: Hashable, Sendable {
+    var key: String?
+    var label: String
+    var note: String
+}
+
+/// Why a route can't run as chosen and no other tunnel may stand in (a cached one included): the message says what to change.
+nonisolated struct Unsupported: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
+/// The Automatic protocol: WireGuard, and OpenVPN TCP once a network has blocked WireGuard on every port. Which routes
+/// are on TCP is kept in memory only, by route id: it starts over with every connection and on a network change.
+nonisolated enum AutoProtocol {
+    static let key = "auto"
+    static let tcp = "openvpn_tcp"
+    private static let onTcp = Mutex<Set<String>>([])
+
+    static func isOnTcp(_ route: String) -> Bool { onTcp.withLock { $0.contains(route) } }
+    static var routes: Set<String> { onTcp.withLock { $0 } }
+    /// True the first time: the route has just switched.
+    @discardableResult static func toTcp(_ route: String) -> Bool { onTcp.withLock { $0.insert(route).inserted } }
+    static func reset() { onTcp.withLock { $0.removeAll() } }
+    /// The switch to TCP didn't give a tunnel (the profile couldn't be had): back to WireGuard, so that the next round that finds
+    /// it dead tries TCP again, and nothing says TCP is in use.
+    static func fallBack(_ route: String) { onTcp.withLock { _ = $0.remove(route) } }
+
+    /// The protocol a route connects with now: Automatic is WireGuard (nil) or OpenVPN TCP; any other choice as it is.
+    static func of(_ r: Route) -> String? {
+        guard !r.imported, r.loc.proto == key else { return r.loc.proto }
+        return isOnTcp(r.id) ? tcp : nil
+    }
+
+    /// A route's location as the provider is asked for it: its protocol resolved.
+    static func resolved(_ r: Route) -> Location {
+        var l = r.loc
+        if !r.imported, l.proto == key { l.proto = of(r) }
+        return l
+    }
+
+    /// Whether a kept or cached tunnel was made with the protocol the route uses now: an Automatic route never gets
+    /// back the WireGuard tunnel that stopped answering, nor the TCP one after the network changed.
+    static func matches(_ r: Route, _ l: Link) -> Bool {
+        guard !r.imported, r.loc.proto == key else { return true }
+        if case .ovpn = l { return isOnTcp(r.id) }
+        return !isOnTcp(r.id)
+    }
+
+    /// The protocol a provider route says it uses after its place: "OpenVPN", "OpenVPN TCP", and for an Automatic route
+    /// that is on TCP and running "Using OpenVPN TCP". Nil for WireGuard, and for a provider with no protocol choice.
+    static func label(_ r: Route, onTcp: [String], running: Bool) -> String? {
+        guard !r.imported, let p = r.loc.proto, Providers.get(r.loc.provider)?.protocols.contains(where: { $0.key == p }) == true else { return nil }
+        if p == key { return onTcp.contains(r.id) && running ? "Using OpenVPN TCP" : nil }
+        return ["openvpn_udp": "OpenVPN", "openvpn_tcp": "OpenVPN TCP"][p]
+    }
+
+    /// WireGuard is blocked on this network once every port it can use has been tried: [step] ports have failed and the
+    /// one in use now is the next. A route with a single port (a fixed one, or a provider with one) has nothing to step to.
+    static func exhausted(ports: Int, canStep: Bool, step: Int) -> Bool { !canStep || step + 1 >= ports }
+}
+
 /// A ready tunnel for one exit, produced at connect time.
 nonisolated enum Link: Codable, Hashable, Sendable {
     case wg(Server, WgPeer, ports: [Int] = [], entries: [String] = [])
@@ -180,6 +245,8 @@ nonisolated protocol Provider: Sendable {
     var hasLoad: Bool { get }
     /// The tunnel protocol its servers use, shown in the picker (NordVPN lets the user choose).
     var proto: String { get }
+    /// The tunnel protocols the picker offers for a route, first the default (`key` nil). Empty: no choice.
+    var protocols: [ProtocolChoice] { get }
     var protection: ProviderOption? { get }
     var defaults: [String: String] { get }
     func options(_ account: String) async throws -> [ProviderOption]
@@ -225,6 +292,7 @@ nonisolated protocol Provider: Sendable {
 nonisolated extension Provider {
     var hasLoad: Bool { false }
     var proto: String { "WireGuard" }
+    var protocols: [ProtocolChoice] { [] }
     var protection: ProviderOption? {
         guard ["nord", "mullvad", "pia", "ivpn"].contains(id) else { return nil }
         return ProviderOption(key: "protect", label: id == "nord" ? "Threat Protection Lite" : id == "pia" ? "MACE" : "\(name) blocking", kind: .toggle, defaultValue: id == "nord" ? "on" : "off")

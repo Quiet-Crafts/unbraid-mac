@@ -2938,6 +2938,12 @@ extension CompilerTests {
         openvpn.routes = [nl(), Route(id: "ex", loc: Location(provider: "expressvpn", countryCode: "JP", country: "Japan"))]
         openvpn.apps = ["com.e": "ex"]
         try add("openvpn", openvpn, links: ["nl": .ovpn(sv("nl"), ovpn), "ex": .ovpn(sv("exx"), other)])
+        // AirVPN over OpenVPN TCP 443: the profile the generator makes for the device, on the provider's own route.
+        let airProfile = try Manual.parseOvpn(Fixture.text("ovpn/airvpn.tcp.ovpn"), name: "Alpha", username: "", password: "")
+        var airOvpn = example; airOvpn.home = Home()
+        airOvpn.routes = [Route(id: "air", loc: Location(provider: "airvpn", country: "Netherlands", proto: "openvpn_tcp"))]
+        airOvpn.defaultRoute = "air"; airOvpn.apps = ["com.e": "air"]
+        try add("airvpn-openvpn", airOvpn, links: ["air": .ovpn(sv("air"), airProfile)])
         var headscale = example; headscale.home.tsControlUrl = "https://hs.example.com"
         try add("headscale", headscale)
         try add("tailnet-suffix", example, tsSuffix: "tail123.ts.net")
@@ -3074,6 +3080,23 @@ extension CompilerTests {
         direct.defaultRoute = DIRECT
         XCTAssertNoThrow(try raw(direct))
         XCTAssertNoThrow(try raw(example))
+    }
+
+    /// An AirVPN route over OpenVPN compiles to an OpenVPN endpoint to the one address on 443 over TCP (every config here
+    /// is also checked by the shipped engine, `raw`), with the tunnel's pushed DNS answering for it.
+    func testAnAirVpnOpenVpnRouteCompilesToAnOpenVpnEndpoint() throws {
+        let profile = try Manual.parseOvpn(Fixture.text("ovpn/airvpn.tcp.ovpn"), name: "Alpha", username: "", password: "")
+        var s = example; s.home = Home()
+        s.routes = [Route(id: "air", loc: Location(provider: "airvpn", country: "Netherlands", proto: "openvpn_tcp"))]
+        s.defaultRoute = "air"; s.apps = ["com.e": "air"]
+        let c = try compile(s, links: ["air": .ovpn(sv("air"), profile)])
+        let endpoint = try XCTUnwrap(((c["endpoints"] as? [O]) ?? []).first { $0["type"] as? String == "openvpn-client" })
+        XCTAssertEqual(endpoint["tag"] as? String, "r-air")
+        let servers = (endpoint["servers"] as? [O]) ?? [endpoint]
+        XCTAssertEqual(servers.compactMap { $0["server"] as? String }, ["1.2.3.5"])
+        XCTAssertEqual(servers.compactMap { $0["server_port"] as? Int }, [443])
+        XCTAssertEqual(servers.compactMap { $0["network"] as? String }, ["tcp"])
+        XCTAssertEqual(dnsServer(c, "dns-ovpn-r-air")?["type"] as? String, "openvpn")
     }
 
     func testCompiledConfigsMatchTheGoldenFixtures() throws {

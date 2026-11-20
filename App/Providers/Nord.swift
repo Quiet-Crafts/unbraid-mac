@@ -34,6 +34,12 @@ nonisolated struct Nord: Provider {
         return JSON.encode(Account(token: t, key: c.key, user: c.user, pass: c.pass))
     }
 
+    var protocols: [ProtocolChoice] {
+        [ProtocolChoice(key: nil, label: "NordLynx", note: "Fastest. Built on WireGuard"),
+         ProtocolChoice(key: "openvpn_udp", label: "OpenVPN UDP", note: "Wider compatibility"),
+         ProtocolChoice(key: "openvpn_tcp", label: "OpenVPN TCP", note: "For networks that block VPNs. Much slower than the others")]
+    }
+
     static func account(_ blob: String) throws -> Account { try JSON.decode(Account.self, Data(blob.utf8), "the account store") }
 
     @concurrent func countries(_ account: String) async throws -> [Country] { try await NordApi.countries().sorted { $0.name < $1.name } }

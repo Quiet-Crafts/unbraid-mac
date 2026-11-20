@@ -6,14 +6,15 @@ let nordGroups: [(key: String?, label: String)] = [
 ]
 
 /// Where a route leaves, in words: "NordVPN · P2P · Amsterdam · OpenVPN", or the kind of own server.
-func place(_ r: Route, _ live: [String: Server]) -> String {
+/// `tcp`: the Automatic routes now on OpenVPN TCP (`VpnState.autoTcp`).
+func place(_ r: Route, _ live: [String: Server], tcp: [String] = []) -> String {
     if r.wg != nil { return "WireGuard" }
     if r.ovpn != nil { return "OpenVPN" }
     if r.ss != nil { return "Shadowsocks" }
     if r.tsExit != nil { return "Tailscale exit" }
     let nord = r.loc.provider == "nord"
     let city = r.loc.pinned?.name ?? r.loc.city ?? live[r.id]?.city.nilIfEmpty ?? "Fastest"
-    let tech: String? = nord ? ["openvpn_udp": "OpenVPN", "openvpn_tcp": "OpenVPN TCP"][Nord.tech(r.loc)] : nil
+    let tech: String? = nord ? ["openvpn_udp": "OpenVPN", "openvpn_tcp": "OpenVPN TCP"][Nord.tech(r.loc)] : AutoProtocol.label(r, onTcp: tcp, running: live[r.id] != nil)
     return [r.source, nord ? nordGroups.first { $0.key != nil && $0.key == r.loc.group }?.label : nil, city, tech].compactMap { $0 }.joined(separator: " · ")
 }
 

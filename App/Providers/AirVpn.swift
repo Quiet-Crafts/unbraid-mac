@@ -43,6 +43,16 @@ nonisolated struct AirVpn: KeyProvider {
     }
 
     func trusts(_ link: Link, _ account: String) -> Bool {
+        // An OpenVPN profile was checked when it was made; a saved one must still dial a single public address on 443 with its
+        // own transport and wrapper, and the standard entry's is the server's address.
+        if case .ovpn(let server, let profile) = link {
+            guard let a = try? keyAccount(account), a.apiKey != nil else { return false }
+            for kind in Self.openVpn.values {
+                guard let host = Self.dialled(profile, at: nil, kind) else { continue }
+                return kind.entry != 1 || host == server.ip
+            }
+            return false
+        }
         guard case .wg(let server, let peer, let ports, let entries) = link, let a = try? keyAccount(account),
               Catalog.Entry.publicIPv4(server.ip), let colon = peer.endpoint.lastIndex(of: ":"),
               let port = Int(peer.endpoint[peer.endpoint.index(after: colon)...]) else { return false }
@@ -269,8 +279,50 @@ nonisolated struct AirVpn: KeyProvider {
         guard let u = info.user, u.premium == true, let expiration = u.expiration_unix, expiration > 0 else { return "No active plan" }
         return "\(Date().timeIntervalSince1970 > Double(expiration) ? "Ended on" : "Paid until") \(ProviderStatus.publishedOn(expiration))"
     }
+    /// WireGuard on 1637 and 47107. OpenVPN comes from AirVPN's generator, made for this device when a route connects: UDP
+    /// 443 on the standard entry (tls-auth), TCP 443 on the alternative one (tls-crypt, which hides even the OpenVPN
+    /// start). It needs the API key. Automatic is WireGuard, and OpenVPN TCP once a network blocks it (`AutoProtocol`).
+    var protocols: [ProtocolChoice] {
+        [ProtocolChoice(key: nil, label: "WireGuard", note: "Fastest"),
+         ProtocolChoice(key: "openvpn_udp", label: "OpenVPN UDP", note: "Wider compatibility. Needs the API key sign-in"),
+         ProtocolChoice(key: "openvpn_tcp", label: "OpenVPN TCP", note: "For networks that block VPNs. Much slower than the others. Needs the API key sign-in"),
+         ProtocolChoice(key: AutoProtocol.key, label: "Automatic", note: "WireGuard, then the slower OpenVPN TCP when a network blocks it. TCP needs the API key sign-in")]
+    }
+
+    /// The generator's protocol for a route protocol, the entry it dials (1 standard, 2 alternative, in the order of the
+    /// server's addresses), its transport and its wrapper.
+    struct OpenVpnKind: Sendable {
+        let generator: String
+        let entry: Int
+        let transport: String
+        let wrap: String
+    }
+    static let openVpn: [String: OpenVpnKind] = [
+        "openvpn_udp": OpenVpnKind(generator: "openvpn_1_udp_443", entry: 1, transport: "udp", wrap: "tls-auth"),
+        "openvpn_tcp": OpenVpnKind(generator: "openvpn_3_tcp_443", entry: 2, transport: "tcp", wrap: "tls-crypt"),
+    ]
+    static let noKey = "AirVPN's OpenVPN needs a sign-in with an API key. Sign in again with one, or choose WireGuard for this route"
+
+    /// Whether the signed-in account can ask for OpenVPN profiles: it has an API key and a device.
+    static func canOpenVpn(_ account: String) -> Bool {
+        guard let a = try? AirVpn().keyAccount(account) else { return false }
+        return a.apiKey != nil && a.device != nil
+    }
+
+    /// A WireGuard route as `KeyProvider` has it; an OpenVPN one takes the same server, with a profile the generator makes
+    /// for this device.
     @concurrent func connect(_ loc: Location, _ account: String) async throws -> Link {
         let a = try keyAccount(account)
+        // Automatic is resolved per route before connecting (`AutoProtocol.of`): anything else asking for it gets WireGuard.
+        var loc = loc
+        let choice = loc.proto == AutoProtocol.key ? nil : loc.proto
+        loc.proto = nil
+        var kind: OpenVpnKind?
+        if let choice {
+            guard let k = Self.openVpn[choice] else { throw Unsupported("AirVPN doesn't offer that protocol. Choose another in the route") }
+            guard a.apiKey != nil, a.device != nil else { throw Unsupported(Self.noKey) }
+            kind = k
+        }
         let all: [Catalog.Entry]?
         if loc.pinned == nil { all = try await entries(a) } else { all = try? await entries(a) }
         let link = try await link(loc, a) { if let all { return all }; throw Fail("AirVPN server list unavailable") }
@@ -278,7 +330,43 @@ nonisolated struct AirVpn: KeyProvider {
         let offered = a.port == 47107 ? [47107, 1637] : [1637, 47107]
         let found = all?.first { $0.ips.contains(sv.ip) && $0.serverName == sv.name }
         let addresses = found?.ips.count == 2 ? found!.ips : []
-        return .wg(sv, peer, ports: offered, entries: addresses)
+        guard let kind, let key = a.apiKey else { return .wg(sv, peer, ports: offered, entries: addresses) }
+        return try await openVpnLink(sv, a, key, kind, addresses)
+    }
+
+    private func openVpnLink(_ sv: Server, _ a: KeyAccount, _ key: String, _ kind: OpenVpnKind, _ addresses: [String]) async throws -> Link {
+        // The device by its id (or name and key): a renamed one gets its new name, and the generator never falls back to Default.
+        guard let d = try await devices(key).first(where: { ($0.id == a.deviceId || (a.deviceId == nil && $0.name == a.device)) && $0.key == a.deviceKey }) else {
+            throw AuthError("unbraid's AirVPN device is gone or was renewed. Sign in to AirVPN again", url: deviceURL)
+        }
+        let at = kind.entry == 1 ? addresses.first ?? sv.ip : addresses.dropFirst().first
+        guard let at else { throw Fail("AirVPN's server list can't be read right now, and OpenVPN TCP needs it to check \(sv.name). Try again later") }
+        guard Catalog.Entry.publicIPv4(at) else { throw Fail("\(sv.name) can't be reached right now") }
+        let data = try await api("generator", key, ["protocols": kind.generator, "servers": sv.name, "device": d.name, "system": "linux",
+                                                    "resolve": "on", "iplayer_entry": "ipv4", "iplayer_exit": "ipv4"])
+        let text = String(decoding: data, as: UTF8.self)
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+            _ = try checked(data)
+            throw Fail("AirVPN didn't make an OpenVPN profile for \(sv.name). Try again later")
+        }
+        let mismatch = Fail("AirVPN's OpenVPN profile doesn't match \(sv.name). Try again")
+        guard let profile = try? Manual.parseOvpn(text, name: sv.name, username: "", password: "") else { throw mismatch }
+        guard Self.dialled(profile, at: at, kind) != nil else { throw mismatch }
+        return .ovpn(sv, profile)
+    }
+
+    /// The one address a profile dials, read from what the engine will run (the parsed profile, never the text): a single
+    /// remote, public, on port 443, over the kind's transport, with its wrapper, and nothing the import check calls weak.
+    /// `at`: the address it has to be (any public one when nil). Nil when anything differs.
+    static func dialled(_ p: OvpnProfile, at: String?, _ kind: OpenVpnKind) -> String? {
+        guard let endpoint = try? Manual.ovpnEndpoint("check", p) else { return nil }
+        // A profile the import would warn about is refused here: nobody is asked about one unbraid made itself.
+        do { guard try Manual.weakness(p) == nil else { return nil } } catch { return nil }
+        let rows = endpoint["servers"]?.list ?? [endpoint]
+        guard rows.count == 1, let host = rows[0]["server"]?.str, rows[0]["server_port"]?.int == 443,
+              rows[0]["network"]?.str?.hasPrefix(kind.transport) == true, Catalog.Entry.publicIPv4(host), at.map({ $0 == host }) ?? true,
+              endpoint["tls"]?["control_wrap"]?["type"]?.str == kind.wrap.replacingOccurrences(of: "-", with: "_") else { return nil }
+        return host
     }
 
     private struct Node: Decodable {

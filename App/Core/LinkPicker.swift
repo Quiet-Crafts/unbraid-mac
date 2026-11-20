@@ -168,7 +168,7 @@ nonisolated enum LinkPicker {
                           appliedAccounts[r.loc.provider] == accounts[r.loc.provider],
                           (r.loc.provider != "mullvad" || r.loc.pinned != nil || applied?.opt("mullvad", "owned") == setup.opt("mullvad", "owned")),
                           (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, k))), dialable(k), trusted(k, r, accounts, providers),
-                          disguised(setup, r, k) {
+                          disguised(setup, r, k), AutoProtocol.matches(r, k) {
                     // `trusted` also requires the provider and a signed-in account: it vouches for a server, not for the
                     // credentials in its tunnel, so two missing accounts never count as the same one.
                     link = k
@@ -179,7 +179,7 @@ nonisolated enum LinkPicker {
                     guard !(p.id == "mullvad" && r.loc.pinned == nil && setup.opt(p.id, "owned") == "on"),
                           let cached = last[cacheKey(r, account: account)],
                           (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))),
-                          dialable(cached), trusted(cached, r, accounts, providers), disguised(setup, r, cached) else {
+                          dialable(cached), trusted(cached, r, accounts, providers), disguised(setup, r, cached), AutoProtocol.matches(r, cached) else {
                         blocked[r.id] = .waiting
                         continue
                     }
@@ -192,6 +192,7 @@ nonisolated enum LinkPicker {
             } catch is CancellationError { throw CancellationError() }
             catch {
                 try Task.checkCancellation()
+                if !r.imported, r.loc.proto == AutoProtocol.key { AutoProtocol.fallBack(r.id) }
                 let provider = providers(r.loc.provider)?.name ?? r.loc.provider
                 if error is AuthError {
                     blocked[r.id] = accounts[r.loc.provider] == nil ? .signedOut(provider) : .refused(provider, error.localizedDescription)
@@ -199,7 +200,7 @@ nonisolated enum LinkPicker {
                     blocked[r.id] = .noLongerOffered(gone.server)
                 } else if let e = error as? NoDisguise {
                     blocked[r.id] = .unreachable(e.errorDescription ?? "can't be reached through V2Ray")
-                } else if error is KeyNotReady {
+                } else if error is KeyNotReady || error is Unsupported {
                     blocked[r.id] = .unreachable(error.localizedDescription)
                 } else if error is Catalog.Damaged {
                     blocked[r.id] = .unreachable(error.localizedDescription)
@@ -330,10 +331,12 @@ nonisolated enum LinkPicker {
         guard let p = providers(r.loc.provider) else { throw Fail("Unknown provider \(r.loc.provider)") }
         guard let acc = accounts[p.id] else { throw AuthError("Sign in to \(p.name) for \(r.name)") }
         let pinned = r.loc.pinned
+        // Automatic is asked for as the protocol it has come to: WireGuard, or OpenVPN TCP once the network blocked it.
+        let asked = AutoProtocol.resolved(r)
         let l: Link
         do {
             if let previous = try await again(p, r, acc, last, used, accounts, opts, providers) { l = previous }
-            else { l = try await p.connect(r.loc, acc, opts: opts) }
+            else { l = try await p.connect(asked, acc, opts: opts) }
         } catch let e as AuthError {
             throw e
         } catch is CancellationError {
@@ -347,9 +350,12 @@ nonisolated enum LinkPicker {
         } catch let e as KeyNotReady {
             // No cached tunnel stands in either: it would run without the quantum-safe key.
             throw e
+        } catch let e as Unsupported {
+            // Nor for a protocol the sign-in can't serve: a WireGuard tunnel would not be what the route asked for.
+            throw e
         } catch {
             guard !(p.id == "mullvad" && pinned == nil && opts["owned"] == "on"),
-                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), trusted(cached, r, accounts, providers) else {
+                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), trusted(cached, r, accounts, providers), AutoProtocol.matches(r, cached) else {
                 throw pinned.map { Fail("\(r.name): \($0.name) is unreachable") } ?? error
             }
             l = cached
@@ -359,9 +365,9 @@ nonisolated enum LinkPicker {
         // The best server is taken by another route: any other server of the location will do, else share this one.
         var other: Link?
         do {
-            let servers = try await p.servers(r.loc, acc, limit: 10, opts: opts)
+            let servers = try await p.servers(asked, acc, limit: 10, opts: opts)
             if let server = servers.first(where: { !used.contains("\(p.id)|\(serverId($0))") }) {
-                var loc = r.loc
+                var loc = asked
                 loc.pinned = server
                 let candidate = try await p.connect(loc, acc, opts: opts)
                 if dialable(candidate) { other = candidate }

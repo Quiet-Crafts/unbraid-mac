@@ -391,7 +391,7 @@ private struct RouteSidebarRow: View {
             }
         } icon: { Slash(color: s.color(id)).frame(width: Measure.slashColumn) }
         .badge(silent ? nil : sites == 0 ? Text("\(apps)") : Text("\(apps) · \(sites)"))
-        .help((silent ? RouteHealth.status + " · " : "") + (s.route(id).map { place($0, model.vpn.state.servers) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
+        .help((silent ? RouteHealth.status + " · " : "") + (s.route(id).map { place($0, model.vpn.state.servers, tcp: model.vpn.state.autoTcp) } ?? (id == DIRECT ? "Apps here skip the VPN" : s.blockedReach))
               + (sites == 0 ? "" : " · " + Snapshot.count(apps: apps, sites: sites)))
         .accessibilityLabel((id == s.defaultRoute ? "\(s.label(id)), default route" : s.label(id)) + (sites == 0 ? "" : ", " + Snapshot.count(apps: apps, sites: sites))
                             + (silent ? ", " + RouteHealth.status : ""))

@@ -27,6 +27,8 @@ nonisolated struct VpnState: Equatable, Sendable {
     /// Routes whose tunnel answered its last check in this engine run and on this network: the only ones the widgets
     /// call working. A route that isn't checked, or not yet, is in neither list.
     var answering: [String] = []
+    /// Automatic routes that switched to OpenVPN TCP on this network (`AutoProtocol`): shown as "Using OpenVPN TCP".
+    var autoTcp: [String] = []
     var error: String?
     var tsLoginUrl: String?
     var tsState: String?
@@ -130,6 +132,12 @@ final class Connection {
         return revision
     }
     private var links: [String: Link] { committed?.input.links ?? [:] }
+
+    /// `VpnState.autoTcp`: the Automatic routes whose running tunnel is the OpenVPN TCP one, not merely the ones that asked for it.
+    private func syncAutoTcp() {
+        let now = AutoProtocol.routes.filter { id in if case .ovpn = links[id] { true } else { false } }.sorted()
+        if now != state.autoTcp { state.autoTcp = now }
+    }
     private var applied: Setup? { committed?.accounts == nil ? nil : running }
     private var appliedAccounts: [String: String] { committed?.accounts ?? [:] }
     /// Everything an engine config is built from: a change in any part needs a reload.
@@ -209,8 +217,11 @@ final class Connection {
             // Taken: a later change must not cancel the reloads this wake is about to start (one may have stopped the tunnel).
             self.networkWake = nil
             self.healthReset += 1
-            let resetPorts = !self.portStep.isEmpty
+            // An Automatic route that went over OpenVPN TCP tries WireGuard again: what was blocked on the last network may not be here.
+            let resetPorts = !self.portStep.isEmpty || !AutoProtocol.routes.isEmpty
             self.portStep.removeAll()
+            AutoProtocol.reset()
+            if !self.state.autoTcp.isEmpty { self.state.autoTcp = [] }
             self.failing.removeAll()
             if !self.state.dropping.isEmpty { self.state.dropping = [] }
             if !self.state.silent.isEmpty { self.state.silent = [] }
@@ -484,6 +495,9 @@ final class Connection {
                     reconcileOn = true
                     return
                 }
+                // Automatic routes start on WireGuard again with every connection, and every provider on its first port.
+                AutoProtocol.reset()
+                portStep.removeAll()
                 let paused = state
                 var applying = false
                 // A blocking pause this session applied, still standing: one never applied (at launch) or a pause that
@@ -1364,6 +1378,7 @@ final class Connection {
                         guard g == generation else { return }
                         state.phase = .on
                         state.servers = links.mapValues(\.server)
+                        syncAutoTcp()
                         state.blocked = picked.blocked.mapValues(\.text)
                         scheduleRoutes(picked.blocked, revision: fallback ? old.revision : wanted, attempted: retrying)
                         if !interim && !fallback && !testChange { retry.clear(); state.error = nil }
@@ -2186,6 +2201,7 @@ final class Connection {
             guard g == generation else { return .restored }
             state.phase = .on
             state.servers = input.links.mapValues(\.server)
+            syncAutoTcp()
             state.error = failure
             armRouteRetry()
             watchTailscale()
@@ -2668,15 +2684,26 @@ final class Connection {
             }
             var moved: [String: String] = [:]
             var stepped: Set<String> = []
+            var switched = false
             for id in routeIds {
                 guard let route = setup.route(id), !route.imported, let link = links[id] else { continue }
                 let p = route.loc.provider
-                if case .wg(_, _, let ports, _) = link, ports.count > 1, Int(setup.opt(p, "port") ?? "") == nil,
-                   setup.opt(p, "disguise") != "on" { stepped.insert(p) }  // disguised: one fixed port, nothing to step
+                var canStep = false
+                if case .wg(_, _, let ports, _) = link {
+                    canStep = ports.count > 1 && Int(setup.opt(p, "port") ?? "") == nil && setup.opt(p, "disguise") != "on"  // disguised: one fixed port, nothing to step
+                    // Automatic: WireGuard failed on every port it has on this network, so this route goes over OpenVPN TCP
+                    // (the same server) until the network changes. Without the API key there is no TCP to go to.
+                    if route.loc.proto == AutoProtocol.key, accounts[p].map(AirVpn.canOpenVpn) == true,
+                       AutoProtocol.exhausted(ports: ports.count, canStep: canStep, step: portStep[p] ?? 0), AutoProtocol.toTcp(id) {
+                        switched = true
+                        continue
+                    }
+                }
+                if canStep { stepped.insert(p) }
                 if route.movable { moved[id] = LinkPicker.serverKey(route, link) }
             }
             for p in stepped { portStep[p, default: 0] += 1 }
-            if !moved.isEmpty || !stepped.isEmpty || !revoked.isEmpty {
+            if !moved.isEmpty || !stepped.isEmpty || !revoked.isEmpty || switched {
                 await reload(dead: moved, avoid: Set(moved.values), checked: c, healthAction: true, revokedAction: !revoked.isEmpty)
             }
         }
