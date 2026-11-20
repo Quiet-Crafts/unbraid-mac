@@ -26,3 +26,5 @@ the unbraid authors with the patches in the tools folder of unbraid's source (pu
   the app how many addresses are left.
 - sing-box-address-rule-dials-its-addresses.patch, 2026-11-18: a connection that a local-network or home rule takes
   by address dials only the addresses that rule covers, never the public ones of the same name's answer.
+- sing-box-kyber.patch, 2026-11-20: libbox can make a Round-3 Kyber-1024 key pair and turn the provider's reply into
+  a WireGuard preshared key, for IVPN's quantum-safe connections.

@@ -9,6 +9,13 @@ import Foundation
 /// and the client's DefaultDNS. Unverified: the success reply was not seen (no account); `ip_address` is assumed to be a bare IPv4
 /// (a mask is stripped if present). Two-factor codes and captcha answers complete the same sign-in form.
 ///
+/// Quantum-safe: every sign-in also sends a Round-3 Kyber-1024 public key (`kem_public_key1`, with IVPN's own
+/// `kem_library_version`); the reply's `wireguard.kem_cipher1` decapsulates to a secret whose SHA-256 is the WireGuard
+/// preshared key, as in IVPN's own apps. A reply without it ends the sign-in (the new session is signed out again):
+/// the server refuses the key without the preshared key anyway, and unbraid never falls back to a plain tunnel. An
+/// account from before the preshared key existed keeps its routes off until the user signs in again (`link`): never a
+/// plain tunnel, never an automatic upgrade.
+///
 /// Sign-out frees the session: `POST /v4/session/delete {"session_token"}`. Limitation: IVPN has no API to list sessions,
 /// so a `session/new` whose reply is lost in transit leaves an orphaned session (one of the account's device slots) that
 /// only the user can remove in the IVPN client area; it cannot be reconciled here.
@@ -21,11 +28,46 @@ nonisolated struct Ivpn: Provider {
         var limit: Int? = nil
         var device: String? = nil
         var createdAt: Date? = nil
+        /// The quantum-safe preshared key; nil for an account signed in before it existed.
+        var psk: String? = nil
+        /// When the key was registered, in milliseconds since 1970 (as the Android app keeps it); nil = not kept.
+        var keyAt: Int64? = nil
+        /// Android's unfinished key change: read when present, never written or used here.
+        var pending: Pending? = nil
     }
+
+    struct Pending: Codable, Hashable {
+        var privateKey: String
+        var publicKey: String
+        var kemPublic: String
+        var kemPrivate: String
+    }
+
+    /// Round-3 Kyber-1024 (not ML-KEM, which IVPN's servers don't accept). The engine does the work; tests replace it.
+    protocol Kyber: Sendable {
+        /// A new key pair, base64.
+        func keyPair() throws -> (public: String, private: String)
+        /// base64(SHA-256(secret)) of `cipher` for `private`; throws on a malformed key or ciphertext.
+        func psk(private: String, cipher: String) throws -> String
+    }
+
+    /// What the app has no engine for (the tests): nothing can be signed in without a quantum-safe key.
+    private struct NoKyber: Kyber {
+        func keyPair() throws -> (public: String, private: String) { throw Fail("Quantum-safe keys aren't available") }
+        func psk(private: String, cipher: String) throws -> String { throw Fail("Quantum-safe keys aren't available") }
+    }
+
+    /// Set once at launch, before any provider is used: the app links the engine, the tests don't.
+    nonisolated(unsafe) static var engine: any Kyber = NoKyber()
+    var kyberOverride: (any Kyber)? = nil
+    var kyber: any Kyber { kyberOverride ?? Self.engine }
+    /// What IVPN's own apps send as `kem_library_version`.
+    static let kemVersion = "0.10.0"
 
     private struct WgReply: Decodable {
         var ipAddress: String?
-        enum CodingKeys: String, CodingKey { case ipAddress = "ip_address" }
+        var kemCipher: String?
+        enum CodingKeys: String, CodingKey { case ipAddress = "ip_address", kemCipher = "kem_cipher1" }
     }
 
     private struct Plan: Decodable { var name: String?; var device_limit: Int? }
@@ -97,6 +139,7 @@ nonisolated struct Ivpn: Provider {
     let fields = [Field(key: "account", label: "Account ID", hint: "i-XXXX-XXXX-XXXX", qr: true)]
     let help = "Your account ID (i-XXXX-XXXX-XXXX, or ivpn plus 8 characters on older accounts): in the IVPN client area, or on any device already logged in. unbraid uses one of your device sessions."
 
+    /// A new key reaches every IVPN server within about a minute of the sign-in.
     let keySetup = 90
     let deviceURL: String? = "https://www.ivpn.net/clientarea/"
     let protection: ProviderOption? = .init(key: "protect", label: "AntiTracker", kind: .toggle, defaultValue: "off", help: "Ads and trackers")
@@ -157,14 +200,20 @@ nonisolated struct Ivpn: Provider {
             throw Fail("Account ID must look like i-XXXX-XXXX-XXXX or ivpnXXXXXXXX")
         }
         let keys = WgKeys.generate()
-        var body: [String: Any] = ["username": acct, "force": false, "wg_public_key": keys.publicKey]
+        let kem: (public: String, private: String)
+        do { kem = try kyber.keyPair() } catch { throw Fail("unbraid couldn't make a quantum-safe key. Try again") }
+        var body: [String: Any] = ["username": acct, "force": false, "wg_public_key": keys.publicKey,
+                                   "kem_public_key1": kem.public, "kem_library_version": Self.kemVersion]
         for key in ["confirmation", "captcha", "captcha_id"] { if let v = input[key], !v.isEmpty { body[key] = v.filter { !$0.isWhitespace } } }
         let data = try JSONSerialization.data(withJSONObject: body)
         let reply = try await newSession(String(decoding: data, as: UTF8.self))
-        do { return try Self.session(reply, acct, keys.privateKey) }
+        do { return try Self.session(reply, acct, keys.privateKey, kemPrivate: kem.private, kyber: kyber) }
         catch {
-            if let token = Self.sessionToken(reply) { _ = try? await deleteSession(token) }
-            throw error
+            guard let token = Self.sessionToken(reply) else { throw error }
+            // The session IVPN just opened is of no use: freed, or the user is told it still holds one of the account's devices.
+            if let freed = try? await deleteSession(token), Self.released(freed) { throw error }
+            let said = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            throw Fail("\(said). IVPN's new session couldn't be released either: remove it in the IVPN client area")
         }
     }
 
@@ -188,7 +237,15 @@ nonisolated struct Ivpn: Provider {
         return token
     }
 
-    static func session(_ reply: (Int, Data), _ account: String, _ privateKey: String) throws -> String {
+    /// The preshared key `cipher` gives for `kemPrivate`: nil unless it is a 32-byte base64 key.
+    static func presharedKey(_ cipher: String?, _ kemPrivate: String, _ kyber: any Kyber) -> String? {
+        guard let cipher, !cipher.isEmpty, let psk = try? kyber.psk(private: kemPrivate, cipher: cipher), validWgKey(psk) else { return nil }
+        return psk
+    }
+
+    static let noQuantumKey = "IVPN didn't send a quantum-safe key, so unbraid didn't finish signing in. Try again later"
+
+    static func session(_ reply: (Int, Data), _ account: String, _ privateKey: String, kemPrivate: String, kyber: any Kyber) throws -> String {
         let (code, body) = reply
         if code == 429 { throw Http.Status(code: code) }
         // An outage answers with a page, not IVPN's JSON: its status says more than "unexpected reply".
@@ -217,7 +274,19 @@ nonisolated struct Ivpn: Provider {
         // It becomes the tunnel's own address: four plain numbers, or the reply isn't one to trust.
         guard Catalog.Entry.octets(String(ip.prefix { $0 != "/" })) != nil else { throw Fail("Unexpected reply from IVPN") }
         guard let token = o.token, !token.isEmpty else { throw Fail("IVPN didn't return a session") }
-        return JSON.encode(Account(accountId: account, sessionToken: token, privateKey: privateKey, ipAddress: String(ip.prefix { $0 != "/" }), limit: o.service_status?.deviceLimit, device: o.device_name.map { String($0.prefix(64)) }, createdAt: Date()))
+        guard let psk = presharedKey(o.wireguard?.kemCipher, kemPrivate, kyber) else { throw Fail(noQuantumKey) }
+        return JSON.encode(Account(accountId: account, sessionToken: token, privateKey: privateKey, ipAddress: String(ip.prefix { $0 != "/" }), limit: o.service_status?.deviceLimit, device: o.device_name.map { String($0.prefix(64)) }, createdAt: Date(),
+                                   psk: psk, keyAt: Int64(Date().timeIntervalSince1970 * 1000)))
+    }
+
+    func quantumSafe(_ account: String) -> Bool? { (try? Self.account(account)).map { $0.psk != nil } ?? false }
+
+    /// A saved tunnel stands in only if it was made for this sign-in: its key and its quantum-safe key both match, and
+    /// an account without a quantum-safe key trusts none (never a plain tunnel).
+    func trusts(_ link: Link, _ account: String) -> Bool {
+        guard case .wg(_, let peer, _, _) = link else { return true }
+        guard let a = try? Self.account(account), let psk = a.psk else { return false }
+        return peer.privateKey == a.privateKey && peer.presharedKey == psk
     }
 
     static func account(_ blob: String) throws -> Account { try JSON.decode(Account.self, Data(blob.utf8), "IVPN") }
@@ -300,6 +369,8 @@ nonisolated struct Ivpn: Provider {
     }
 
     static func link(_ l: ServerList?, _ loc: Location, _ a: Account) throws -> Link {
+        // No quantum-safe key (signed in before it existed): the route stays off, never a plain tunnel.
+        guard let psk = a.psk else { throw KeyNotReady("Sign in to IVPN again to get its quantum-safe key: until then this route stays off.") }
         var sv: Server, dns: String
         if let pinned = loc.pinned {
             (sv, dns) = (pinned, Self.dns)
@@ -318,7 +389,7 @@ nonisolated struct Ivpn: Provider {
             (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
         }
         guard Catalog.Entry.publicIPv4(sv.ip) else { throw Fail("\(sv.name) can't be reached right now") }
-        return .wg(sv, WgPeer(name: sv.name, privateKey: a.privateKey, address: ["\(a.ipAddress.prefix { $0 != "/" })/32"], publicKey: sv.publicKey,
+        return .wg(sv, WgPeer(name: sv.name, privateKey: a.privateKey, address: ["\(a.ipAddress.prefix { $0 != "/" })/32"], publicKey: sv.publicKey, presharedKey: psk,
                               endpoint: "\(sv.ip):\(port)", allowedIps: ["0.0.0.0/0"], dns: [dns]), ports: [2049, 443, 53, 80, 123, 2050, 1194, 500, 4500].filter { l?.ports.contains($0) == true })
     }
 

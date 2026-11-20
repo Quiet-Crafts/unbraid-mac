@@ -312,8 +312,23 @@ nonisolated enum SealedPolicy {
     static func encode(_ config: String, owner: uid_t, search: String? = nil, fallback: Bool = false) -> Data? {
         var o: [String: Any] = ["config": config, "owner": NSNumber(value: owner)]
         o["search"] = search
+        o["format"] = format
         if fallback { o["fallback"] = true }
         return try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys])
+    }
+
+    /// Which build wrote a sealed copy. Raised when what an older build sealed must not run by itself any more: 2 = IVPN
+    /// tunnels carry their quantum-safe preshared key, so an older copy may hold a plain IVPN tunnel.
+    static let format = 2
+
+    /// Whether a sealed copy may run now. A start the app asked for runs the configuration the app just made, so the
+    /// sealed copy plays no part; an unattended start (Connect on Demand, boot) runs only a copy this build wrote: an older
+    /// one is refused, and the app seals a current one when it connects.
+    static func accepts(_ data: Data, appStarted: Bool) -> Bool {
+        if appStarted { return true }
+        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let n = o["format"] as? NSNumber,
+              CFGetTypeID(n) == CFNumberGetTypeID() else { return false }
+        return n.intValue >= format
     }
 
     /// Nil for anything else, a configuration sealed by an older version (no owner) included: nobody may start that one.

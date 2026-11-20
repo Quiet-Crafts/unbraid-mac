@@ -7,6 +7,12 @@ nonisolated struct AuthError: LocalizedError {
     init(_ message: String = "Sign-in was refused", url: String? = nil) { errorDescription = message; self.url = url }
 }
 
+/// A provider's key isn't ready: the route stays off (never a plain tunnel).
+nonisolated struct KeyNotReady: LocalizedError {
+    let errorDescription: String?
+    init(_ message: String) { errorDescription = message }
+}
+
 /// What a failed sign-in tells the user: the provider's own reason, a status it answered with (then it isn't the
 /// connection), or that it couldn't be reached.
 nonisolated func signInFailure(_ error: Error, _ name: String) -> String {
@@ -190,6 +196,8 @@ nonisolated protocol Provider: Sendable {
     func signOut(_ account: String) async -> Bool
     /// Whether a saved tunnel (from an earlier connection, or cached for when the provider is down) may be reused.
     func trusts(_ link: Link, _ account: String) -> Bool
+    /// Whether the account's key has a quantum-safe preshared key; nil = the provider has no quantum-safe exchange.
+    func quantumSafe(_ account: String) -> Bool?
     /// The part of `trusts` that needs no account, for a tunnel taken over while the keychain can't be read yet.
     func vouches(_ link: Link) -> Bool
 }
@@ -263,6 +271,7 @@ nonisolated extension Provider {
     func option(_ key: String) -> ProviderOption? { ([protection].compactMap { $0 } + commonOptions + linkOptions).first { $0.key == key } }
     @concurrent func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] { [] }
     @concurrent func signOut(_ account: String) async -> Bool { true }
+    func quantumSafe(_ account: String) -> Bool? { nil }
     func trusts(_ link: Link, _ account: String) -> Bool { true }
     func vouches(_ link: Link) -> Bool { true }
     @concurrent func freshCountries(_ account: String) async throws -> (countries: [Country], live: Bool, published: Int64?, failed: Bool) { (try await countries(account), true, nil, false) }

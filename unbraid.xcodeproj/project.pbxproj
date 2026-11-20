@@ -122,6 +122,7 @@
 		5682623B0291DE19F5BEDFCC /* CommandXPCProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F04CF55A607830AD6B924C1A /* CommandXPCProtocol.swift */; };
 		57024FC5646217BB5DFB221F /* MullvadTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E083404E2FAC9CF4062D45 /* MullvadTests.swift */; };
 		57AF528D0BA8A5BD2B8D54F1 /* Bounded.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1AD869A2509BACD21EBB5464 /* Bounded.swift */; };
+		5804FC4B4F677B5097EB6CAF /* KyberEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9554FC133A5819B4BC2CBF5 /* KyberEngine.swift */; };
 		588953FE2B1910FDF7C86984 /* AppsSort.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61B859E3A743C15303DA309B /* AppsSort.swift */; };
 		5A3C90D07DBE55D3C17B2887 /* UpdateText.swift in Sources */ = {isa = PBXBuildFile; fileRef = F553F04E8961A50E94732C23 /* UpdateText.swift */; };
 		5AABF43C82E04132FBE2BAC4 /* FakePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 12F47B193FFE5584903923C3 /* FakePool.swift */; };
@@ -172,6 +173,7 @@
 		7DAA37F6491CD93BFB6A8D5E /* ExitAddress.swift in Sources */ = {isa = PBXBuildFile; fileRef = D250DB2BE575D83AAA030C34 /* ExitAddress.swift */; };
 		7E280D8B2004CD669F187849 /* shared_suffixes.txt in Resources */ = {isa = PBXBuildFile; fileRef = 95B4BA8FA74B5844C65D3474 /* shared_suffixes.txt */; };
 		7E5C92FB78C4E71F8EA89AC2 /* Nudges.swift in Sources */ = {isa = PBXBuildFile; fileRef = F82B3636EDB6616452A8ABCD /* Nudges.swift */; };
+		7E65DA04B2EE72543F4D8C90 /* Libbox.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 971AFA913A4946CAAA14DD03 /* Libbox.xcframework */; };
 		7EFD225D2B7C81FD34697A68 /* AutoSwitch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ACFD2671AE832A344B78692 /* AutoSwitch.swift */; };
 		7F344A358F279E4AF266F90C /* Provider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74E1A9850A23A9F05D2A74FD /* Provider.swift */; };
 		7F625C63BE5211F408173BBA /* Importer.swift in Sources */ = {isa = PBXBuildFile; fileRef = D8E080581666848F23197258 /* Importer.swift */; };
@@ -216,6 +218,7 @@
 		A0923958EF2B852896B478C6 /* Windscribe.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40089F2AF32B847A51B7520B /* Windscribe.swift */; };
 		A0AE575E7FD7CA292BA37FBB /* Snapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E3DB22B20CCC8A1A75D50ABF /* Snapshot.swift */; };
 		A0B78BC1AF6E3BBD58A15B76 /* QRTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFBFF80940E76A337E1B5C0F /* QRTests.swift */; };
+		A18457EBB9864E40BB1F8713 /* libresolv.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = AD04A39FA2DCA7EE4F0D7977 /* libresolv.tbd */; };
 		A18D64B8F115707343AA471C /* Libbox.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 971AFA913A4946CAAA14DD03 /* Libbox.xcframework */; };
 		A2CA7154DEDCFA5103E345E4 /* Sealed.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62175C4168FC887F55A0FC1C /* Sealed.swift */; };
 		A3AAACC8AA04D53D31995049 /* BackupTexts.swift in Sources */ = {isa = PBXBuildFile; fileRef = F286A6B6B293B7E0ABAC765F /* BackupTexts.swift */; };
@@ -522,6 +525,7 @@
 		A6A671D8D05E0EB84E02CDC5 /* ScryptTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScryptTests.swift; sourceTree = "<group>"; };
 		A6C4B7D37890D26B33115A06 /* RouteRetry.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RouteRetry.swift; sourceTree = "<group>"; };
 		A7A9C8E3A54436DC18B1527D /* AirVpn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AirVpn.swift; sourceTree = "<group>"; };
+		A9554FC133A5819B4BC2CBF5 /* KyberEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KyberEngine.swift; sourceTree = "<group>"; };
 		AA443DBF14C783612CF5B931 /* IconCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IconCache.swift; sourceTree = "<group>"; };
 		AAD68A0A3A7C2A37D56B3C04 /* CatalogTrustTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CatalogTrustTests.swift; sourceTree = "<group>"; };
 		AD04A39FA2DCA7EE4F0D7977 /* libresolv.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libresolv.tbd; path = usr/lib/libresolv.tbd; sourceTree = SDKROOT; };
@@ -630,6 +634,8 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7E65DA04B2EE72543F4D8C90 /* Libbox.xcframework in Frameworks */,
+				A18457EBB9864E40BB1F8713 /* libresolv.tbd in Frameworks */,
 				3FDFFCCF23675B2F6A4926FB /* libsqlite3.tbd in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -924,6 +930,7 @@
 				9D0A6757D4D70A5FFA05AC53 /* ExitCheck.swift */,
 				0168F29F5BE666B781A8ABA9 /* Health.swift */,
 				AA443DBF14C783612CF5B931 /* IconCache.swift */,
+				A9554FC133A5819B4BC2CBF5 /* KyberEngine.swift */,
 				2785C8716D4BD94A293F225E /* Notifier.swift */,
 				8EC062A703D4194DE36D1B23 /* Probe.swift */,
 				17E365433524B187D56B4755 /* SpeedTest.swift */,
@@ -1211,6 +1218,7 @@
 				5BA3A9B9B25DDC88EDDAB117 /* Ivpn.swift in Sources */,
 				0F3B2542D723C5D2E8BC4953 /* JSONValue.swift in Sources */,
 				42520AFDD7121875353F8289 /* KeyProvider.swift in Sources */,
+				5804FC4B4F677B5097EB6CAF /* KyberEngine.swift in Sources */,
 				1C5E3ABF92FCEF65BD8CC341 /* Lifecycle.swift in Sources */,
 				26F8C2E6FDF03D59C91B206C /* Limits.swift in Sources */,
 				792A6FE19D67A632D033A8C2 /* LinkPicker.swift in Sources */,
@@ -1639,6 +1647,10 @@
 				CODE_SIGN_STYLE = Manual;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_PREFIX)";
@@ -1782,6 +1794,10 @@
 				CODE_SIGN_ENTITLEMENTS = App/unbraid.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				ENABLE_APP_SANDBOX = NO;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\"Frameworks\"",
+				);
 				INFOPLIST_FILE = App/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = "$(BUNDLE_PREFIX)";

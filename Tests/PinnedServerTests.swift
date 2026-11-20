@@ -74,7 +74,7 @@ final class PinnedServerTests: XCTestCase {
 
     func testIvpn() throws {
         let list = try Ivpn.parse(Fixture.data("ivpn_servers.json"))
-        let acct = Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "s", privateKey: F.priv, ipAddress: "172.16.34.56")
+        let acct = Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "s", privateKey: F.priv, ipAddress: "172.16.34.56", psk: F.priv)
         let (g, h) = try XCTUnwrap(list.match(Location(provider: "ivpn", countryCode: "SE")).first)
         // Pinned with old values (another address and key, an old place): the list's current ones win.
         let pin = Server(name: "My SE", host: h.hostname.uppercased(), ip: "203.0.113.20", publicKey: key, load: 0, city: "Elsewhere")
@@ -95,7 +95,7 @@ final class PinnedServerTests: XCTestCase {
         let list = try Ivpn.parse(Fixture.data("ivpn_servers.json"))
         let (_, h) = try XCTUnwrap(list.match(Location(provider: "ivpn", countryCode: "SE")).first)
         let pin = Server(name: "x", host: h.hostname, ip: "203.0.113.20", publicKey: key, load: 0)
-        let blob = JSON.encode(Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "s", privateKey: F.priv, ipAddress: "172.16.34.56"))
+        let blob = JSON.encode(Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "s", privateKey: F.priv, ipAddress: "172.16.34.56", psk: F.priv))
         var p = Ivpn()
         p.catalogue = { list }
         let followed = try await p.connect(Location(provider: "ivpn", pinned: pin), blob)

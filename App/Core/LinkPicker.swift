@@ -190,6 +190,8 @@ nonisolated enum LinkPicker {
                     blocked[r.id] = accounts[r.loc.provider] == nil ? .signedOut(provider) : .refused(provider, error.localizedDescription)
                 } else if let gone = error as? Catalog.Gone {
                     blocked[r.id] = .noLongerOffered(gone.server)
+                } else if error is KeyNotReady {
+                    blocked[r.id] = .unreachable(error.localizedDescription)
                 } else if error is Catalog.Damaged {
                     blocked[r.id] = .unreachable(error.localizedDescription)
                 } else {
@@ -266,7 +268,7 @@ nonisolated enum LinkPicker {
     }
 
     /// A kept or cached tunnel is reused only if its provider still vouches for its server key (`Provider.trusts`).
-    private static func trusted(_ l: Link, _ r: Route, _ accounts: [String: String], _ providers: (String) -> (any Provider)?) -> Bool {
+    static func trusted(_ l: Link, _ r: Route, _ accounts: [String: String], _ providers: (String) -> (any Provider)?) -> Bool {
         // Without the provider or its account nobody vouches for it: connect afresh, which says what's missing.
         guard let p = providers(r.loc.provider), let acc = accounts[p.id] else { return false }
         return p.trusts(l, acc)
@@ -305,6 +307,9 @@ nonisolated enum LinkPicker {
             throw e
         } catch let e as Catalog.Gone {
             // Nor is a pinned server the provider just said it no longer has.
+            throw e
+        } catch let e as KeyNotReady {
+            // No cached tunnel stands in either: it would run without the quantum-safe key.
             throw e
         } catch {
             guard !(p.id == "mullvad" && pinned == nil && opts["owned"] == "on"),

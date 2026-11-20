@@ -3,6 +3,22 @@ import Synchronization
 
 private func D(_ s: String) -> Data { Data(s.utf8) }
 private func thrown(_ f: () throws -> some Any) -> Error? { do { _ = try f(); return nil } catch { return error } }
+/// Stands in for the engine: the cipher "good" gives a preshared key, "short" one of the wrong size, anything else fails.
+struct IvpnFake: Ivpn.Kyber {
+    static let psk = Data(repeating: 7, count: 32).base64EncodedString()
+    func keyPair() throws -> (public: String, private: String) { ("kem-public", "kem-private") }
+    func psk(private key: String, cipher: String) throws -> String {
+        guard key == "kem-private" else { throw Fail("wrong private key") }
+        switch cipher {
+        case "good": return Self.psk
+        case "short": return Data(repeating: 1, count: 16).base64EncodedString()
+        default: throw Fail("bad cipher")
+        }
+    }
+}
+private func session(_ reply: (Int, Data), _ account: String, _ privateKey: String) throws -> String {
+    try Ivpn.session(reply, account, privateKey, kemPrivate: "kem-private", kyber: IvpnFake())
+}
 private func wg(_ l: Link) -> (server: Server, peer: WgPeer) {
     guard case .wg(let s, let p, _, _) = l else { fatalError("not a WireGuard link") }
     return (s, p)
@@ -10,11 +26,12 @@ private func wg(_ l: Link) -> (server: Server, peer: WgPeer) {
 
 final class IvpnTests: XCTestCase {
     private let list = try! Ivpn.parse(Fixture.data("ivpn_servers.json"))
-    private let acct = Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "session", privateKey: "cHJpdmF0ZS1wcml2YXRlLXByaXZhdGUtcHJpdmF0ZTE=", ipAddress: "172.16.34.56")
+    private let acct = Ivpn.Account(accountId: "i-ABCD-EFGH-IJKL", sessionToken: "session", privateKey: "cHJpdmF0ZS1wcml2YXRlLXByaXZhdGUtcHJpdmF0ZTE=", ipAddress: "172.16.34.56", psk: IvpnFake.psk)
 
     func testIncompleteSessionIsReleasedAndChallengesAreNot() async throws {
         let deleted = Mutex<[String]>([])
         var provider = Ivpn()
+        provider.kyberOverride = IvpnFake()
         provider.newSession = { _ in (200, Data(#"{"status":200,"token":"tok"}"#.utf8)) }
         provider.deleteSession = { token in deleted.withLock { $0.append(token) }; return (200, Data()) }
         do { _ = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"]); XCTFail("expected failure") } catch { }
@@ -163,38 +180,38 @@ final class IvpnTests: XCTestCase {
     }
 
     func testSessionReplies() throws {
-        let ok = try Ivpn.session((200, D(#"{"status":200,"token":"tok","vpn_username":"u","vpn_password":"p","service_status":{"is_active":true},"wireguard":{"status":200,"message":"Success","ip_address":"172.16.1.2"}}"#)), "i-ABCD-EFGH-IJKL", "priv")
+        let ok = try session((200, D(#"{"status":200,"token":"tok","vpn_username":"u","vpn_password":"p","service_status":{"is_active":true},"wireguard":{"status":200,"message":"Success","ip_address":"172.16.1.2","kem_cipher1":"good"}}"#)), "i-ABCD-EFGH-IJKL", "priv")
         let account = try Ivpn.account(ok)
         XCTAssertEqual(account.accountId, "i-ABCD-EFGH-IJKL")
         XCTAssertEqual(account.ipAddress, "172.16.1.2")
         XCTAssertNotNil(account.createdAt)
-        let limit = thrown { try Ivpn.session((400, D(#"{"status":602,"message":"You've reached the maximum number of connected devices","data":{"limit":5}}"#)), "a", "p") }
+        let limit = thrown { try session((400, D(#"{"status":602,"message":"You've reached the maximum number of connected devices","data":{"limit":5}}"#)), "a", "p") }
         XCTAssertTrue(limit is AuthError)
         XCTAssertEqual(limit?.localizedDescription, "All 5 IVPN devices are in use. Sign out another device, then try again.")
         XCTAssertEqual((limit as? AuthError)?.url, "https://www.ivpn.net/clientarea/")
         for body in [#"{"status":401,"message":"The provided Account ID is not valid"}"#, #"{"status":702,"message":"inactive"}"#, #"{"status":70001}"#] {
-            XCTAssertTrue(thrown { try Ivpn.session((400, D(body)), "a", "p") } is AuthError)
+            XCTAssertTrue(thrown { try session((400, D(body)), "a", "p") } is AuthError)
         }
-        let challenge = thrown { try Ivpn.session((400, D(#"{"status":70011}"#)), "a", "p") } as? Challenge
+        let challenge = thrown { try session((400, D(#"{"status":70011}"#)), "a", "p") } as? Challenge
         XCTAssertEqual(challenge?.field.label, "Two-factor code")
-        let captcha = thrown { try Ivpn.session((400, D(#"{"status":70001,"captcha_id":"safe-id","captcha_image":"data:image/png;base64,YWJj"}"#)), "a", "p") } as? Challenge
+        let captcha = thrown { try session((400, D(#"{"status":70001,"captcha_id":"safe-id","captcha_image":"data:image/png;base64,YWJj"}"#)), "a", "p") } as? Challenge
         XCTAssertEqual(captcha?.field.label, "Characters in the picture")
         XCTAssertEqual(captcha?.state["captcha_id"], "safe-id")
         XCTAssertEqual(captcha?.image, Data("abc".utf8))
-        let bad = thrown { try Ivpn.session((502, D("<html>")), "a", "p") }
+        let bad = thrown { try session((502, D("<html>")), "a", "p") }
         XCTAssertNotNil(bad)
         XCTAssertFalse(bad is AuthError)
         XCTAssertEqual(signInFailure(bad!, "IVPN"), "IVPN answered with an error (HTTP 502). Try again later.")
-        XCTAssertTrue(thrown { try Ivpn.session((401, D("<html>")), "a", "p") } is AuthError)
-        XCTAssertEqual(thrown { try Ivpn.session((200, D("<html>")), "a", "p") }?.localizedDescription, "Unexpected reply from IVPN")
+        XCTAssertTrue(thrown { try session((401, D("<html>")), "a", "p") } is AuthError)
+        XCTAssertEqual(thrown { try session((200, D("<html>")), "a", "p") }?.localizedDescription, "Unexpected reply from IVPN")
         // A body saying 200 doesn't make a failed HTTP answer a session.
-        let conflicting = thrown { try Ivpn.session((502, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2"}}"#)), "a", "p") }
+        let conflicting = thrown { try session((502, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2"}}"#)), "a", "p") }
         XCTAssertEqual(signInFailure(conflicting!, "IVPN"), "IVPN answered with an error (HTTP 502). Try again later.")
     }
 
     func testSessionAddressMustBeFourPlainNumbers() {
         for ip in ["x", "foo/32", "::1", "1.2.3/32", "01.2.3.4", "1.2.3.4.5", "host.example"] {
-            let e = thrown { try Ivpn.session((200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"\#(ip)"}}"#)), "a", "p") }
+            let e = thrown { try session((200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"\#(ip)"}}"#)), "a", "p") }
             XCTAssertEqual(e?.localizedDescription, "Unexpected reply from IVPN", ip)
         }
     }
@@ -202,18 +219,18 @@ final class IvpnTests: XCTestCase {
     func testRetryChallengesAndRateLimit() {
         for (status, message) in [(70011, "Enter the code from your authenticator app."), (70012, "That code didn't work. Enter the current one."), (70001, "Type the characters in the picture."), (70002, "That didn't match. Try this picture.")] {
             let body = D("{\"status\":\(status),\"captcha_id\":\"safe\"}")
-            let challenge = thrown { try Ivpn.session((400, body), "a", "p") } as? Challenge
+            let challenge = thrown { try session((400, body), "a", "p") } as? Challenge
             XCTAssertEqual(challenge?.message, message)
         }
         for body in [D("<html>"), D(#"{"status":429}"#), D(#"{"status":200}"#), D(#"{"status":401}"#)] {
-            let error = thrown { try Ivpn.session((429, body), "a", "p") }!
+            let error = thrown { try session((429, body), "a", "p") }!
             XCTAssertEqual(signInFailure(error, "IVPN"), "IVPN is limiting sign-in attempts. Wait a few minutes, then try again.")
         }
     }
 
     func testParseFailuresDoNotQuoteTheReply() {
         let failures: [() throws -> Any] = [
-            { try Ivpn.session((200, D(#"{"status":200,"token":"SECRET-TOKEN" "#)), "a", "p") },
+            { try session((200, D(#"{"status":200,"token":"SECRET-TOKEN" "#)), "a", "p") },
             { try Ivpn.account(#"{"sessionToken":"SECRET" "#) }, { try Ivpn.parse(D("SECRET-LIST")) },
         ]
         for f in failures {
@@ -221,10 +238,10 @@ final class IvpnTests: XCTestCase {
             XCTAssertNotNil(e)
             XCTAssertFalse(e?.localizedDescription.contains("SECRET") ?? true)
         }
-        let noAddress = thrown { try Ivpn.session((200, D(#"{"status":200,"token":"t"}"#)), "a", "p") }
+        let noAddress = thrown { try session((200, D(#"{"status":200,"token":"t"}"#)), "a", "p") }
         XCTAssertNotNil(noAddress)
         XCTAssertFalse(noAddress is AuthError)
-        let unknown = thrown { try Ivpn.session((400, D(#"{"status":999,"message":"echoes SECRET"}"#)), "a", "p") }
+        let unknown = thrown { try session((400, D(#"{"status":999,"message":"echoes SECRET"}"#)), "a", "p") }
         XCTAssertNotNil(unknown)
         XCTAssertFalse(unknown?.localizedDescription.contains("SECRET") ?? true)
     }
@@ -239,8 +256,8 @@ final class IvpnTests: XCTestCase {
     func testOldAccountAndPlanDecode() throws {
         let old = #"{"accountId":"a","sessionToken":"t","privateKey":"p","ipAddress":"172.16.0.2"}"#
         XCTAssertNil(try Ivpn.account(old).device)
-        let reply = #"{"status":200,"token":"t","device_name":"Mac","service_status":{"current_plan":"IVPN Pro","available_plans":[{"name":"Pro","device_limit":7}]},"wireguard":{"ip_address":"172.16.0.2/32"}}"#
-        let a = try Ivpn.account(Ivpn.session((200, D(reply)), "a", "p"))
+        let reply = #"{"status":200,"token":"t","device_name":"Mac","service_status":{"current_plan":"IVPN Pro","available_plans":[{"name":"Pro","device_limit":7}]},"wireguard":{"ip_address":"172.16.0.2/32","kem_cipher1":"good"}}"#
+        let a = try Ivpn.account(session((200, D(reply)), "a", "p"))
         XCTAssertEqual(a.limit, 7); XCTAssertEqual(a.device, "Mac")
     }
     func testOptionsAndPorts() throws {
@@ -281,6 +298,100 @@ final class IvpnTests: XCTestCase {
         let l = try Ivpn.parse(JSONSerialization.data(withJSONObject: body))
         guard case .wg(_, _, let ports, _) = try Ivpn.link(l, Location(provider: "ivpn"), acct) else { return XCTFail("not WireGuard") }
         XCTAssertEqual(ports, [2049, 443])
+    }
+
+
+    // MARK: Quantum-safe keys
+
+
+    func testSignInSendsTheKemFieldsAndKeepsThePresharedKey() async throws {
+        let sent = Mutex<[String: Any]>([:])
+        var provider = Ivpn()
+        provider.kyberOverride = IvpnFake()
+        provider.newSession = { json in
+            sent.withLock { $0 = (try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any] ?? [:] }
+            return (200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2","kem_cipher1":"good"}}"#))
+        }
+        let blob = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"])
+        let body = sent.withLock { $0 }
+        XCTAssertEqual(body["kem_public_key1"] as? String, "kem-public")
+        XCTAssertEqual(body["kem_library_version"] as? String, "0.10.0")
+        XCTAssertNotNil(body["wg_public_key"])
+        let a = try Ivpn.account(blob)
+        XCTAssertEqual(a.psk, IvpnFake.psk)
+        XCTAssertNotNil(a.keyAt)
+        XCTAssertNil(a.pending)
+        XCTAssertEqual(provider.quantumSafe(blob), true)
+    }
+
+    func testSignInWithoutAUsableKeyFailsAndFreesTheSession() async {
+        for reply in [#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2"}}"#,
+                      #"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2","kem_cipher1":""}}"#,
+                      #"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2","kem_cipher1":"garbage"}}"#,
+                      #"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2","kem_cipher1":"short"}}"#] {
+            let deleted = Mutex<[String]>([])
+            var provider = Ivpn()
+            provider.kyberOverride = IvpnFake()
+            provider.newSession = { _ in (200, D(reply)) }
+            provider.deleteSession = { token in deleted.withLock { $0.append(token) }; return (200, Data()) }
+            do { _ = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"]); XCTFail("signed in without a key: \(reply)") } catch {
+                XCTAssertEqual(error.localizedDescription, Ivpn.noQuantumKey)
+            }
+            XCTAssertEqual(deleted.withLock { $0 }, ["tok"], reply)
+        }
+    }
+
+    func testOldBlobsDecodeWithoutTheNewFields() throws {
+        let old = try Ivpn.account(#"{"accountId":"a","sessionToken":"t","privateKey":"p","ipAddress":"172.16.0.2"}"#)
+        XCTAssertNil(old.psk); XCTAssertNil(old.keyAt); XCTAssertNil(old.pending)
+        XCTAssertEqual(Ivpn().quantumSafe(JSON.encode(old)), false)
+        // The field names are the Android app's.
+        let full = try Ivpn.account(#"{"accountId":"a","sessionToken":"t","privateKey":"p","ipAddress":"172.16.0.2","psk":"k","keyAt":1700000000000,"pending":{"privateKey":"a","publicKey":"b","kemPublic":"c","kemPrivate":"d"}}"#)
+        XCTAssertEqual(full.psk, "k"); XCTAssertEqual(full.keyAt, 1_700_000_000_000); XCTAssertEqual(full.pending?.kemPrivate, "d")
+    }
+
+    func testTrustNeedsTheKeyAndThePresharedKey() throws {
+        let blob = JSON.encode(acct)
+        let p = Ivpn()
+        let link = try Ivpn.link(list, Location(provider: "ivpn", countryCode: "NL"), acct)
+        XCTAssertEqual(wg(link).peer.presharedKey, IvpnFake.psk)
+        XCTAssertTrue(p.trusts(link, blob))
+        var other = acct
+        other.psk = Data(repeating: 9, count: 32).base64EncodedString()
+        XCTAssertFalse(p.trusts(link, JSON.encode(other)), "another preshared key")
+        other = acct; other.privateKey = "b3RoZXItb3RoZXItb3RoZXItb3RoZXItb3RoZXI="
+        XCTAssertFalse(p.trusts(link, JSON.encode(other)), "another key")
+        // A tunnel made without a preshared key is never trusted, and an account without one trusts nothing.
+        guard case .wg(let server, var peer, let ports, let entries) = link else { return XCTFail("not WireGuard") }
+        peer.presharedKey = nil
+        XCTAssertFalse(p.trusts(.wg(server, peer, ports: ports, entries: entries), blob))
+        other = acct; other.psk = nil
+        XCTAssertFalse(p.trusts(.wg(server, peer, ports: ports, entries: entries), JSON.encode(other)))
+        XCTAssertFalse(p.trusts(link, JSON.encode(other)))
+        XCTAssertFalse(p.trusts(link, "not json"))
+    }
+
+    func testAnAccountWithoutAPresharedKeyNeverGetsAPlainTunnel() {
+        var old = acct
+        old.psk = nil
+        let e = thrown { try Ivpn.link(list, Location(provider: "ivpn", countryCode: "NL"), old) }
+        XCTAssertTrue(e is KeyNotReady)
+        XCTAssertEqual(e?.localizedDescription, "Sign in to IVPN again to get its quantum-safe key: until then this route stays off.")
+        XCTAssertTrue(thrown { try Ivpn.link(nil, Location(provider: "ivpn", pinned: Server(name: "x", host: "x", ip: "203.0.113.20", publicKey: "", load: 0)), old) } is KeyNotReady)
+    }
+
+    func testAFailedSignInSaysWhenItsSessionStaysOpen() async {
+        var provider = Ivpn()
+        provider.kyberOverride = IvpnFake()
+        provider.newSession = { _ in (200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2"}}"#)) }
+        provider.deleteSession = { _ in throw Fail("offline") }
+        do { _ = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"]); XCTFail("signed in") } catch {
+            XCTAssertEqual(error.localizedDescription, "IVPN didn't send a quantum-safe key, so unbraid didn't finish signing in. Try again later. IVPN's new session couldn't be released either: remove it in the IVPN client area")
+        }
+        provider.deleteSession = { _ in (500, Data()) }
+        do { _ = try await provider.signIn(["account": "i-ABCD-EFGH-IJKL"]); XCTFail("signed in") } catch {
+            XCTAssertTrue(error.localizedDescription.hasSuffix("remove it in the IVPN client area"))
+        }
     }
 
 }

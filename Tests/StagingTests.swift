@@ -156,6 +156,22 @@ final class StagingTests: XCTestCase {
         XCTAssertEqual(Ownership.reset(502, running: nil), .everything)
     }
 
+    func testUnattendedStartRunsOnlyACopyThisBuildSealed() throws {
+        let current = try XCTUnwrap(SealedPolicy.encode("{}", owner: 501))
+        XCTAssertTrue(SealedPolicy.accepts(current, appStarted: false))
+        // A copy an older build sealed: no marker, or an older one. Refused unattended, never when the app started it.
+        let old = Data(#"{"config":"{}","owner":501}"#.utf8)
+        let older = Data(#"{"config":"{}","owner":501,"format":1}"#.utf8)
+        for data in [old, older] {
+            XCTAssertFalse(SealedPolicy.accepts(data, appStarted: false))
+            XCTAssertTrue(SealedPolicy.accepts(data, appStarted: true))
+            XCTAssertNotNil(SealedPolicy.decode(data), "other readers still see who it belongs to")
+        }
+        XCTAssertFalse(SealedPolicy.accepts(Data(#"{"config":"{}","owner":501,"format":"2"}"#.utf8), appStarted: false))
+        XCTAssertFalse(SealedPolicy.accepts(Data("nonsense".utf8), appStarted: false))
+        XCTAssertEqual(try XCTUnwrap(SealedPolicy.decode(current)).owner, 501)
+    }
+
     func testTheSealedCopyCarriesItsOwnerAndAnOlderOneHasNone() throws {
         let config = try XCTUnwrap(Fixture.text("golden/example.json").nilIfEmpty)
         let sealed = try XCTUnwrap(SealedPolicy.encode(config, owner: 501))

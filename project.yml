@@ -46,7 +46,12 @@ targets:
         type: folder
         buildPhase: resources
     dependencies:
-      # No engine here: it runs in the tunnel extension, which the app reaches over XPC (App/Engine/EngineLink.swift).
+      # The engine runs in the tunnel extension, which the app reaches over XPC (App/Engine/EngineLink.swift). The app
+      # links the library only for IVPN's Kyber key exchange (App/Engine/KyberEngine.swift).
+      - framework: Frameworks/Libbox.xcframework
+        embed: false
+      # Go's macOS resolver calls libresolv.
+      - sdk: libresolv.tbd
       - target: UnbraidTunnel
         embed: true
         copy: { destination: plugins, subpath: ../Library/SystemExtensions }

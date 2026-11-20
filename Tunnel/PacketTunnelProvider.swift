@@ -403,10 +403,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     /// The copy an unattended start runs, whose it is, its search domain and whether it is the fallback (`sealFallback`):
-    /// none while a newer one failed to seal, nor one an older version sealed without an owner, nor one of a user who
+    /// none while a newer one failed to seal, nor one an older version sealed without an owner or before IVPN's preshared key (`SealedPolicy.format`), nor one of a user who
     /// signed out since.
     private static func sealedConfig() -> (String, uid_t, String?, Bool)? {
-        guard !FileManager.default.fileExists(atPath: invalidConfig.path), let p = vault.read("config").flatMap(SealedPolicy.decode),
+        guard !FileManager.default.fileExists(atPath: invalidConfig.path), let data = vault.read("config"), SealedPolicy.accepts(data, appStarted: false), let p = SealedPolicy.decode(data),
               !FileManager.default.fileExists(atPath: forgotten(p.owner).path) else { return nil }
         return (p.config, p.owner, p.search, p.fallback)
     }

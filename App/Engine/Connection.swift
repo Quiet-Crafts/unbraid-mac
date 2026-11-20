@@ -1112,16 +1112,19 @@ final class Connection {
         }
         func protected() -> (key: SealKey, input: Compiler.Input)? {
             guard let record else { return nil }
-            // Routes with no tunnel to run: a provider's while signed out, an own server's that waits for its config.
-            let blocked = Set(record.setup.activeRoutes.filter {
-                (!$0.imported && record.links[$0.id] == nil && store.accounts[$0.loc.provider] == nil) || LinkPicker.keyLeftOut($0, in: record.setup)
+            // Routes with no tunnel to run: a provider's while signed out, an own server's that waits for its config, and
+            // a provider's whose recorded tunnel its provider no longer vouches for (an IVPN tunnel from before the
+            // quantum-safe key, say): refused rather than sealed again for macOS to start on its own.
+            let blocked = Set(record.setup.activeRoutes.filter { r in
+                (!r.imported && record.links[r.id] == nil && store.accounts[r.loc.provider] == nil) || LinkPicker.keyLeftOut(r, in: record.setup)
+                    || (!r.imported && store.accounts[r.loc.provider] != nil && record.links[r.id].map { !LinkPicker.trusted($0, r, store.accounts, Providers.get) } == true)
             }.map(\.id))
             guard let kept = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
             // The tailnet domain as accepted now, so routes, DNS and the seal key all come from the same Home.
             let setup = Sites.withDomain(kept, of: store.setup)
             let domain = Sites.tailnet(of: setup)
             let ids = Set(setup.activeRoutes(tailnet: domain).map(\.id))
-            let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
+            let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) && !blocked.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
                                        tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: .given(domain), probe: nil, ownerless: .refusedWhileSplit)
             return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input), siteDomain: domain), input)

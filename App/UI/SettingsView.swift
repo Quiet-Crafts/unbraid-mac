@@ -572,10 +572,15 @@ private struct ProviderDetail: View {
                         }
                     }
                 }
-                if revoked || plan != nil {
+                // Set when a key is registered: an account from before it existed gets it with its next new key.
+                let quantum = model.accounts[id].flatMap { provider.quantumSafe($0) }
+                if revoked || plan != nil || quantum != nil {
                     Section("Account") {
                         if revoked { SettingsRow(title: "Status", caption: "Device removed. Sign in again", symbol: "person") { EmptyView() } }
                         if let plan { SettingsRow(title: "Plan", caption: plan, symbol: "creditcard") { EmptyView() } }
+                        if let quantum {
+                            SettingsRow(title: "Quantum-safe connection", caption: quantum ? "On · recorded traffic stays safe from future quantum computers" : "Not yet · sign in again to get it", symbol: "lock") { EmptyView() }
+                        }
                     }
                 }
                 if let limit {
