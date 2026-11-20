@@ -56,10 +56,8 @@ nonisolated enum LinkPicker {
         }
 
         func reason(for route: Route) -> Blocked? {
-            guard !route.imported, let pin = route.loc.pinned else { return nil }
-            return entries.values.first {
-                $0.location.provider == route.loc.provider && $0.location.pinned?.host == pin.host
-            }?.reason
+            guard !route.imported, route.loc.pinned != nil else { return nil }
+            return entries.values.first { pinKey($0.location) == pinKey(route.loc) }?.reason
         }
     }
 
@@ -117,10 +115,25 @@ nonisolated enum LinkPicker {
         let place = (try? encoder.encode(unpinned)).map { String(decoding: $0, as: UTF8.self) } ?? ""
         // The first 8 bytes of the account's fingerprint: keys written by earlier builds read the same.
         let owner = account.map { String(Running.fingerprint($0).prefix(16)) } ?? ""
-        return "\(r.loc.provider)|@\(owner)|\(place)|\(r.loc.pinned.map(serverId) ?? "")"
+        return "\(r.loc.provider)|@\(owner)|\(place)|\(r.loc.pinned.map(pinId) ?? "")"
     }
 
     private static func serverId(_ s: Server) -> String { s.ip.isEmpty ? s.host : s.ip }
+
+    /// A pin without an address (restored from a backup) by its host and name: AirVPN gives every server of a country
+    /// one host name, so the host alone would make two such pins one cached tunnel.
+    private static func pinId(_ s: Server) -> String { s.ip.isEmpty ? "\(s.host)|\(s.name)" : s.ip }
+
+    /// Which pinned server a route names, for "this server is gone": the provider and host, plus the server's name where
+    /// a host stands for several servers (AirVPN's per country) and the technology where a server can be gone for one
+    /// and not another (NordVPN's NordLynx and OpenVPN lists). Nil for a route without a pin.
+    static func pinKey(_ loc: Location) -> String? {
+        guard let p = loc.pinned else { return nil }
+        var key = "\(loc.provider)|\(p.host.lowercased())"
+        if loc.provider == "airvpn" { key += "|\(p.name)" }
+        if loc.provider == "nord" { key += "|\(Nord.tech(loc))" }
+        return key
+    }
 
     /// Imported configs as they are; provider routes get the best server now, keeping the current one if the route's
     /// location didn't change, and falling back to the last good one if the API is down. An unpinned route that lands
@@ -191,8 +204,8 @@ nonisolated enum LinkPicker {
             }).first {
                 blocked[r.id] = refusal; out.removeValue(forKey: r.id)
             }
-            if let pin = r.loc.pinned, let gone = setup.activeRoutes.lazy.compactMap({ other -> Blocked? in
-                guard !other.imported, other.loc.provider == r.loc.provider, other.loc.pinned?.host == pin.host,
+            if r.loc.pinned != nil, let gone = setup.activeRoutes.lazy.compactMap({ other -> Blocked? in
+                guard !other.imported, other.loc.pinned != nil, pinKey(other.loc) == pinKey(r.loc),
                       let reason = blocked[other.id] else { return nil }
                 if case .noLongerOffered = reason { return reason }
                 return nil

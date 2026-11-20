@@ -539,6 +539,20 @@ final class LimitsTests: XCTestCase {
         XCTAssertEqual(Limits.tunnels(new, "proton-free"), 2)
     }
 
+    /// AirVPN gives every server of a country one host name: two routes pinned to two servers there, not connected yet,
+    /// are two connections; the same server twice is one.
+    func testPinsSharingAHostCountApart() {
+        let one = Server(name: "Alphard", host: "se.vpn.airdns.org", ip: "", publicKey: "", load: 0)
+        var two = one; two.name = "Muscida"
+        var s = Setup()
+        s.routes = [Route(id: "a", loc: Location(provider: "airvpn", countryCode: "SE", pinned: one)),
+                    Route(id: "b", loc: Location(provider: "airvpn", countryCode: "SE", pinned: two))]
+        s.defaultRoute = "a"; s.apps = ["app.b": "b"]
+        XCTAssertEqual(Limits.tunnels(s, "airvpn"), 2)
+        s.routes[1].loc.pinned = one
+        XCTAssertEqual(Limits.tunnels(s, "airvpn"), 1)
+    }
+
     func testProviderDefaults() async throws {
         let nord = try await Nord().limit("")
         let free = try await ProtonFree().limit("")

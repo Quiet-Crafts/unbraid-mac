@@ -218,7 +218,9 @@ nonisolated enum Limits {
         }
         struct Identity: Hashable { var server: String?; var proto: String?; var route: String? }
         return Set(routes.map { r in
-            Identity(server: r.loc.pinned.map { $0.host.isEmpty ? $0.name.lowercased() : $0.host.lowercased() }, proto: r.loc.proto, route: r.loc.pinned == nil ? r.id : nil)
+            // AirVPN by host and name: it gives every server of a country one host name.
+            Identity(server: r.loc.pinned.map { $0.host.isEmpty ? $0.name.lowercased() : provider == "airvpn" ? "\($0.host.lowercased())|\($0.name.lowercased())" : $0.host.lowercased() },
+                     proto: r.loc.proto, route: r.loc.pinned == nil ? r.id : nil)
         }).count
     }
 

@@ -99,6 +99,35 @@ final class LinkPickerTests: XCTestCase {
         XCTAssertEqual(Set(result.links.keys), ["3", "4"])
     }
 
+    /// AirVPN gives every server of a country one host name. Two routes pinned to two of them, restored without their
+    /// addresses, keep a cached tunnel each, and one server gone doesn't block the other. NordVPN's servers can be gone
+    /// for one technology and not another: a NordLynx route isn't blocked by its server leaving the OpenVPN list.
+    func testPinsSharingAHostStayApart() async throws {
+        let one = Server(name: "Alphard", host: "se.vpn.airdns.org", ip: "", publicKey: "", load: 0)
+        let two = Server(name: "Muscida", host: "se.vpn.airdns.org", ip: "", publicKey: "", load: 0)
+        func air(_ id: String, _ pin: Server) -> Route { Route(id: id, loc: Location(provider: "airvpn", countryCode: "SE", pinned: pin)) }
+        let r1 = air("1", one), r2 = air("2", two)
+        XCTAssertNotEqual(LinkPicker.cacheKey(r1, account: "acc"), LinkPicker.cacheKey(r2, account: "acc"))
+        XCTAssertNotEqual(LinkPicker.pinKey(r1.loc), LinkPicker.pinKey(r2.loc))
+        let s = setup(r1, r2)
+        var gone = LinkPicker.RemovedPins()
+        gone.remember(["1": .noLongerOffered(one.name)], setup: s, accounts: ["airvpn": "acc"])
+        XCTAssertEqual(gone.reason(for: r1), .noLongerOffered(one.name))
+        XCTAssertNil(gone.reason(for: r2))
+        // A pinned server with an address keeps the key it had.
+        var addressed = r1; addressed.loc.pinned?.ip = "10.0.0.1"
+        XCTAssertTrue(LinkPicker.cacheKey(addressed, account: "acc").hasSuffix("|10.0.0.1"))
+
+        let nord = Server(name: "Sweden #1", host: "se1.nordvpn.com", ip: "10.0.0.2", publicKey: "", load: 0)
+        let lynx = Route(id: "3", loc: Location(provider: "nord", countryCode: "SE", pinned: nord))
+        var ovpn = lynx; ovpn.id = "4"; ovpn.loc.proto = "openvpn_udp"
+        XCTAssertNotEqual(LinkPicker.pinKey(lynx.loc), LinkPicker.pinKey(ovpn.loc))
+        var nordGone = LinkPicker.RemovedPins()
+        nordGone.remember(["4": .noLongerOffered(nord.name)], setup: setup(lynx, ovpn), accounts: ["nord": "acc"])
+        XCTAssertNil(nordGone.reason(for: lynx))
+        XCTAssertNotNil(nordGone.reason(for: ovpn))
+    }
+
     func testRemovedPinsForgetChangedOrDeletedLocationsButKeepInactiveRoutes() {
         let r = route("1", pinned: a)
         var s = setup(r)
