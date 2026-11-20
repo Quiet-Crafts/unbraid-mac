@@ -201,7 +201,7 @@ nonisolated enum Lifecycle {
     }
 
     typealias Revisions = (running: String?, durable: String?, foreign: Bool, startable: Bool, fallback: Bool, fallbackRunning: Bool,
-                           othersFallback: Bool, foreignFallback: Bool)
+                           othersFallback: Bool, foreignFallback: Bool, staleRunning: Bool)
 
     /// The extension's `revisions` answer as this app reads it (`TunnelControl.revisions`): this user's credential-free
     /// fallback ("fallback-durable", `fallbackNeeded`) isn't theirs to start, so it counts as no sealed copy and nothing
@@ -213,7 +213,9 @@ nonisolated enum Lifecycle {
         let fallback = anyFallback && r["durable"] != nil
         return (r["running"], fallback ? nil : r["durable"], r["foreign"] != nil, !anyFallback && r["startable"] != nil, fallback,
                 r["fallback-running"] != nil && r["running"] != nil, anyFallback && r["durable"] == nil && r["startable"] != nil,
-                r["fallback-running"] != nil && r["foreign"] != nil)
+                r["fallback-running"] != nil && r["foreign"] != nil,
+                // This user's engine runs a stale copy's fallback (`SetupStamp`): never their configuration, whatever its revision.
+                r["stale-running"] != nil && r["running"] != nil)
     }
 
     /// Whether Connect on Demand may stay on while nothing of this user's runs (after a stop unbraid didn't ask for, or

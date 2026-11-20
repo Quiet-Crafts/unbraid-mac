@@ -347,6 +347,45 @@ final class Connection {
     private var pauseProbe: Task<Void, Never>?
     private var pauseAskAt: ContinuousClock.Instant?
 
+    /// The latest setup stamp the extension took (`noteSetup`); nil until it has, since launch.
+    private var notedStamp: String?
+    private var noting: Task<Void, Never>?
+
+    /// Tells the extension the setup's latest stamp and its credential-free fallback (`Compiler.staleFallback`), one call
+    /// at a time, until it has the current one: from then on, a sealed copy made from an older setup gives way to that
+    /// fallback when macOS starts the tunnel on its own (`SetupStamp`). Not while the setup is a stand-in (the keychain
+    /// wouldn't open, or a newer unbraid saved it): its fallback would let out what the real one blocks; reading the real
+    /// one renews the stamp, which comes back here.
+    private func noteSetup() {
+        guard noting == nil else { return }
+        noting = Task { @MainActor in
+            defer { noting = nil }
+            var failures = 0
+            while store.setupStamp != notedStamp, !store.setupStandIn {
+                let stamp = store.setupStamp, setup = store.setup
+                let fallback: String
+                do {
+                    fallback = try Compiler.staleFallback(setup, selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
+                                                          apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)))
+                } catch {
+                    Log.error("setup stamp: no fallback built", error: error)
+                    fallback = ""
+                }
+                if await tunnel.noteSetup(stamp, fallback: fallback) {
+                    notedStamp = stamp
+                    failures = 0
+                } else {
+                    failures += 1
+                    do { try await Task.sleep(for: .seconds(min(60, 5 * failures))) } catch { return }
+                }
+            }
+        }
+    }
+
+    /// The stamp a configuration built from [s] is sealed with (`SetupStamp`): the store's while [s] is its setup as it is
+    /// now, otherwise one that never matches, so a copy made from any other setup is never started unattended.
+    private func stamp(for s: Setup) -> String { s == store.setup ? store.setupStamp : "outdated-\(UUID().uuidString)" }
+
     private init() {
         // Set this before the tunnel's initial status callback can adopt a paused engine as a protected one.
         if let pause = store.pause { state = VpnState(phase: .paused, pausedUntil: pause.until, pausedAt: pause.since) }
@@ -368,6 +407,9 @@ final class Connection {
             Task { @MainActor in self?.networkUp = up; self?.observeNetwork(identity) }
         }
         pathMonitor.start(queue: DispatchQueue(label: "app.unbraid.network"))
+        // Every renewed setup stamp goes to the extension, and the current one once at launch (`SetupStamp`).
+        store.onStamp = { [weak self] in self?.noteSetup() }
+        noteSetup()
         tunnel.onStatusChange = { [weak self] in
             // Before anything queued reads the status again: it reads what shows by then (`ReplacedReady.observe`).
             if let self { replacedReady.observe(Self.status(tunnel.status), replacement: tunnel.replacements) }
@@ -1162,6 +1204,9 @@ final class Connection {
         }
         let first = protected()
         guard admitted(first), let (key, input) = first else { return }
+        // The current stamp only when what is sealed is the setup as it is now: any other change made during the pause
+        // leaves the copy stale, and an unattended start runs the fallback, which keeps blocked apps blocked.
+        let setupStamp = stamp(for: key.setup)
         let json: String
         do { json = try Compiler.compile(input) } catch {
             sealRetry.refuse(key)
@@ -1173,7 +1218,7 @@ final class Connection {
         // one with it), nor with blocked apps changed meanwhile (the change that came reconciles again).
         guard still(), let now = protected(), now.key == key, admitted(now) else { return }
         do {
-            _ = try await tunnel.seal(json, search: key.search)
+            _ = try await tunnel.seal(json, search: key.search, setup: setupStamp)
             // Recorded before anything else suspends: a sign-out's drop queued behind this reads it.
             sealed(key.setup, linked: Set(input.links.keys))
             pauseSealed = key
@@ -1552,6 +1597,8 @@ final class Connection {
     private func apply(_ input: Compiler.Input, _ json: String, _ g: Int, persist: Bool = true, requireDurable: Bool = false, profile override: TunnelControl.Profile? = nil,
                        since: Int? = nil, search searched: String? = nil, takeover: Bool = false, staged told: (String) -> Void = { _ in }) async throws {
         if !Lifecycle.mayApply(persist: persist, requireDurable: requireDurable) { throw Fail("The tunnel couldn't save its configuration") }
+        // Before anything waits: the setup this configuration was built from, as it is now.
+        let setupStamp = stamp(for: input.setup)
         engineChanges += 1
         #if DEBUG
         let json = DebugHooks.engineConfig(json)
@@ -1572,7 +1619,7 @@ final class Connection {
         func durableSeal(_ durable: Bool) async -> Bool {
             guard let safeSeal else { return durable }
             guard wanted() else { return false }
-            do { _ = try await tunnel.seal(safeSeal, search: search); return wanted() } catch { return false }
+            do { _ = try await tunnel.seal(safeSeal, search: search, setup: setupStamp); return wanted() } catch { return false }
         }
         let target = override ?? profile(input), previous = tunnel.profile
         // This change's own start came up: a stop from then on is nobody's here (`OutsideStop.up`).
@@ -1590,7 +1637,7 @@ final class Connection {
         // An erase still pending: never reload the running engine in place, restart it so the erase comes first.
         if tunnel.status == .connected, previous?.routing == target.routing, !store.extensionWipePending {
             // Seamless: the phase stays as it is, so statistics keep their session and the dock doesn't flash Cancel.
-            let appliedDurable = try await tunnel.reload(config: json, persist: stagePersist, search: search, while: wanted) { told($0.revision) }
+            let appliedDurable = try await tunnel.reload(config: json, persist: stagePersist, search: search, setup: setupStamp, while: wanted) { told($0.revision) }
             let durable = await durableSeal(appliedDurable)
             if json != (persist ? lastGood : (pausedJSON ?? lastGood)) { recordRun { $0.freshEngine() } }
             if persist { sealed(durable ? input.setup : nil, linked: Set(input.links.keys)) }
@@ -1599,7 +1646,7 @@ final class Connection {
         } else {
             // Checked and held by the extension before anything stops: one that can't be reached (not approved, being
             // replaced) leaves the running tunnel alone.
-            let staged = try await tunnel.stage(json, persist: stagePersist, search: search)
+            let staged = try await tunnel.stage(json, persist: stagePersist, search: search, setup: setupStamp)
             guard g == generation else { throw CancellationError() }
             told(staged.revision)
             // Staging waits too: a takeover whose tunnel was stopped meanwhile starts nothing.
@@ -1630,7 +1677,7 @@ final class Connection {
                 var staged = staged
                 if erasing {
                     // The tunnel has stopped by now: a failure here is no longer "nothing changed".
-                    do { staged = try await tunnel.stage(json, persist: stagePersist, search: search) } catch let u as TunnelControl.Unstaged {
+                    do { staged = try await tunnel.stage(json, persist: stagePersist, search: search, setup: setupStamp) } catch let u as TunnelControl.Unstaged {
                         throw u.foreign ? TunnelControl.Foreign() : Fail(u.errorDescription ?? "")
                     }
                 }
@@ -3390,8 +3437,11 @@ final class Connection {
             let foreign = TunnelControl.foreign(error)
             // Nothing is stopped below without the extension's word that the engine is this user's (see
             // `Lifecycle.takeoverFailure`): asked on the engine's own queue, after the failure.
-            let engine = foreign ? nil : await tunnel.revisions().map { Lifecycle.Engine(running: $0.running, durable: $0.durable, foreign: $0.foreign, fallbackRunning: $0.fallbackRunning) }
-            let blocker = await Running.blocker()
+            let revisions = foreign ? nil : await tunnel.revisions()
+            let engine = revisions.map { Lifecycle.Engine(running: $0.running, durable: $0.durable, foreign: $0.foreign, fallbackRunning: $0.fallbackRunning) }
+            // A stale copy's fallback holds no account, like the deny-all a failed change leaves: never stopped for this
+            // failure, taken over again later.
+            let blocker = revisions?.staleRunning == true ? revisions?.running : await Running.blocker()
             guard g == generation else { return }
             // A switch can be refused during takeover. The earlier engine is usable for rollback only when the
             // extension confirms the exact user engine recorded at the switch and its accounts are still vouched for.

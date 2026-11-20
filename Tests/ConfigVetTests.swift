@@ -952,6 +952,52 @@ final class FallbackConfigTests: XCTestCase {
         }
     }
 
+    func testAStaleCopysFallbackKeepsBlocksAndHoldsNoAccount() throws {
+        let engine = try ProviderFixtures.engine()
+        for p in prefs {
+            var setup = Setup()
+            setup.prefs = p
+            setup.apps = ["com.example.blocked": BLOCK, "com.example.routed": setup.defaultRoute]
+            setup.sites = ["blocked.example": BLOCK, "routed.example": setup.defaultRoute]
+            let json = try Compiler.staleFallback(setup, selfPattern: me, apps: ["com.example.blocked": ["^/Applications/Blocked\\.app/"], "com.example.routed": ["^/Applications/Routed\\.app/"]])
+            let checked = try ConfigVet.check(json)
+            XCTAssertTrue(ConfigVet.isFallback(checked, blocks: true), "\(p)\n\(checked)")
+            // Only the stale fallback refuses: the sign-out fallback never does.
+            XCTAssertFalse(ConfigVet.isFallback(checked), "\(p)")
+            XCTAssertTrue(checked.contains("Blocked"), "\(p)")
+            XCTAssertFalse(checked.contains("Routed") || checked.contains("routed.example"), "\(p)")
+            let c = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(checked.utf8)) as? [String: Any])
+            XCTAssertEqual((c["endpoints"] as? [Any])?.count ?? 0, 0)
+            XCTAssertEqual((c["route"] as? [String: Any])?["final"] as? String, "direct")
+            if let engine { XCTAssertNil(ProviderFixtures.engineRefusal(checked, engine), "\(p)") }
+        }
+        // Without blocks it is the plain fallback, which both checks take.
+        let plain = try ConfigVet.check(Compiler.staleFallback(Setup(), selfPattern: me, apps: [:]))
+        XCTAssertTrue(ConfigVet.isFallback(plain) && ConfigVet.isFallback(plain, blocks: true))
+        // Never a refusal of everything, nor anything that reaches a server.
+        let base = try Compiler.fallback(prefs: Prefs(), selfPattern: me)
+        func with(_ change: (inout [String: Any]) -> Void) throws -> String {
+            var c = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(base.utf8)) as? [String: Any])
+            change(&c)
+            return String(decoding: try JSONSerialization.data(withJSONObject: c), as: UTF8.self)
+        }
+        let refused: [(inout [String: Any]) -> Void] = [
+            { var r = $0["route"] as? [String: Any] ?? [:]; r["rules"] = [["action": "reject"]] + (r["rules"] as? [Any] ?? []); $0["route"] = r },
+            { var r = $0["route"] as? [String: Any] ?? [:]; r["rules"] = [["action": "reject", "no_drop": true]] + (r["rules"] as? [Any] ?? []); $0["route"] = r },
+            { var r = $0["route"] as? [String: Any] ?? [:]; r["rules"] = [["ip_version": 4, "action": "reject"]]; $0["route"] = r },
+            { var r = $0["route"] as? [String: Any] ?? [:]; r["rules"] = [["ip_cidr": ["0.0.0.0/0"], "action": "reject"]]; $0["route"] = r },
+            { var r = $0["route"] as? [String: Any] ?? [:]; r["rules"] = [["network": "tcp", "action": "reject"]]; $0["route"] = r },
+            { var d = $0["dns"] as? [String: Any] ?? [:]; d["rules"] = [["action": "predefined", "rcode": "REFUSED"]]; $0["dns"] = d },
+            // A program and its inverse, between them everything.
+            { var r = $0["route"] as? [String: Any] ?? [:]
+              r["rules"] = [["type": "logical", "mode": "or", "action": "reject",
+                             "rules": [["process_path_regex": ["."]], ["process_path_regex": ["."], "invert": true]]]] + (r["rules"] as? [Any] ?? []); $0["route"] = r },
+            { $0["endpoints"] = [["type": "wireguard", "tag": "w"]] },
+            { $0["outbounds"] = [["type": "direct", "tag": "direct", "password": "x"]] },
+        ]
+        for (i, change) in refused.enumerated() { XCTAssertFalse(ConfigVet.isFallback(try with(change), blocks: true), "change \(i)") }
+    }
+
     func testOnlyADirectConfigurationWithoutAccountsOrServersIsAFallback() throws {
         var free = 0
         for name in try FileManager.default.contentsOfDirectory(atPath: XCTUnwrap(Bundle(for: Fixture.self).resourceURL).appending(path: "Fixtures/golden").path)

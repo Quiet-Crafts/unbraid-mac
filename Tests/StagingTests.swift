@@ -491,5 +491,43 @@ final class StagingTests: XCTestCase {
         Thread.sleep(forTimeInterval: 0.3)
         XCTAssertEqual(calls.value, 1)
     }
-}
 
+    // MARK: Setup stamps
+
+    /// An unattended start runs the sealed copy only while it carries the latest stamp noted for its owner; otherwise the
+    /// noted fallback, or nothing. Nothing noted (an app older than stamps) and the sign-out fallback start as before.
+    func testAnUnattendedStartRunsOnlyACopyOfTheLatestSetup() {
+        typealias S = SetupStamp
+        XCTAssertEqual(S.unattended(sealed: "a", fallbackCopy: false, noted: .stamp("a"), hasFallback: true), .sealed)
+        XCTAssertEqual(S.unattended(sealed: "a", fallbackCopy: false, noted: .stamp("b"), hasFallback: true), .fallback)
+        XCTAssertEqual(S.unattended(sealed: "a", fallbackCopy: false, noted: .stamp("b"), hasFallback: false), .refused)
+        XCTAssertEqual(S.unattended(sealed: nil, fallbackCopy: false, noted: .stamp("b"), hasFallback: true), .fallback)
+        XCTAssertEqual(S.unattended(sealed: nil, fallbackCopy: false, noted: .none, hasFallback: false), .sealed)
+        XCTAssertEqual(S.unattended(sealed: "a", fallbackCopy: false, noted: .unreadable, hasFallback: false), .refused)
+        XCTAssertEqual(S.unattended(sealed: nil, fallbackCopy: true, noted: .stamp("b"), hasFallback: false), .sealed)
+    }
+
+    /// The stamp travels in the sealed file; the note round-trips; only plain short ids are stamps.
+    func testTheStampIsSealedWithTheCopyAndNotesRoundTrip() throws {
+        let data = try XCTUnwrap(SealedPolicy.encode("{}", owner: 501, search: "", setup: "abc-1"))
+        XCTAssertEqual(SetupStamp.of(sealed: data), "abc-1")
+        XCTAssertEqual(SealedPolicy.decode(data)?.owner, 501)
+        XCTAssertNil(SetupStamp.of(sealed: try XCTUnwrap(SealedPolicy.encode("{}", owner: 501))))
+        let note = try XCTUnwrap(SetupStamp.encode(stamp: "s1", fallback: "{}"))
+        XCTAssertEqual(SetupStamp.decode(note)?.stamp, "s1")
+        XCTAssertEqual(SetupStamp.decode(note)?.fallback, "{}")
+        XCTAssertNil(SetupStamp.decode(Data("{\"stamp\":\"\"}".utf8)))
+        XCTAssertTrue(SetupStamp.valid(UUID().uuidString))
+        XCTAssertTrue(SetupStamp.valid("outdated-\(UUID().uuidString)"))
+        XCTAssertFalse(SetupStamp.valid(""))
+        XCTAssertFalse(SetupStamp.valid("a b"))
+        XCTAssertFalse(SetupStamp.valid(String(repeating: "a", count: 65)))
+    }
+
+    /// A staged configuration keeps the stamp it was built from.
+    func testAStagedConfigurationKeepsItsStamp() throws {
+        let staging = Staging()
+        let t = try staging.stage("{}", persist: true, setup: "s1", uid: 501, epoch: 0)
+        XCTAssertEqual(staging.take(t.token)?.setup, "s1")
+    }
+}

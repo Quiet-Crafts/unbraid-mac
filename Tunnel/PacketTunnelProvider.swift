@@ -84,7 +84,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         Self.dropForgotten()
         let token = Staging.token(in: options)
         let staged = token.flatMap { Staging.shared.take($0) }
-        guard let source = staged.map({ ($0.config, $0.uid, $0.search, false) }) ?? Self.sealedConfig() else {
+        guard let source = staged.map({ ($0.config, $0.uid, $0.search, false) }) ?? Self.unattendedConfig() else {
             return completionHandler(Self.error(token == nil ? "Open unbraid to connect." : "The connection request expired. Try again."))
         }
         let (given, owner, search, fallback) = source
@@ -145,7 +145,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             let count = Self.running.withLock { $0.engine = (Staging.revision(config, search: search), owner); return $0.count }
             Self.fallbackRun.withLock { $0 = fallback && ConfigVet.isFallback(config) ? count : nil }
             TailscaleWatch.refresh()
-            if persist { Self.persistOrStayInvalid(config, owner: owner, search: search) }
+            // A stale copy's stand-in (`unattendedConfig`): told as such, so the app replaces it with the current setup.
+            Self.staleRun.withLock { $0 = staged == nil && fallback && Self.staleSource ? count : nil }
+            if persist { Self.persistOrStayInvalid(config, owner: owner, search: search, setup: staged?.setup) }
             completionHandler(nil)
         } catch {
             stop()
@@ -218,7 +220,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     Log.info("fake addresses: reloaded on the next block")
                 }
                 // Running but not sealed is its own answer: Connect on Demand can't start this configuration.
-                let sealed = !staged.persist || Self.persistOrStayInvalid(config, owner: owner, search: staged.search)
+                let sealed = !staged.persist || Self.persistOrStayInvalid(config, owner: owner, search: staged.search, setup: staged.setup)
                 completionHandler?(sealed ? EngineAck.done : EngineAck.unsealed)
             } else { throw Fail("Unknown request") }
         } catch { completionHandler?(Data(Redact.clean(error.localizedDescription).utf8)) }
@@ -307,6 +309,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 let count = try swap(run, config: current.config, search: current.search, owner: owner, server: server)
                 // The same configuration: still the fallback if it was.
                 Self.fallbackRun.withLock { if $0 == engine { $0 = count } }
+                Self.staleRun.withLock { if $0 == engine { $0 = count } }
             } catch {
                 // Down now, traffic held by the tunnel: tried again at every check, on this same block.
                 failedRotation = engine
@@ -330,6 +333,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         guard let run = try? ConfigVet.owned(ConfigVet.fakeBlock(current.config, target), by: owner),
               let count = try? swap(run, config: current.config, search: current.search, owner: owner, server: server) else { return }
         Self.fallbackRun.withLock { if $0 == replaced { $0 = count } }
+        Self.staleRun.withLock { if $0 == replaced { $0 = count } }
         Log.info("fake addresses: the move to the next block succeeded on a retry")
         recordBlock(target)
     }
@@ -398,8 +402,59 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// it stays, so Connect on Demand refuses to start from an older copy until the app connects again. False then: the
     /// app keeps Connect on Demand off and says so.
     @discardableResult
-    private static func persistOrStayInvalid(_ config: String, owner: uid_t, search: String?) -> Bool {
-        do { try persist(config, owner: owner, search: search); return true } catch { Log.error("config not sealed", error: error); return false }
+    private static func persistOrStayInvalid(_ config: String, owner: uid_t, search: String?, setup: String?) -> Bool {
+        do { try persist(config, owner: owner, search: search, setup: setup); return true } catch { Log.error("config not sealed", error: error); return false }
+    }
+
+    /// The count (`running`) of the engine an unattended start began from a stale copy's fallback (`unattendedConfig`).
+    private static let staleRun = Mutex<Int?>(nil)
+    /// Whether the last `unattendedConfig` answered with a stale copy's fallback. Engine queue only.
+    nonisolated(unsafe) private static var staleSource = false
+
+    /// Where [uid]'s latest setup stamp and fallback are kept (`noteSetup`).
+    private static func noteName(_ uid: uid_t) -> String { "setup-\(uid)" }
+
+    /// [uid]'s latest noted setup, telling one that can't be read now from none.
+    private static func noted(_ uid: uid_t) -> (SetupStamp.Noted, fallback: String?) {
+        do {
+            guard let data = try vault.open(noteName(uid)) else { return (.none, nil) }
+            guard let n = SetupStamp.decode(data) else { return (.unreadable, nil) }
+            return (.stamp(n.stamp), n.fallback.isEmpty ? nil : n.fallback)
+        } catch { return (.unreadable, nil) }
+    }
+
+    /// What an unattended start runs: the sealed copy while it carries its owner's latest setup stamp; one made from an
+    /// older setup (changed while the tunnel was off or paused, and not resealed) gives way to that setup's credential-free
+    /// fallback, which keeps the Mac online without running what the change ruled out (`SetupStamp.unattended`).
+    private static func unattendedConfig() -> (String, uid_t, String?, Bool)? {
+        staleSource = false
+        guard let c = sealedConfig(), let data = vault.read("config") else { return nil }
+        let (note, fallback) = noted(c.1)
+        let usable = fallback.flatMap { f in (try? ConfigVet.check(f)).flatMap { ConfigVet.isFallback($0, blocks: true) ? $0 : nil } }
+        switch SetupStamp.unattended(sealed: SetupStamp.of(sealed: data), fallbackCopy: c.3 && ConfigVet.isFallback(c.0), noted: note, hasFallback: usable != nil) {
+        case .sealed: return c
+        case .fallback:
+            Log.info("start: the sealed copy predates the latest setup; running its fallback")
+            staleSource = true
+            return usable.map { ($0, c.1, "", true) }
+        case .refused:
+            Log.info("start: the sealed copy predates the latest setup and no fallback is noted")
+            return nil
+        }
+    }
+
+    /// Keeps [uid]'s latest setup stamp and its fallback ([fallback], checked; "" for none). See `SetupStamp`.
+    /// Not once [deadline] (system uptime) has passed: checked where notes are serialised, so one the app gave up on never
+    /// lands after a newer one.
+    static func noteSetup(_ stamp: String, fallback: String, for uid: uid_t, before deadline: UInt64) -> [String: String] {
+        work.sync {
+            guard DispatchTime.now().uptimeNanoseconds < deadline else { return ["error": "The request expired"] }
+            guard let data = SetupStamp.encode(stamp: stamp, fallback: fallback), vault.write(noteName(uid), data) else {
+                return ["error": "The setup could not be noted"]
+            }
+            sweepSealedTemps()
+            return ["result": "ok"]
+        }
     }
 
     /// The copy an unattended start runs, whose it is, its search domain and whether it is the fallback (`sealFallback`):
@@ -535,8 +590,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             dropForgotten()
             let sealed = startableConfig().map { (revision: Staging.revision($0.0, search: $0.2), owner: $0.1, fallback: $0.3 && ConfigVet.isFallback($0.0)) }
             let (engine, count) = running.withLock { ($0.engine.map { ($0.revision, $0.owner) }, $0.count) }
+            let stale = staleRun.withLock { $0 == count }
             var out = Ownership.revisions(uid, running: engine, sealed: sealed.map { ($0.revision, $0.owner) },
-                                          fallback: (fallbackRun.withLock { $0 == count }, sealed?.fallback == true))
+                                          fallback: (fallbackRun.withLock { $0 == count } && !stale, sealed?.fallback == true))
+            // This user's engine runs a stale copy's fallback: the app takes it over with the current setup.
+            if stale, engine?.1 == uid { out["stale-running"] = "1" }
             out["seal"] = sealing(uid)
             // Which engine, for the owner: one restarted on its own (a move to fresh stand-in addresses) runs the same
             // revision, and a node speed test must still tell it from the one it switched.
@@ -550,13 +608,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// (see `Ownership.maySeal`): the same engine as when asked, no sign-out or reset by [uid] since, and no other copy
     /// withdrawn since. Once the older copy is withdrawn, a failure leaves none ("invalid"): an older policy never stays
     /// available.
-    static func seal(_ config: String, search: String?, for uid: uid_t, asked: (epoch: Int, engine: Int, seals: Int)) -> [String: String] {
+    static func seal(_ config: String, search: String?, setup: String?, for uid: uid_t, asked: (epoch: Int, engine: Int, seals: Int)) -> [String: String] {
         work.sync {
             if let refused = Ownership.maySeal(uid, running: owner, epoch: (asked.epoch, Staging.shared.epoch(for: uid)),
                                                engine: (asked.engine, engine), seals: (asked.seals, sealCount)) { return refused }
             do { try invalidateConfig() } catch { return ["error": Redact.clean(error.localizedDescription)] }
             do {
-                try persist(config, owner: uid, search: search)
+                try persist(config, owner: uid, search: search, setup: setup)
                 return ["durable": Staging.revision(config, search: search)]
             } catch {
                 Log.error("config not sealed", error: error)
@@ -567,13 +625,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     /// Returns the new sealing's id.
     @discardableResult
-    private static func persist(_ config: String, owner: uid_t, search: String?, fallback: Bool = false) throws -> String {
+    private static func persist(_ config: String, owner: uid_t, search: String?, fallback: Bool = false, setup: String? = nil) throws -> String {
         // A new id for every sealing, written first: a copy written after it never carries an older one (`sealing`).
         let id = UUID().uuidString
         let previous = try? Data(contentsOf: sealId)
         try Data(id.utf8).write(to: sealId, options: .atomic)
         // One sealed file for all of it: a crash can't pair one user's configuration with another's ownership.
-        guard let data = SealedPolicy.encode(config, owner: owner, search: search, fallback: fallback), vault.write("config", data) else {
+        guard let data = SealedPolicy.encode(config, owner: owner, search: search, fallback: fallback, setup: setup), vault.write("config", data) else {
             // Nothing was sealed (a failed write never replaces the file): the copy there is still the one the previous id
             // names, so a drop naming it must still stand. Without that id, none: a drop then stands (`forgetStands`).
             if previous.map({ (try? $0.write(to: sealId, options: .atomic)) == nil }) ?? true { try? remove(sealId) }

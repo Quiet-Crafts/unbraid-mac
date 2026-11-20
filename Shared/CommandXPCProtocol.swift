@@ -11,12 +11,19 @@ import Foundation
     /// reply ("token", "revision"; or "error", redacted, with "foreign" when another user's engine runs). Works while
     /// stopped. `search`: the tailnet's search domain for the tunnel's resolver, applied with the configuration (a reload
     /// changes it without a restart); "" for none, nil to keep reading it from the VPN profile as older versions did.
-    func stageConfig(_ json: String, search: String?, persist: Bool, reply: @escaping ([String: String]) -> Void)
+    /// `setup`: the setup stamp it was built from (`SetupStamp`), sealed with it when it persists.
+    func stageConfig(_ json: String, search: String?, persist: Bool, setup: String, reply: @escaping ([String: String]) -> Void)
     /// Seals a configuration as this user's copy for unattended starts without running it (a pause runs another one), while
     /// this user's engine runs. "durable": its revision, sealed. Otherwise "error" (redacted), with "foreign" when
     /// another user's engine runs, and "invalid" when the previous copy was already withdrawn: then nothing starts
     /// unattended until a later seal succeeds.
-    func sealConfig(_ json: String, search: String?, reply: @escaping ([String: String]) -> Void)
+    func sealConfig(_ json: String, search: String?, setup: String, reply: @escaping ([String: String]) -> Void)
+    /// The setup changed: [stamp] is the latest one for this user, and [fallback] that setup's credential-free fallback
+    /// (`ConfigVet.isFallback`; "" for none). From now on an unattended start runs this user's sealed copy only if it
+    /// carries [stamp], else the fallback (`SetupStamp.unattended`). Works while stopped. "result": "ok", or "error"
+    /// (redacted). Never once [deadline] (system uptime, `DispatchTime.uptimeNanoseconds`) has passed: the app has given up
+    /// by then and may have noted a newer one, which a late older note must not replace.
+    func noteSetup(_ stamp: String, fallback: String, before deadline: UInt64, reply: @escaping ([String: String]) -> Void)
     /// Seals a configuration that can use no account and lets traffic out as Direct does (`ConfigVet.isFallback`) as this
     /// user's copy, in place of one a sign-out or erase removed while Connect on Demand couldn't be turned off, so what it
     /// starts keeps the Mac online. Never over a copy an unattended start runs, nor over another user's, and not while

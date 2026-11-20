@@ -12,7 +12,26 @@ final class Store {
     private let defaults: UserDefaults
 
     /// What the user configured. Sealed: it can hold imported WireGuard private keys and a Tailscale auth key.
-    private(set) var setup: Setup
+    /// Every change of value renews `setupStamp`, before anything writes it.
+    private(set) var setup: Setup { didSet { if setup != oldValue { renewStamp() } } }
+
+    /// Names the setup as it is now (`SetupStamp`): a new random id whenever it changes (and for a change outside it that
+    /// a sealed copy must not outlive, `renewStamp`). The extension starts a sealed copy unattended only while it carries
+    /// the latest one it was told (`Connection.noteSetup`). Not secret.
+    var setupStamp: String {
+        if let s = defaults.string(forKey: "setupStamp"), SetupStamp.valid(s) { return s }
+        let s = UUID().uuidString
+        defaults.set(s, forKey: "setupStamp")
+        return s
+    }
+    /// Told (on the main actor) whenever the stamp is renewed; the connection sets it.
+    @ObservationIgnored var onStamp: (@MainActor () -> Void)?
+
+    /// A new stamp: every sealed copy made before it stops being started unattended once the extension is told.
+    func renewStamp() {
+        defaults.set(UUID().uuidString, forKey: "setupStamp")
+        onStamp?()
+    }
     /// Signed-in providers: provider id → the opaque account blob its `signIn` returned.
     private(set) var accounts: [String: String]
     /// Set when a change applied but couldn't be written: it would be gone after a restart, so the UI says so.

@@ -1484,6 +1484,8 @@ final class FallbackLifecycleTests: XCTestCase {
         let e = Lifecycle.Engine(running: r.running, durable: r.durable, foreign: r.foreign, startable: r.startable, fallback: r.fallback)
         XCTAssertEqual(Lifecycle.onDemandHold(engine: e, owed: false), .disarm)
         // A real copy is read as before; a marker without a revision means nothing.
+        XCTAssertTrue(Lifecycle.revisions(["running": "f", "durable": "a", "startable": "1", "stale-running": "1"]).staleRunning)
+        XCTAssertFalse(Lifecycle.revisions(["stale-running": "1"]).staleRunning)
         let real = Lifecycle.revisions(["running": "a", "durable": "a", "startable": "1"])
         XCTAssertEqual(real.durable, "a")
         XCTAssertTrue(real.startable)

@@ -110,7 +110,7 @@ private final class CommandSession: NSObject, CommandXPCProtocol, @unchecked Sen
         }
     }
 
-    func stageConfig(_ json: String, search: String?, persist: Bool, reply: @escaping ([String: String]) -> Void) {
+    func stageConfig(_ json: String, search: String?, persist: Bool, setup: String, reply: @escaping ([String: String]) -> Void) {
         nonisolated(unsafe) let reply = reply
         let uid = self.uid, epoch = Staging.shared.epoch(for: uid)
         Self.queue.async {
@@ -118,19 +118,36 @@ private final class CommandSession: NSObject, CommandXPCProtocol, @unchecked Sen
             guard Ownership.mayStage(uid, running: PacketTunnelProvider.owner) else { return reply(["error": Ownership.otherUser, "foreign": "1"]) }
             guard let checked = Self.check(json, search: search, reply) else { return }
             // Kept by the process, not this connection: the app closes it as soon as it has the token.
-            guard let staged = try? Staging.shared.stage(checked, search: search, persist: persist, uid: uid, epoch: epoch) else {
+            guard let staged = try? Staging.shared.stage(checked, search: search, persist: persist, setup: SetupStamp.valid(setup) ? setup : nil, uid: uid, epoch: epoch) else {
                 return reply(["error": "Could not stage the configuration"])
             }
             reply(["token": staged.token, "revision": staged.revision])
         }
     }
 
-    func sealConfig(_ json: String, search: String?, reply: @escaping ([String: String]) -> Void) {
+    func sealConfig(_ json: String, search: String?, setup: String, reply: @escaping ([String: String]) -> Void) {
         nonisolated(unsafe) let reply = reply
         let uid = self.uid, asked = (epoch: Staging.shared.epoch(for: uid), engine: PacketTunnelProvider.engine, seals: PacketTunnelProvider.sealCount)
         Self.queue.async {
             guard let checked = Self.check(json, search: search, reply) else { return }
-            reply(PacketTunnelProvider.seal(checked, search: search, for: uid, asked: asked))
+            reply(PacketTunnelProvider.seal(checked, search: search, setup: SetupStamp.valid(setup) ? setup : nil, for: uid, asked: asked))
+        }
+    }
+
+    func noteSetup(_ stamp: String, fallback: String, before deadline: UInt64, reply: @escaping ([String: String]) -> Void) {
+        nonisolated(unsafe) let reply = reply
+        let uid = self.uid
+        Self.queue.async {
+            guard SetupStamp.valid(stamp) else { return reply(["error": "The setup stamp was refused"]) }
+            var kept = ""
+            if !fallback.isEmpty {
+                // Only what can use no account and lets traffic out as Direct does: anything else is no fallback.
+                guard let checked = try? ConfigVet.check(fallback), ConfigVet.isFallback(checked, blocks: true) else {
+                    return reply(["error": "The configuration was refused"])
+                }
+                kept = checked
+            }
+            reply(PacketTunnelProvider.noteSetup(stamp, fallback: kept, for: uid, before: deadline))
         }
     }
 

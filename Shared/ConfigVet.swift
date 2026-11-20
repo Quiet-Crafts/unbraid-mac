@@ -309,6 +309,9 @@ nonisolated enum ConfigVet {
         return try check(String(decoding: data, as: UTF8.self))
     }
 
+    /// What a stale copy's fallback may refuse by (`isFallback(_:blocks:)`).
+    private static let blockNames: Set = ["process_path_regex", "process_path", "process_name", "domain", "domain_suffix", "domain_keyword", "domain_regex"]
+
     /// Fields that can carry a secret or name a server, at any depth: none may appear in a credential-free configuration.
     /// (A rule's "server" names a resolver by its tag.)
     private static let secretFields: Set = ["auth_key", "private_key", "pre_shared_key", "password", "username", "users", "key",
@@ -322,7 +325,9 @@ nonisolated enum ConfigVet {
     /// IPv6 and stale fake addresses; no lookup is refused, and every one is answered (only address lookups go
     /// to the fake resolver, which answers nothing else). Values aren't read: a tag or a match may hold any text, which
     /// nothing here can send anywhere.
-    static func isFallback(_ checked: String) -> Bool {
+    /// [blocks]: a stale copy's fallback (`Compiler.staleFallback`) may also refuse what a rule names (blocked apps and
+    /// websites), never everything: each refusal matches something, and what no rule claims still leaves through direct.
+    static func isFallback(_ checked: String, blocks: Bool = false) -> Bool {
         guard let parsed = try? JSONSerialization.jsonObject(with: Data(checked.utf8)), let root = (parsed as? [String: Any]).flatMap(folded) else { return false }
         /// Each item of a list section, names case-folded; nil when the section isn't a list of objects.
         func items(_ v: Any?) -> [[String: Any]]? {
@@ -345,6 +350,25 @@ nonisolated enum ConfigVet {
             guard let tag = server["tag"] as? String, resolvers[tag] == nil else { return false }
             resolvers[tag] = (server["type"] as? String)?.lowercased()
         }
+        // A rule that names what it applies to: never one that refuses everything.
+        func matches(_ r: [String: Any]) -> Bool {
+            if r["type"] != nil {
+                // Every one of its rules applies ("and"), and one names something; never "or", whose rules may cover
+                // everything between them (a program and its inverse).
+                let own = (r["rules"] as? [Any] ?? []).map { ($0 as? [String: Any]).flatMap(folded).map(names) ?? false }
+                return (r["mode"] as? String)?.lowercased() == "and" && own.contains(true)
+            }
+            return names(r) || Set(r.keys) == ["network", "action"] && (r["network"] as? String)?.lowercased() == "icmp"
+        }
+        // A program or a name: what a block applies to, never an address range, a protocol or a port alone.
+        func names(_ r: [String: Any]) -> Bool { !Set(r.keys).isDisjoint(with: Self.blockNames) }
+        // HTTPS and SVCB lookups answered empty (a blocking setup's), never refused: no lookup of a name fails for it.
+        func svcb(_ r: [String: Any]) -> Bool {
+            Set(r.keys) == ["query_type", "action", "rcode"] && (r["rcode"] as? String)?.uppercased() == "NOERROR"
+                && Set((r["query_type"] as? [Any] ?? []).compactMap { ($0 as? String)?.uppercased() }) == ["HTTPS", "SVCB"]
+        }
+        // A logical DNS rule may hand lookups to a resolver: only refusals are taken here.
+        func routes(_ r: [String: Any]) -> Bool { r["server"] != nil }
         func addresses(_ v: Any?) -> Bool {
             guard let v else { return false }
             let list = v as? [Any] ?? [v]
@@ -353,6 +377,9 @@ nonisolated enum ConfigVet {
         // Domains are resolved with the local resolver too, by default, when routing connects to them.
         guard resolvers[dns["final"] as? String ?? ""] == "local", resolvers[route["default_domain_resolver"] as? String ?? ""] == "local",
               dnsRules.allSatisfy({ r in
+                  if blocks, ["reject", "predefined"].contains((r["action"] as? String)?.lowercased() ?? "") || r["type"] != nil {
+                      return (matches(r) || svcb(r)) && dnsRule(r) && !routes(r)
+                  }
                   guard (r["action"] as? String)?.lowercased() ?? "route" == "route" else { return false }
                   switch resolvers[r["server"] as? String ?? ""] {
                   case "local": return true
@@ -364,6 +391,7 @@ nonisolated enum ConfigVet {
         let direct = Set(outbounds.compactMap { $0["tag"] as? String })
         guard let final = route["final"] as? String, direct.contains(final),
               routeRules.allSatisfy({ r in
+                  if blocks, (r["action"] as? String)?.lowercased() == "reject", matches(r), routeRule(r, exits: direct) { return true }
                   switch (r["action"] as? String)?.lowercased() ?? "route" {
                   case "route": return r["type"] == nil && direct.contains(r["outbound"] as? String ?? "")
                   case "reject": return Set(r.keys) == ["ip_version", "action"] && (r["ip_version"] as? Int) == 6

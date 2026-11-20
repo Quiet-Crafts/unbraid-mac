@@ -212,6 +212,8 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
         let config: String
         let search: String?
         let persist: Bool
+        /// The setup stamp it was built from (`SetupStamp`).
+        let setup: String
         let token: String
         let revision: String
         let at: ContinuousClock.Instant
@@ -227,8 +229,9 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
     /// Hands [config] to the extension over XPC (code-signed both ways), which checks it and keeps it in memory only, for
     /// a minute. Sealed for on-demand starts once it runs, when [persist]. [search]: the tailnet's search domain, applied
     /// with it ("" for none; see `Compiler.searchDomain`); nil leaves it to the VPN profile, as older versions set it.
-    func stage(_ config: String, persist: Bool, search: String? = nil) async throws -> Staged {
-        guard let r = await EngineLink.call(timeout: 30, { $0.stageConfig(config, search: search, persist: persist, reply: $1) }) else {
+    /// [setup]: the setup stamp it was built from (`Connection.stamp`), sealed with it.
+    func stage(_ config: String, persist: Bool, search: String? = nil, setup: String) async throws -> Staged {
+        guard let r = await EngineLink.call(timeout: 30, { $0.stageConfig(config, search: search, persist: persist, setup: setup, reply: $1) }) else {
             throw Unstaged(errorDescription: "The connection engine didn't answer. Check that unbraid is allowed in System Settings › General › Login Items & Extensions.")
         }
         if r["foreign"] != nil { throw Unstaged(errorDescription: Ownership.otherUser, foreign: true) }
@@ -238,7 +241,7 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
             Diagnostics.noteRejection(r["error"], config: config)
             throw Unstaged(errorDescription: "The connection engine rejected this setup.")
         }
-        return Staged(config: config, search: search, persist: persist, token: token, revision: revision, at: .now)
+        return Staged(config: config, search: search, persist: persist, setup: setup, token: token, revision: revision, at: .now)
     }
 
     /// Another user's engine runs now (it started meanwhile, after this app's staging): theirs, so nothing here may stop
@@ -252,7 +255,7 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
 
     /// Staging again once the tunnel was already changed: its failure is no longer "nothing changed".
     private func restage(_ s: Staged) async throws -> Staged {
-        do { return try await stage(s.config, persist: s.persist, search: s.search) } catch let u as Unstaged {
+        do { return try await stage(s.config, persist: s.persist, search: s.search, setup: s.setup) } catch let u as Unstaged {
             if u.foreign { throw Foreign() }
             throw Fail(u.errorDescription ?? "")
         }
@@ -280,6 +283,8 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
             guard let r = await revisions() else { throw Fail("The tunnel did not answer") }
             // Started meanwhile for another user (their Connect on Demand): not this setup, and not this app's to change.
             if r.foreign { throw Foreign() }
+            // A stale copy's fallback can compile to the very bytes asked for (a Direct setup), but it was never this start.
+            if r.staleRunning { return .other }
             return EngineAck.outcome(running: r.running, durable: r.durable, revision: staged.revision, persist: staged.persist)
         }
         applied = nil
@@ -296,9 +301,9 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
     /// False when [persist] was asked but the extension couldn't seal it: it runs, but Connect on Demand can't start it.
     /// [still] as for `start`; when it no longer holds after staging, nothing changed. [search] as for `stage`.
     /// [staged]: told the staged revision before it is sent.
-    func reload(config: String, persist: Bool = true, search: String? = nil, while still: () -> Bool = { true },
+    func reload(config: String, persist: Bool = true, search: String? = nil, setup: String, while still: () -> Bool = { true },
                 staged told: (Staged) -> Void = { _ in }) async throws -> Bool {
-        let staged = try await stage(config, persist: persist, search: search)
+        let staged = try await stage(config, persist: persist, search: search, setup: setup)
         guard still() else { throw CancellationError() }
         told(staged)
         applied = nil
@@ -320,14 +325,25 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
     /// meanwhile must be blocked by an unattended start too. Only while this user's engine runs. Returns the sealed
     /// revision (as `revisions()` reports it). No answer leaves the outcome unknown: `revisions()` tells.
     @discardableResult
-    func seal(_ config: String, search: String? = nil) async throws -> String {
-        guard let r = await EngineLink.call(timeout: 30, { $0.sealConfig(config, search: search, reply: $1) }) else {
+    func seal(_ config: String, search: String? = nil, setup: String) async throws -> String {
+        guard let r = await EngineLink.call(timeout: 30, { $0.sealConfig(config, search: search, setup: setup, reply: $1) }) else {
             throw Unsealed(errorDescription: "The connection engine didn't answer", unanswered: true)
         }
         if let durable = r["durable"] { return durable }
         Log.error("seal", detail: Redact.clean(r["error"]))
         throw Unsealed(errorDescription: r["foreign"] != nil ? Ownership.otherUser : "The tunnel couldn't save its configuration",
                        foreign: r["foreign"] != nil, withdrawn: r["invalid"] != nil)
+    }
+
+    /// Tells the extension the latest setup stamp and that setup's fallback ("" for none; `SetupStamp`). False when it
+    /// didn't take it (no answer, refused): asked again.
+    /// The extension stops taking it 5 s before this stops waiting (`noteSetup(_:fallback:before:)`).
+    func noteSetup(_ stamp: String, fallback: String) async -> Bool {
+        let deadline = DispatchTime.now().uptimeNanoseconds + 10_000_000_000
+        guard let r = await EngineLink.call(timeout: 15, { $0.noteSetup(stamp, fallback: fallback, before: deadline, reply: $1) }) else { return false }
+        if r["result"] == "ok" { return true }
+        Log.error("note setup", detail: Redact.clean(r["error"]))
+        return false
     }
 
     /// Whether unbraid's VPN configuration exists, read again from the system (the user may have removed it). Loading

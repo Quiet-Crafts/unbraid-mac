@@ -131,6 +131,27 @@ final class StoreTests: XCTestCase {
     }
 
     private func exists(_ name: String) -> Bool { FileManager.default.fileExists(atPath: dir.appending(path: name).path) }
+    /// Every change of the setup renews its stamp, and tells; a change to nothing leaves it. The stamp survives a relaunch.
+    func testEveryChangeRenewsTheSetupStampAndOnlyAChange() {
+        let s = store()
+        var told = 0
+        s.onStamp = { told += 1 }
+        let first = s.setupStamp
+        XCTAssertTrue(SetupStamp.valid(first))
+        XCTAssertEqual(s.setupStamp, first)
+        s.update { $0.prefs.killSwitch.toggle() }
+        let second = s.setupStamp
+        XCTAssertNotEqual(second, first)
+        XCTAssertEqual(told, 1)
+        s.update { _ in }
+        XCTAssertEqual(s.setupStamp, second)
+        XCTAssertEqual(told, 1)
+        s.renewStamp()
+        XCTAssertNotEqual(s.setupStamp, second)
+        XCTAssertEqual(told, 2)
+        XCTAssertEqual(store().setupStamp, s.setupStamp)
+    }
+
     /// A domain on offer is withdrawn alone: the domain accepted before stays.
     func testWithdrawingAnOfferKeepsTheAcceptedDomain() {
         let s = store()

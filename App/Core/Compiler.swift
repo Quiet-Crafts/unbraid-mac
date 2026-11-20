@@ -153,6 +153,17 @@ nonisolated enum Compiler {
         return try compile(Input(setup: setup, links: [:], apps: [:], selfPattern: selfPattern, tsSuffix: nil, probe: nil))
     }
 
+    /// What an unattended start runs in place of a sealed copy older than the setup (`SetupStamp`): no route, no home, no
+    /// tailnet, no server and no account, everything direct, but the apps and websites [setup] blocks stay blocked, with
+    /// the user's kill-switch and local-network preferences. Checked by `ConfigVet.isFallback(_:blocks:)`.
+    static func staleFallback(_ setup: Setup, selfPattern: String, apps: [String: [String]]) throws -> String {
+        var prefs = setup.prefs
+        prefs.filter = Filter(); prefs.customDns = []
+        var s = Setup(routes: [], defaultRoute: DIRECT, apps: setup.apps.filter { $0.value == BLOCK }, favorites: [], home: Home(), prefs: prefs, servers: [])
+        s.sites = setup.sites.filter { $0.value == BLOCK }
+        return try compile(Input(setup: s, links: [:], apps: apps.filter { s.apps[$0.key] != nil }, selfPattern: selfPattern, tsSuffix: nil, probe: nil))
+    }
+
     /// The system resolver: its lookups are everyone's, so a deny-all never refuses it as an app (see `othersRefused`).
     static let systemResolver = "^/usr/sbin/mDNSResponder$"
 

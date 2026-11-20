@@ -19,6 +19,8 @@ nonisolated final class Staging: Sendable {
         let search: String?
         /// Whether it becomes the sealed copy that Connect on Demand starts.
         let persist: Bool
+        /// The setup stamp it was built from (`SetupStamp`), sealed with it; nil from an app older than stamps.
+        var setup: String? = nil
         /// The user whose app staged it.
         let uid: uid_t
         let revision: String
@@ -47,14 +49,14 @@ nonisolated final class Staging: Sendable {
 
     /// Keeps a checked configuration; returns its token and revision. The oldest pending one of the same user and purpose
     /// makes room. Refused if that user signed out or reset after `epoch`.
-    func stage(_ config: String, search: String? = nil, persist: Bool, uid: uid_t, epoch: Int, for purpose: Purpose = .run) throws -> (token: String, revision: String) {
+    func stage(_ config: String, search: String? = nil, persist: Bool, setup: String? = nil, uid: uid_t, epoch: Int, for purpose: Purpose = .run) throws -> (token: String, revision: String) {
         let token = try Self.token(), revision = Self.revision(config, search: search), t = now()
         try state.withLock { s in
             guard s.epochs[uid, default: 0] == epoch else { throw Fail("Reset while checking the configuration") }
             s.entries = s.entries.filter { $0.value.expires > t }
             let mine = s.entries.filter { $0.value.uid == uid && $0.value.purpose == purpose }
             for old in mine.sorted(by: { $0.value.expires < $1.value.expires }).prefix(max(0, mine.count - Self.capacity + 1)) { s.entries[old.key] = nil }
-            s.entries[token] = Entry(config: config, search: search, persist: persist, uid: uid, revision: revision, purpose: purpose, expires: t + Self.lifetime)
+            s.entries[token] = Entry(config: config, search: search, persist: persist, setup: setup, uid: uid, revision: revision, purpose: purpose, expires: t + Self.lifetime)
         }
         return (token, revision)
     }
@@ -309,9 +311,10 @@ nonisolated enum Ownership {
 nonisolated enum SealedPolicy {
     /// [fallback]: the credential-free configuration sealed when Connect on Demand couldn't be turned off
     /// (`PacketTunnelProvider.sealFallback`).
-    static func encode(_ config: String, owner: uid_t, search: String? = nil, fallback: Bool = false) -> Data? {
+    static func encode(_ config: String, owner: uid_t, search: String? = nil, fallback: Bool = false, setup: String? = nil) -> Data? {
         var o: [String: Any] = ["config": config, "owner": NSNumber(value: owner)]
         o["search"] = search
+        o["setup"] = setup
         o["format"] = format
         if fallback { o["fallback"] = true }
         return try? JSONSerialization.data(withJSONObject: o, options: [.sortedKeys])
@@ -339,6 +342,49 @@ nonisolated enum SealedPolicy {
         let search = o["search"] as? String
         let fallback = (o["fallback"] as? NSNumber).map { CFGetTypeID($0) == CFBooleanGetTypeID() && $0.boolValue } ?? false
         return (config, owner, search.map { $0.isEmpty || Staging.isSearchDomain($0) ? $0 : "" }, fallback)
+    }
+}
+
+/// Which setup a sealed copy was built from. The app renews its stamp whenever the setup changes and tells the extension
+/// (`noteSetup`), with a credential-free fallback for that setup. An unattended start runs a sealed copy only while its
+/// stamp is the latest noted for its owner: after any change made while the tunnel was off or paused that the app couldn't
+/// reseal, the old copy (which may run what the change rules out) gives way to the fallback, which keeps the Mac online
+/// and blocked apps blocked until the app replaces it with the current setup.
+nonisolated enum SetupStamp {
+    /// What the extension keeps per user: the latest stamp and that setup's fallback ("" for none).
+    static func encode(stamp: String, fallback: String) -> Data? {
+        try? JSONSerialization.data(withJSONObject: ["stamp": stamp, "fallback": fallback], options: [.sortedKeys])
+    }
+
+    static func decode(_ data: Data) -> (stamp: String, fallback: String)? {
+        guard let o = try? JSONSerialization.jsonObject(with: data) as? [String: Any], let stamp = o["stamp"] as? String, !stamp.isEmpty,
+              let fallback = o["fallback"] as? String else { return nil }
+        return (stamp, fallback)
+    }
+
+    /// The stamp a sealed copy carries; nil for one sealed without (an older app or extension).
+    static func of(sealed data: Data) -> String? {
+        (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["setup"] as? String
+    }
+
+    /// A stamp is an id the app made: short, plain characters.
+    static func valid(_ stamp: String) -> Bool { stamp.utf8.count <= 64 && stamp.wholeMatch(of: /[A-Za-z0-9-]+/) != nil }
+
+    enum Unattended: Equatable { case sealed, fallback, refused }
+
+    /// What an unattended start runs for a sealed copy stamped [sealed] (a [fallbackCopy] holds no account and is never
+    /// stale): the copy itself while nothing was noted for its owner ([noted] `.none`, an app older than stamps) or the
+    /// note is its stamp; otherwise the noted fallback when there is one ([hasFallback]), else nothing. A note that exists
+    /// but can't be read ([noted] `.unreadable`) can't vouch for the copy.
+    enum Noted: Equatable { case none, unreadable, stamp(String) }
+
+    static func unattended(sealed: String?, fallbackCopy: Bool, noted: Noted, hasFallback: Bool) -> Unattended {
+        if fallbackCopy { return .sealed }
+        switch noted {
+        case .none: return .sealed
+        case .stamp(let s) where s == sealed: return .sealed
+        case .stamp, .unreadable: return hasFallback ? .fallback : .refused
+        }
     }
 }
 
