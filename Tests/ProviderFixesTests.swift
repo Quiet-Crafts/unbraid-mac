@@ -80,6 +80,25 @@ final class ProviderFixesTests: XCTestCase {
         XCTAssertEqual(try Catalog.server(Catalog.Entry(vpn: "wireguard", country: "Austria", ips: ["1.2.3.4"])).load, -1)
     }
 
+    /// AirVPN's `warning` servers work, with a problem they name: kept, with the reason, and picked after the healthy
+    /// ones whatever their load; `error` ones refuse connections and are left out.
+    func testAirvpnWarningServersStayAndComeLast() async throws {
+        let air = try AirVpn.parse(F.data("""
+        {"servers":[{"public_name":"Busy","country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.4","health":"ok","currentload":90},
+        {"public_name":"Lossy","country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.5","health":"warning","warning":" Low packet loss ","currentload":1},
+        {"public_name":"Quiet","country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.6","health":"warning","currentload":2},
+        {"public_name":"Broken","country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.7","health":"error","currentload":0}]}
+        """), serverKey: F.key)
+        XCTAssertEqual(air.map(\.serverName), ["Busy", "Lossy", "Quiet"])
+        XCTAssertEqual(air.map(\.warning), [nil, "Low packet loss", "Warning"])
+        XCTAssertEqual(Catalog.pick(air, Location(provider: "airvpn", country: "Austria")).map(\.serverName).first, "Busy")
+        let sv = try await F.air().link(Location(provider: "airvpn", country: "Austria"), account) { air }.server
+        XCTAssertEqual(sv.name, "Busy")
+        // Nothing healthy left: a warned one is taken rather than none.
+        let only = try await F.air().link(Location(provider: "airvpn", country: "Austria"), account) { Array(air.dropFirst()) }.server
+        XCTAssertEqual(only.name, "Lossy")
+    }
+
     func testAirvpnPinFoundByNameBecauseHostsAreShared() async throws {
         let entries = try AirVpn.parse(F.data("""
         {"servers":[{"public_name":"A","country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.4","health":"ok"},

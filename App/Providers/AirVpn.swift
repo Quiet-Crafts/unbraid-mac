@@ -290,10 +290,12 @@ nonisolated struct AirVpn: KeyProvider {
         var ip: String
         var ip3: String
         var health: String
+        /// Why a server isn't `ok`, such as "Low packet loss".
+        var warning: String
         var load: Int?
         enum CodingKeys: String, CodingKey {
             case name = "public_name", country = "country_name", code = "country_code", location, continent
-            case ip = "ip_v4_in1", ip3 = "ip_v4_in3", health, load = "currentload"
+            case ip = "ip_v4_in1", ip3 = "ip_v4_in3", health, warning, load = "currentload"
         }
         init(from d: Decoder) throws {
             let c = try d.container(keyedBy: CodingKeys.self)
@@ -305,6 +307,7 @@ nonisolated struct AirVpn: KeyProvider {
             ip = try c.contains(.ip) ? c.decode(String.self, forKey: .ip) : ""
             ip3 = try c.decodeIfPresent(String.self, forKey: .ip3) ?? ""
             health = try c.contains(.health) ? c.decode(String.self, forKey: .health) : ""
+            warning = (try? c.decodeIfPresent(String.self, forKey: .warning)) ?? ""
             load = try c.decodeIfPresent(Int.self, forKey: .load)
         }
     }
@@ -319,18 +322,28 @@ nonisolated struct AirVpn: KeyProvider {
     }
 
     static func parse(_ body: Data, serverKey: String) throws -> [Catalog.Entry] {
+        // `error` refuses connections; `warning` works, with a problem it names: kept, picked after the healthy ones.
         try JSON.decode(Status.self, body, "AirVPN").servers.filter {
-            $0.health == "ok" && $0.ip.contains(".") &&
+            ($0.health == "ok" || $0.health == "warning") && $0.ip.contains(".") &&
             !$0.country.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
             !$0.code.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        }.map {
-            // Only public addresses: the second is dialled as the "Entry address" option, so it must be as safe as the first.
-            let ips = [$0.ip] + ($0.ip3 != $0.ip ? [$0.ip3] : [])
-            let city = $0.location.replacingOccurrences(of: ", ", with: " ").replacingOccurrences(of: ",", with: "")
-            return Catalog.Entry(vpn: "wireguard", country: $0.country, region: $0.continent,
-                                 city: city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : city,
-                                 serverName: $0.name, hostname: "\($0.code).vpn.airdns.org", wgpubkey: serverKey, ips: ips.filter(Catalog.Entry.publicIPv4),
-                                 load: $0.load.map { min(max($0, 0), 100) } ?? -1)
+        }.map { node -> Catalog.Entry in
+            var entry = entry(node, serverKey)
+            if node.health == "warning" {
+                let why = node.warning.trimmingCharacters(in: .whitespacesAndNewlines)
+                entry.warning = why.isEmpty ? "Warning" : String(why.prefix(80))
+            }
+            return entry
         }
+    }
+
+    private static func entry(_ n: Node, _ serverKey: String) -> Catalog.Entry {
+        // Only public addresses: the second is dialled as the "Entry address" option, so it must be as safe as the first.
+        let ips = [n.ip] + (n.ip3 != n.ip ? [n.ip3] : [])
+        let city = n.location.replacingOccurrences(of: ", ", with: " ").replacingOccurrences(of: ",", with: "")
+        return Catalog.Entry(vpn: "wireguard", country: n.country, region: n.continent,
+                             city: city.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : city,
+                             serverName: n.name, hostname: "\(n.code).vpn.airdns.org", wgpubkey: serverKey, ips: ips.filter(Catalog.Entry.publicIPv4),
+                             load: n.load.map { min(max($0, 0), 100) } ?? -1)
     }
 }

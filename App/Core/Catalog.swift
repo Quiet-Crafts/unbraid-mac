@@ -28,6 +28,9 @@ nonisolated enum Catalog {
         var bundled = false
         var published: Int64? = nil
         var refreshFailed = false
+        /// The provider says this server works but has a problem, and names it ("Low packet loss"); nil = none. Picked
+        /// after the servers without one. Live lists only, never stored.
+        var warning: String? = nil
 
         enum CodingKeys: String, CodingKey { case vpn, country, region, city, serverName = "server_name", hostname, wgpubkey, ips, udp, tcp, free, load, published }
 
@@ -337,7 +340,10 @@ nonisolated enum Catalog {
     static func pick(_ entries: [Entry], _ loc: Location) -> [Entry] {
         entries.filter { e in
             (loc.country.map { $0 == e.place } ?? loc.countryCode.map { $0 == code(e.place) } ?? true) && (loc.region == nil || e.city == loc.region)
-        }.shuffled().sorted { ($0.load < 0 ? .max : $0.load) < ($1.load < 0 ? .max : $1.load) }
+        }.shuffled().sorted { a, b in
+            if (a.warning != nil) != (b.warning != nil) { return b.warning != nil }
+            return (a.load < 0 ? .max : a.load) < (b.load < 0 ? .max : b.load)
+        }
     }
 
     /// English names, normalised ("Hong Kong SAR China" → "hong kong", "Myanmar (Burma)" → "myanmar").

@@ -71,6 +71,14 @@ nonisolated struct Ivpn: Provider {
     struct ServerList: Decodable {
         var wireguard: [Gateway] = []
         var config: Config? = nil
+        /// Hostnames IVPN's status list marks inactive or in maintenance (`Ivpn.down`): picked only when nothing else
+        /// is left. Not in the server list itself.
+        var down: Set<String> = []
+        /// Hosts best first: up before down, then by load.
+        func best(_ a: (Gateway, Host), _ b: (Gateway, Host)) -> Bool {
+            let (ad, bd) = (down.contains(a.1.hostname), down.contains(b.1.hostname))
+            return ad != bd ? bd : a.1.load < b.1.load
+        }
         var ports: [Int] { Array(Set((config?.ports?.wireguard ?? []).compactMap { $0.type?.uppercased() == "UDP" ? $0.port : nil }.filter { (1...65535).contains($0) })).sorted() }
     }
 
@@ -216,17 +224,52 @@ nonisolated struct Ivpn: Provider {
     /// the list can't be read.
     @concurrent func connect(_ loc: Location, _ account: String) async throws -> Link {
         let list: ServerList?
-        if loc.pinned == nil { list = try await catalogue() } else { list = try await Catalog.unlessOutage { try await catalogue() } }
+        if loc.pinned == nil { list = try await withStatus() } else { list = try await Catalog.unlessOutage { try await catalogue() } }
         return try Self.link(list, loc, try Self.account(account))
     }
 
     @concurrent func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] {
-        try await catalogue().match(loc).enumerated().sorted { ($0.element.1.load, $0.offset) < ($1.element.1.load, $1.offset) }
-            .prefix(limit).map { Self.server($0.element.0, $0.element.1) }
+        let list = try await withStatus()
+        return list.match(loc).enumerated().sorted { a, b in
+            list.best(a.element, b.element) || !list.best(b.element, a.element) && a.offset < b.offset
+        }.prefix(limit).map { Self.server($0.element.0, $0.element.1) }
     }
 
     /// The server list; tests replace it.
     var catalogue: @Sendable () async throws -> ServerList = { try Ivpn.parse(try await Http.get("\(Ivpn.api)/v5/servers.json")) }
+    /// Which hosts IVPN's public status list says are inactive or in maintenance; empty when it can't be read, so
+    /// nothing changes then. Tests replace it.
+    var status: @Sendable () async -> Set<String> = { (try? Ivpn.down(try await Http.get("\(Ivpn.api)/v5/servers/stats"))) ?? [] }
+
+    /// The server list with the hosts that are down, both asked at once. The status list gets three seconds at most: a
+    /// slow one never holds a connection back, it only leaves the order as the load gives it.
+    private func withStatus() async throws -> ServerList {
+        let status = self.status
+        async let down = withTaskGroup(of: Set<String>?.self) { group -> Set<String> in
+            group.addTask { await status() }
+            group.addTask { try? await Task.sleep(for: .seconds(3)); return nil }
+            let first = await group.next() ?? nil
+            group.cancelAll()
+            return first ?? []
+        }
+        var list = try await catalogue()
+        list.down = await down
+        return list
+    }
+
+    private struct StatHost: Decodable { var hostname: String? }
+    private struct StatHosts: Decodable { var wireguard: StatHost? }
+    private struct StatServer: Decodable {
+        var active: Bool?; var maintenance: Bool?; var hosts: StatHosts?
+        enum CodingKeys: String, CodingKey { case active = "is_active", maintenance = "in_maintenance", hosts }
+    }
+    private struct Stats: Decodable { var servers: [StatServer]? }
+
+    /// WireGuard hostnames IVPN's status list marks inactive or in maintenance.
+    static func down(_ body: Data) throws -> Set<String> {
+        Set(try JSON.decode(Stats.self, body, "IVPN").servers?.filter { $0.active == false || $0.maintenance == true }
+            .compactMap { $0.hosts?.wireguard?.hostname?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } ?? [])
+    }
 
     static func parse(_ body: Data) throws -> ServerList { try JSON.decode(ServerList.self, body, "IVPN") }
 
@@ -254,7 +297,7 @@ nonisolated struct Ivpn: Provider {
                 sv.name = pinned.name
             }
         } else {
-            guard let (g, h) = l?.match(loc).min(by: { $0.1.load < $1.1.load }) else { throw Fail("No IVPN server for \(loc.label)") }
+            guard let l, let (g, h) = l.match(loc).min(by: l.best) else { throw Fail("No IVPN server for \(loc.label)") }
             (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
         }
         guard Catalog.Entry.publicIPv4(sv.ip) else { throw Fail("\(sv.name) can't be reached right now") }

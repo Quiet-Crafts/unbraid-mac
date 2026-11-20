@@ -74,6 +74,34 @@ final class IvpnTests: XCTestCase {
         XCTAssertEqual(l.server.city, "Amsterdam")
     }
 
+    /// IVPN's status list marks some servers inactive or in maintenance: automatic picks and the server list put those
+    /// last, whatever their load, and take one only when nothing else is left.
+    func testServersThatAreDownComeLast() async throws {
+        let down = try Ivpn.down(D(#"""
+        {"servers":[{"is_active":false,"in_maintenance":false,"hosts":{"wireguard":{"hostname":"a"}}},
+        {"is_active":true,"in_maintenance":true,"hosts":{"wireguard":{"hostname":" b "}}},
+        {"is_active":true,"in_maintenance":false,"hosts":{"wireguard":{"hostname":"c"}}},
+        {"is_active":false,"hosts":{}}]}
+        """#))
+        XCTAssertEqual(down, ["a", "b"])
+        let nl = list.wireguard.filter { $0.countryCode == "NL" }.flatMap(\.hosts).sorted { $0.load < $1.load }
+        XCTAssertGreaterThan(nl.count, 1)
+        var withDown = list
+        withDown.down = [nl[0].hostname]
+        XCTAssertEqual(wg(try Ivpn.link(withDown, Location(provider: "ivpn", countryCode: "NL"), acct)).server.host, nl[1].hostname)
+        withDown.down = Set(nl.map(\.hostname))
+        XCTAssertEqual(wg(try Ivpn.link(withDown, Location(provider: "ivpn", countryCode: "NL"), acct)).server.host, nl[0].hostname)
+        // The server list: down ones last; no status list read, nothing changes.
+        var p = Ivpn()
+        p.catalogue = { [list] in list }
+        p.status = { [nl] in [nl[0].hostname] }
+        let listed = try await p.servers(Location(provider: "ivpn", countryCode: "NL"), "", limit: 50)
+        XCTAssertEqual(listed.last?.host, nl[0].hostname)
+        p.status = { [] }
+        let plain = try await p.servers(Location(provider: "ivpn", countryCode: "NL"), "", limit: 50)
+        XCTAssertEqual(plain.first?.host, nl[0].hostname)
+    }
+
     func testCityLinkStaysInThatGateway() throws {
         let l = wg(try Ivpn.link(list, Location(provider: "ivpn", countryCode: "US", region: "us-ny.wg.ivpn.net"), acct))
         XCTAssertEqual(l.server.city, "New York, NY")
