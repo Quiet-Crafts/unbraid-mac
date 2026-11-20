@@ -74,7 +74,31 @@ nonisolated struct WgPeer: Codable, Hashable, Sendable {
     /// Random packets the engine sends before each handshake (the provider page's Junk packets switch); 0 = none. Set
     /// when a tunnel is picked from the page's setting, never saved with the peer.
     var junk = 0
-    enum CodingKeys: String, CodingKey { case name, privateKey, address, publicKey, presharedKey, endpoint, allowedIps, dns, mtu, keepalive }
+    /// Carried inside V2Ray (VMess over TCP dressed as web traffic) to the endpoint, for networks that block VPNs. Set
+    /// when a tunnel is picked with the provider page's Disguise on, from `disguise`; nil = a plain tunnel.
+    var vmess: Vmess? = nil
+    /// How the provider's server takes a disguised tunnel, whether or not Disguise is on now.
+    var disguise: Disguise? = nil
+    enum CodingKeys: String, CodingKey { case name, privateKey, address, publicKey, presharedKey, endpoint, allowedIps, dns, mtu, keepalive, vmess, disguise }
+}
+
+/// A provider's V2Ray server for a disguised WireGuard tunnel: its address, TCP port and the account-wide user id.
+nonisolated struct Vmess: Codable, Hashable, Sendable {
+    var server: String
+    var port: Int
+    var uuid: String
+
+    /// A public IPv4 address, a TCP port and a user id in its usual form: all the compiler puts in the engine's config.
+    var valid: Bool {
+        Catalog.Entry.publicIPv4(server) && (1...65535).contains(port)
+            && uuid.wholeMatch(of: /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/) != nil
+    }
+}
+
+/// How a server takes a disguised tunnel: its V2Ray server, and the WireGuard port behind it.
+nonisolated struct Disguise: Codable, Hashable, Sendable {
+    var vmess: Vmess
+    var wgPort: Int
 }
 
 /// An imported OpenVPN profile (ExpressVPN, CyberGhost…): the raw .ovpn plus its login.

@@ -7,6 +7,17 @@ nonisolated struct AuthError: LocalizedError {
     init(_ message: String = "Sign-in was refused", url: String? = nil) { errorDescription = message; self.url = url }
 }
 
+/// Every device slot is taken, and the provider can free one by signing out all the account's other devices. `confirm`
+/// tells the user so, who must agree first; signing in again with `retry` added to the form does it. `account` is the
+/// account the offer was made for: an agreement never carries over to another one.
+nonisolated struct SlotsFull: LocalizedError {
+    let errorDescription: String?
+    let url: String?
+    let account: String
+    let confirm: String
+    let retry: [String: String]
+}
+
 /// A provider's key isn't ready: the route stays off (never a plain tunnel).
 nonisolated struct KeyNotReady: LocalizedError {
     let errorDescription: String?
@@ -19,6 +30,7 @@ nonisolated func signInFailure(_ error: Error, _ name: String) -> String {
     switch error {
     case let e as Fail: e.errorDescription ?? "\(name) didn't accept these details"
     case let e as AuthError: e.errorDescription ?? "\(name) didn't accept these details"
+    case let e as SlotsFull: e.errorDescription ?? "\(name) didn't accept these details"
     case let e as Http.Status where e.code == 429: "\(name) is limiting sign-in attempts. Wait a few minutes, then try again."
     case let e as Http.Status: "\(name) answered with an error (HTTP \(e.code)). Try again later."
     default: "Couldn't reach \(name). Check the connection."
@@ -102,6 +114,9 @@ nonisolated struct ProviderOption: Hashable, Sendable {
         help: "Sends a few random packets before each connection starts, which gets past some VPN blocking. The servers ignore them")
     /// How many the engine sends when the switch is on.
     static let junkCount = 5
+    /// IVPN: the WireGuard tunnel goes inside V2Ray, which looks like ordinary web traffic (for networks that block VPNs).
+    static let disguise = ProviderOption(key: "disguise", label: "Disguise", kind: .toggle, defaultValue: "off", advanced: true,
+        help: "Wraps the tunnel in V2Ray so it looks like ordinary web traffic, for networks that block VPNs. A little slower. A server without it stays off")
     static let limit = ProviderOption(key: "limit", label: "Your plan's limit", kind: .number(1...999), defaultValue: "", advanced: true, affectsLinks: false)
 }
 
@@ -266,6 +281,7 @@ nonisolated extension Provider {
             result.append(ProviderOption(key: "list", label: "Block list", kind: .choice([.init(value: "10.0.254.2|10.0.254.3", label: "Default")]), defaultValue: "10.0.254.2|10.0.254.3"))
             result.append(ProviderOption(key: "hardcore", label: "Hardcore mode", kind: .toggle, defaultValue: "off", advanced: true))
             result.append(ProviderOption(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic")]), defaultValue: "auto", advanced: true))
+            result.append(.disguise)
         }
         if id == "airvpn" {
             result.append(ProviderOption(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic"), .init(value: "1637", label: "UDP 1637"), .init(value: "47107", label: "UDP 47107")]), defaultValue: "auto", advanced: true))

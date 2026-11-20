@@ -156,6 +156,8 @@ private struct ProviderForm: View {
     @State private var revealedFiles: Set<String> = []
     /// The field the file is for; kept apart from `picking`, which the picker resets before it reports.
     @State private var fileField: Field?
+    /// Asked before IVPN-style "sign out the other devices" goes ahead.
+    @State private var confirmingSlots = false
 
     private var busy: Bool { model.signing.contains(provider.id) }
     private var ready: Bool { (provider.fields + [model.challenges[provider.id]?.field].compactMap { $0 }).allSatisfy { !(values[$0.key] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty } }
@@ -180,6 +182,13 @@ private struct ProviderForm: View {
                     if let url = model.formErrorURL[id].flatMap(URL.init(string:)) {
                         SwiftUI.Link("Open the \(provider.name) Client Area", destination: url)
                     }
+                    // Every device slot is taken and the provider can free one by signing the others out: offered here,
+                    // and asked again before it happens.
+                    if model.slotsFull[id] != nil, !busy {
+                        Button("Sign out your other devices") { confirmingSlots = true }
+                        Text("\(provider.name) signs out every other device on this account, then this Mac signs in. You are asked first.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                 }
             }
             Section {
@@ -189,6 +198,9 @@ private struct ProviderForm: View {
         }
         .formStyle(.grouped).scrollContentBackground(.hidden).background(Ink.ground)
         .navigationTitle(provider.name)
+        .confirmationDialog("Sign out your other \(provider.name) devices?", isPresented: $confirmingSlots, titleVisibility: .visible) {
+            if let full = model.slotsFull[id] { Button("Sign Out the Others", role: .destructive) { submit(extra: full.retry) } }
+        } message: { Text(model.slotsFull[id]?.confirm ?? "") }
         .toolbar {
             // Escape leaves the whole sheet from here too, not only from the list behind.
             if !first { ToolbarItem(placement: .cancellationAction) { Button("Cancel", action: done) } }
@@ -222,7 +234,7 @@ private struct ProviderForm: View {
 
     @ViewBuilder private func field(_ f: Field) -> some View {
         let text = Binding(get: { values[f.key] ?? "" }, set: {
-            values[f.key] = $0; model.formError[provider.id] = nil
+            values[f.key] = $0; model.formError[provider.id] = nil; model.slotsFull[provider.id] = nil
             if let challenge = model.challenges[provider.id], f.key != challenge.field.key { model.closeProviderForm(provider.id); values[challenge.field.key] = nil }
         })
         let prompt = Text(f.hint.isEmpty ? f.label : f.hint)
@@ -261,7 +273,7 @@ private struct ProviderForm: View {
             }
         } else if f.qr {
             VStack(alignment: .leading) {
-                SecretField(f.label, text: text, prompt: prompt).onSubmit(submit)
+                SecretField(f.label, text: text, prompt: prompt).onSubmit { submit() }
                 HStack {
                     Button("Choose a Picture…") {
                         let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false
@@ -287,9 +299,9 @@ private struct ProviderForm: View {
                 return true
             }
         } else if f.secret {
-            SecretField(f.label, text: text, prompt: prompt).onSubmit(submit)
+            SecretField(f.label, text: text, prompt: prompt).onSubmit { submit() }
         } else {
-            TextField(f.label, text: text, prompt: prompt).onSubmit(submit)
+            TextField(f.label, text: text, prompt: prompt).onSubmit { submit() }
         }
     }
 
@@ -301,15 +313,16 @@ private struct ProviderForm: View {
         values[key] = value
         pastedQR = changeCount.map { (key, value, $0) }
         model.formError[provider.id] = nil
+        model.slotsFull[provider.id] = nil
     }
 
-    private func submit() {
+    private func submit(extra: [String: String] = [:]) {
         guard ready, !busy else { return }
         let input = values
         if let key = model.challenges[provider.id]?.field.key { values[key] = nil }
         let formVersion = model.providerFormVersion(provider.id)
         let count = pastedQR.flatMap { input[$0.key] == $0.value ? $0.changeCount : nil }
-        Task { await model.signIn(provider, input, formVersion: formVersion, clipboardImageChangeCount: count) }
+        Task { await model.signIn(provider, input, formVersion: formVersion, clipboardImageChangeCount: count, extra: extra) }
     }
 }
 

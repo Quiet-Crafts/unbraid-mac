@@ -15,6 +15,8 @@ private struct Fake: Provider {
     var failIfCalled = false
     var cancelBeforeReturning = false
     var missingPin = false
+    /// What the provider says about taking a disguised tunnel; nil = nothing.
+    var disguise: Disguise? = nil
     var id = "fake"
     let name = "Fake"
     let fields: [Field] = []
@@ -26,7 +28,12 @@ private struct Fake: Provider {
         guard online else { throw Down() }
         if missingPin, let pin = loc.pinned { throw Catalog.Gone(provider: name, server: pin.name) }
         if cancelBeforeReturning { withUnsafeCurrentTask { $0?.cancel() } }
-        return link(loc.pinned ?? best[0])
+        return marked(link(loc.pinned ?? best[0]))
+    }
+    private func marked(_ l: Link) -> Link {
+        guard let disguise, case .wg(let s, var p, let ports, let entries) = l else { return l }
+        p.disguise = disguise
+        return .wg(s, p, ports: ports, entries: entries)
     }
     func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] {
         if failIfCalled { XCTFail("Offline picking called servers"); throw Down() }
@@ -290,6 +297,62 @@ final class LinkPickerTests: XCTestCase {
         var pinnedAfter = pinned
         pinnedAfter.opts = after.opts
         XCTAssertFalse(LinkPicker.needsInterim(from: pinned, to: pinnedAfter))
+    }
+
+    /// IVPN's Disguise: on, a route never runs plain. A server with V2Ray data gets the hop and its WireGuard port; one without
+    /// is held back with the reason; turning it on stops a running plain tunnel at once.
+    func testDisguiseNeverRunsAPlainTunnel() async throws {
+        let a = self.a
+        let r = Route(id: "1", loc: Location(provider: "ivpn", countryCode: "NL"))
+        let off = self.setup(r)
+        var on = off
+        on.opts = ["ivpn": ["disguise": "on"]]
+        let vmess = Vmess(server: "149.22.83.102", port: 80, uuid: "27de860d-5601-412d-8b71-baa048a94b98")
+        let data = Disguise(vmess: vmess, wgPort: 15351)
+        // Turned on: the interim pick runs; turned off, or already on, it doesn't.
+        XCTAssertTrue(LinkPicker.needsInterim(from: off, to: on))
+        XCTAssertFalse(LinkPicker.needsInterim(from: on, to: on))
+        XCTAssertFalse(LinkPicker.needsInterim(from: on, to: off))
+        var pinned = off
+        pinned.routes[0].loc.pinned = a
+        var pinnedOn = pinned
+        pinnedOn.opts = on.opts
+        XCTAssertTrue(LinkPicker.needsInterim(from: pinned, to: pinnedOn), "a pinned server's tunnel is plain too")
+        var imported = off
+        imported.routes = [Route(id: "1", wg: WgPeer(name: "mine", privateKey: "p", address: [], publicKey: "k", endpoint: "1.2.3.4:51820", allowedIps: []))]
+        var importedOn = imported
+        importedOn.opts = on.opts
+        XCTAssertFalse(LinkPicker.needsInterim(from: imported, to: importedOn))
+        func run(_ s: Setup, keep: [String: Link] = [:], offline: Bool = false, _ p: Fake) async throws -> LinkPicker.Result {
+            try await LinkPicker.pick(s, keep: keep, applied: off, appliedAccounts: ["ivpn": "acc"], accounts: ["ivpn": "acc"],
+                                      last: [LinkPicker.cacheKey(r, account: "acc"): link(a)], offline: offline) { _ in p }
+        }
+        // A server without V2Ray data: blocked, never connected plain.
+        let none = try await run(on, Fake(best: [a], id: "ivpn"))
+        XCTAssertTrue(none.links.isEmpty)
+        XCTAssertEqual(none.blocked["1"], .unreachable("a can't be reached through V2Ray right now. Pick another server, or turn Disguise off on the Fake page"))
+        let plainOk = try await run(off, Fake(best: [a], id: "ivpn"))
+        XCTAssertEqual(plainOk.links.count, 1)
+        // With data: the hop, the server's own WireGuard port behind it, the small packet size.
+        let ok = try await run(on, Fake(best: [a], disguise: data, id: "ivpn"))
+        guard case .wg(_, let peer, _, _)? = ok.links["1"] else { return XCTFail("no tunnel") }
+        XCTAssertEqual(peer.vmess, vmess)
+        XCTAssertEqual(peer.endpoint, "\(a.ip):15351")
+        XCTAssertEqual(peer.mtu, 1280)
+        XCTAssertNil(ok.blocked["1"])
+        // Off again: the same tunnel is plain, on its usual port.
+        guard case .wg(_, let back, _, _)? = LinkPicker.ported(off, ok.links, step: [:])["1"] else { return XCTFail("no tunnel") }
+        XCTAssertNil(back.vmess)
+        XCTAssertEqual(back.endpoint, "\(a.ip):\(Ivpn.port)")
+        // The interim pick (offline): a kept tunnel without data stops, one with it is re-made as the hop.
+        let plain = try await run(on, keep: ["1": link(a)], offline: true, Fake(best: [], failIfCalled: true, id: "ivpn"))
+        XCTAssertTrue(plain.links.isEmpty)
+        XCTAssertEqual(plain.blocked["1"], .waiting)
+        guard case .wg(let s0, var p0, let ports, let entries) = link(a) else { return XCTFail() }
+        p0.disguise = data
+        let kept = try await run(on, keep: ["1": .wg(s0, p0, ports: ports, entries: entries)], offline: true, Fake(best: [], failIfCalled: true, id: "ivpn"))
+        guard case .wg(_, let again, _, _)? = kept.links["1"] else { return XCTFail("a kept disguised tunnel stands") }
+        XCTAssertEqual(again.vmess, vmess)
     }
 
     func testOfflineImportsStillApplyPortsAndBlockClashes() async throws {

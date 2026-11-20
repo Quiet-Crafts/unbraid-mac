@@ -448,7 +448,14 @@ nonisolated enum Compiler {
         for r in p.active {
             guard p.shared[r.id] == "r-\(r.id)", let link = p.i.links[r.id] else { continue }
             switch link {
-            case .wg(_, let peer, _, _): endpoints.append(try wg(p.tag(r.id), peer, r.name, maxMtu: r.imported ? 1280 : 1420))
+            case .wg(_, let peer, _, _):
+                // With Disguise on, never a plain tunnel: the picker holds such a route back, and this is the last stop.
+                if !r.imported, s.opt(r.loc.provider, "disguise") == "on", peer.vmess == nil {
+                    throw Fail("Disguise is on, but \(r.name) has no V2Ray hop")
+                }
+                endpoints.append(try wg(p.tag(r.id), peer, r.name, maxMtu: r.imported ? 1280 : 1420))
+                // The V2Ray hop is only ever the WireGuard endpoint's `detour`: no routing rule names it.
+                if let v = peer.vmess { outbounds.append(try vmess(p.tag(r.id), v, r.name)) }
             case .ovpn(_, let o):
                 let e = try Manual.ovpnEndpoint(p.tag(r.id), o)
                 endpoints.append(p.active.contains { p.tag($0.id) == p.tag(r.id) && (p.pushedDns($0) || (s.prefs.effectiveFilter.coversRoutes && s.prefs.effectiveFilter.server?.byName == true && ($0.imported || $0.loc.provider != "nord"))) } ? openVpn(e) : e)
@@ -754,7 +761,20 @@ nonisolated enum Compiler {
         var endpoint: J = ["type": "wireguard", "tag": .s(tag), "mtu": .i(min(p.mtu, maxMtu)), "address": J.strings(p.address),
                            "private_key": .s(p.privateKey), "peers": [peer]]
         if p.junk > 0 { endpoint["junk"] = .i(min(p.junk, 16)) }
+        if p.vmess != nil { endpoint["detour"] = .s(vmessTag(tag)) }
         return endpoint
+    }
+
+    static func vmessTag(_ tunnel: String) -> String { "v2-\(tunnel)" }
+
+    /// The V2Ray hop of a disguised tunnel: VMess over plain TCP with an HTTP request header, as IVPN's own apps send it.
+    private static func vmess(_ tunnel: String, _ v: Vmess, _ name: String) throws -> J {
+        guard v.valid else { throw Fail("Invalid V2Ray server for \(name)") }
+        return ["type": "vmess", "tag": .s(vmessTag(tunnel)), "server": .s(v.server), "server_port": .i(v.port), "uuid": .s(v.uuid),
+                "security": "none", "alter_id": 0,
+                "transport": ["type": "http", "method": "GET", "path": "/", "host": J.strings(["www.inet-telecom.com"]),
+                              "headers": ["Accept-Encoding": "gzip, deflate", "Connection": "keep-alive", "Pragma": "no-cache",
+                                          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/53.0.2785.143 Safari/537.36"]]]
     }
 
     private static let openVpnRouting = ["route ", "route-ipv6 ", "route-metric", "redirect-gateway", "redirect-private", "block-ipv6", "block-outside-dns"]
@@ -831,7 +851,8 @@ nonisolated enum Compiler {
     private static func wgKey(_ p: WgPeer, maxMtu: Int = 1280) -> String {
         let port = p.endpoint.lastIndex(of: ":").map { String(p.endpoint[p.endpoint.index(after: $0)...]) } ?? ""
         return ["wg", wgHost(p), port, p.publicKey, sha(p.privateKey), sha(p.presharedKey ?? ""),
-                p.address.joined(separator: ","), String(min(p.mtu, maxMtu)), String(p.keepalive ?? 25), String(min(max(p.junk, 0), 16))].joined(separator: "|")
+                p.address.joined(separator: ","), String(min(p.mtu, maxMtu)), String(p.keepalive ?? 25), String(min(max(p.junk, 0), 16)),
+                p.vmess.map { "\($0.server):\($0.port):\($0.uuid.lowercased())" } ?? ""].joined(separator: "|")
     }
 
     static func clashes(_ s: Setup, _ links: [String: Link]) -> Set<String> {

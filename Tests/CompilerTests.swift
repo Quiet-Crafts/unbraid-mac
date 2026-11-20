@@ -1637,6 +1637,82 @@ final class CompilerTests: XCTestCase {
         XCTAssertNil(json["junk"])
     }
 
+    /// IVPN's Disguise: a setup with one IVPN route among the example's, its tunnel carrying the V2Ray data its server gave.
+    private func disguising(_ on: Bool = true, data: Bool = true) -> (setup: Setup, links: [String: Link]) {
+        var s = example
+        s.routes.append(Route(id: "iv", loc: Location(provider: "ivpn", countryId: 0, countryCode: "NL", country: "Netherlands"), hue: 3))
+        s.apps["com.v"] = "iv"
+        if on { s.opts["ivpn"] = ["disguise": "on"] }
+        var all = links(s)
+        var peer = Nord.peer(sv("iv"), key)
+        peer.presharedKey = key
+        if data { peer.disguise = Disguise(vmess: Vmess(server: "149.22.83.102", port: 80, uuid: "27de860d-5601-412d-8b71-baa048a94b98"), wgPort: 15351) }
+        all["iv"] = .wg(sv("iv"), peer)
+        return (s, all)
+    }
+
+    /// A disguised tunnel goes through its own V2Ray hop as IVPN's apps send it; the engine and the extension accept it.
+    func testDisguisedTunnelGoesThroughV2Ray() throws {
+        let (s, all) = disguising()
+        let picked = LinkPicker.ported(s, all, step: [:])
+        let c = try compile(s, links: picked)
+        let iv = try XCTUnwrap(endpoints(c).first { $0["tag"] as? String == "r-iv" })
+        XCTAssertEqual(iv["detour"] as? String, "v2-r-iv")
+        XCTAssertEqual(iv["mtu"] as? Int, 1280)
+        let peer = try XCTUnwrap((iv["peers"] as? [O])?.first)
+        XCTAssertEqual(peer["address"] as? String, sv("iv").ip)
+        XCTAssertEqual(peer["port"] as? Int, 15351)
+        XCTAssertEqual(peer["pre_shared_key"] as? String, key, "the quantum-safe key stays on the WireGuard peer inside the hop")
+        // Only that one endpoint has a hop.
+        XCTAssertEqual(endpoints(c).filter { $0["detour"] != nil }.count, 1)
+        let hops = ((c["outbounds"] as? [O]) ?? []).filter { $0["type"] as? String == "vmess" }
+        let hop = try XCTUnwrap(hops.first)
+        XCTAssertEqual(hops.count, 1)
+        XCTAssertEqual(hop["tag"] as? String, "v2-r-iv")
+        XCTAssertEqual(hop["server"] as? String, "149.22.83.102")
+        XCTAssertEqual(hop["server_port"] as? Int, 80)
+        XCTAssertEqual(hop["uuid"] as? String, "27de860d-5601-412d-8b71-baa048a94b98")
+        XCTAssertEqual(hop["security"] as? String, "none")
+        XCTAssertEqual(hop["alter_id"] as? Int, 0)
+        let transport = try XCTUnwrap(hop["transport"] as? O)
+        XCTAssertEqual(transport["type"] as? String, "http")
+        XCTAssertEqual(transport["method"] as? String, "GET")
+        XCTAssertEqual(transport["path"] as? String, "/")
+        XCTAssertEqual(transport["host"] as? [String], ["www.inet-telecom.com"])
+        // The hop only ever carries the tunnel: no rule, final route or resolver names it.
+        XCTAssertFalse(rules(c).contains { outbound($0) == "v2-r-iv" })
+        XCTAssertNotEqual(final(c), "v2-r-iv")
+        XCTAssertFalse(dnsServers(c).contains { $0["detour"] as? String == "v2-r-iv" })
+        // Without Disguise the same tunnel is plain: no hop, no detour, its own port.
+        let (plain, plainLinks) = disguising(false)
+        let p = try compile(plain, links: LinkPicker.ported(plain, plainLinks, step: [:]))
+        XCTAssertFalse(endpoints(p).contains { $0["detour"] != nil })
+        XCTAssertFalse(((p["outbounds"] as? [O]) ?? []).contains { $0["type"] as? String == "vmess" })
+        // A hop is part of the tunnel's identity: two routes on one server and key differing in it don't share.
+        var other = try XCTUnwrap(picked["iv"])
+        if case .wg(let server, var peer, let ports, let entries) = other { peer.vmess?.port = 81; other = .wg(server, peer, ports: ports, entries: entries) }
+        let route = try XCTUnwrap(s.route("iv"))
+        XCTAssertNotEqual(Compiler.linkKey(route, picked["iv"]!), Compiler.linkKey(route, other))
+        // A bad id, port or a local address never reaches the engine (the compiler picks the hop from the server's data again).
+        for bad in [Vmess(server: "149.22.83.102", port: 80, uuid: "x"), Vmess(server: "10.0.0.1", port: 80, uuid: "27de860d-5601-412d-8b71-baa048a94b98"),
+                    Vmess(server: "149.22.83.102", port: 0, uuid: "27de860d-5601-412d-8b71-baa048a94b98")] {
+            var links = picked
+            if case .wg(let server, var peer, let ports, let entries) = links["iv"]! { peer.disguise = Disguise(vmess: bad, wgPort: 15351); links["iv"] = .wg(server, peer, ports: ports, entries: entries) }
+            XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: s, links: links, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+        }
+    }
+
+    /// With Disguise on, a provider tunnel without its hop is never compiled (the picker holds such a route back first).
+    func testDisguiseOnNeverCompilesAPlainProviderTunnel() throws {
+        let (s, all) = disguising(true, data: false)
+        XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: s, links: all, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+        // Held back as blocked (by the picker), the route has no tunnel and the rest compiles.
+        let config = try Compiler.compile(Compiler.Input(setup: s, links: all.filter { $0.key != "iv" }, blocked: ["iv"], apps: patterns(s),
+                                                          selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil))
+        XCTAssertNoThrow(try ConfigVet.check(config))
+        XCTAssertFalse(config.contains("vmess"))
+    }
+
     func testWireGuardNumericHostIdentity() throws {
         let peer = try WgConf.parse(Self.fritz, name: "a")
         func pair(_ first: String, _ second: String) -> (Setup, [String: Link], WgPeer, WgPeer) {
@@ -2834,6 +2910,8 @@ extension CompilerTests {
         try add("probe", example, probe: (port: 40123, password: "p"))
         var junk = example; junk.opts["nord"] = ["junk": "on"]
         try add("wireguard-junk", junk, links: LinkPicker.ported(junk, links(junk), step: [:]))
+        let disguised = disguising()
+        try add("ivpn-disguise", disguised.setup, links: LinkPicker.ported(disguised.setup, disguised.links, step: [:]))
         try add("empty", Setup(routes: [], defaultRoute: DIRECT), links: [:])
         var internet = example; internet.apps["com.blocked"] = BLOCK; internet.prefs.killLevel = .internet
         try add("kill-internet-blocked", internet)

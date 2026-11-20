@@ -54,6 +54,81 @@ final class ConfigVetTests: XCTestCase {
         for bad in [-1, 17, 1000] as [Any] + ["5", true, 2.5] { XCTAssertFalse(try with(bad), "\(bad)") }
     }
 
+    /// IVPN's V2Ray hop: accepted as a WireGuard endpoint's detour in the shape the compiler writes, and as nothing else.
+    func testV2RayHopIsOnlyAWireGuardDetour() throws {
+        let text = Fixture.text("golden/ivpn-disguise.json")
+        XCTAssertNoThrow(try ConfigVet.check(text))
+        func vet(_ change: (inout [String: Any]) -> Void) throws -> Bool {
+            var c = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+            change(&c)
+            return (try? ConfigVet.check(String(decoding: try JSONSerialization.data(withJSONObject: c), as: UTF8.self))) != nil
+        }
+        func hop(_ c: inout [String: Any], _ f: (inout [String: Any]) -> Void) {
+            var o = c["outbounds"] as? [[String: Any]] ?? []
+            for i in o.indices where o[i]["type"] as? String == "vmess" { f(&o[i]) }
+            c["outbounds"] = o
+        }
+        func rules(_ c: inout [String: Any], _ f: (inout [[String: Any]]) -> Void) {
+            var route = c["route"] as? [String: Any] ?? [:]
+            var r = route["rules"] as? [[String: Any]] ?? []
+            f(&r)
+            route["rules"] = r
+            c["route"] = route
+        }
+        XCTAssertTrue(try vet { _ in })
+        // Never an exit: not a rule's outbound, not the final route, not a resolver's detour.
+        XCTAssertFalse(try vet { c in rules(&c) { $0.append(["outbound": "v2-r-iv", "ip_cidr": ["1.2.3.4/32"]]) } })
+        XCTAssertFalse(try vet { c in rules(&c) { r in for i in r.indices where r[i]["outbound"] as? String == "r-iv" { r[i]["outbound"] = "v2-r-iv" } } })
+        XCTAssertFalse(try vet { c in var route = c["route"] as? [String: Any] ?? [:]; route["final"] = "v2-r-iv"; c["route"] = route })
+        XCTAssertFalse(try vet { c in
+            var dns = c["dns"] as? [String: Any] ?? [:]
+            var servers = dns["servers"] as? [[String: Any]] ?? []
+            for i in servers.indices where servers[i]["detour"] != nil { servers[i]["detour"] = "v2-r-iv" }
+            dns["servers"] = servers; c["dns"] = dns
+        })
+        // Every hop is one endpoint's detour, and a detour is a hop.
+        XCTAssertFalse(try vet { c in
+            var e = c["endpoints"] as? [[String: Any]] ?? []
+            for i in e.indices { e[i]["detour"] = nil }
+            c["endpoints"] = e
+        })
+        XCTAssertFalse(try vet { c in
+            var e = c["endpoints"] as? [[String: Any]] ?? []
+            for i in e.indices where e[i]["type"] as? String == "wireguard" && e[i]["detour"] == nil { e[i]["detour"] = "direct"; break }
+            c["endpoints"] = e
+        })
+        // A hop's server is on the internet, never this Mac or a local network.
+        for local in ["127.0.0.1", "192.168.1.1", "10.0.0.1", "100.64.0.1", "198.18.0.5", "0.0.0.0"] {
+            XCTAssertFalse(try vet { c in hop(&c) { $0["server"] = local } }, local)
+        }
+        // Behind a hop, a peer is a plain address, never a name looked up on the network's own resolver.
+        XCTAssertFalse(try vet { c in
+            var e = c["endpoints"] as? [[String: Any]] ?? []
+            for i in e.indices where e[i]["detour"] != nil {
+                var peers = e[i]["peers"] as? [[String: Any]] ?? []
+                for j in peers.indices { peers[j]["address"] = "nl1.wg.ivpn.net" }
+                e[i]["peers"] = peers
+            }
+            c["endpoints"] = e
+        })
+        // A hop is as the compiler writes it.
+        XCTAssertFalse(try vet { c in hop(&c) { $0["server"] = "relay.example" } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["server"] = "127.0.0.1" ; $0["server_port"] = 0 } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["uuid"] = "not-an-id" } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["security"] = "aes-128-gcm" } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["tls"] = ["enabled": true] } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["detour"] = "direct" } })
+        XCTAssertFalse(try vet { c in hop(&c) { $0["transport"] = ["type": "ws", "path": "/"] } })
+        XCTAssertFalse(try vet { c in hop(&c) { var t = $0["transport"] as? [String: Any] ?? [:]; t["path"] = "/etc/passwd"; $0["transport"] = t } })
+        XCTAssertFalse(try vet { c in hop(&c) { var t = $0["transport"] as? [String: Any] ?? [:]; t["headers"] = ["X-Other": "1"]; $0["transport"] = t } })
+        // And the path allowance is for that hop only: an HTTP transport's "/" is no way to name a file elsewhere.
+        XCTAssertFalse(try vet { c in
+            var o = c["outbounds"] as? [[String: Any]] ?? []
+            o.append(["type": "direct", "tag": "d2", "path": "/"])
+            c["outbounds"] = o
+        })
+    }
+
     func testProtectionServerShapesAndReferences() throws {
         var config = try example()
         var dns = try XCTUnwrap(config["dns"] as? [String: Any])

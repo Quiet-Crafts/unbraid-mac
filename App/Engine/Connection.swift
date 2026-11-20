@@ -2671,7 +2671,8 @@ final class Connection {
             for id in routeIds {
                 guard let route = setup.route(id), !route.imported, let link = links[id] else { continue }
                 let p = route.loc.provider
-                if case .wg(_, _, let ports, _) = link, ports.count > 1, Int(setup.opt(p, "port") ?? "") == nil { stepped.insert(p) }
+                if case .wg(_, _, let ports, _) = link, ports.count > 1, Int(setup.opt(p, "port") ?? "") == nil,
+                   setup.opt(p, "disguise") != "on" { stepped.insert(p) }  // disguised: one fixed port, nothing to step
                 if route.movable { moved[id] = LinkPicker.serverKey(route, link) }
             }
             for p in stepped { portStep[p, default: 0] += 1 }

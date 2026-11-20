@@ -186,9 +186,17 @@ final class IvpnTests: XCTestCase {
         XCTAssertEqual(account.ipAddress, "172.16.1.2")
         XCTAssertNotNil(account.createdAt)
         let limit = thrown { try session((400, D(#"{"status":602,"message":"You've reached the maximum number of connected devices","data":{"limit":5}}"#)), "a", "p") }
-        XCTAssertTrue(limit is AuthError)
-        XCTAssertEqual(limit?.localizedDescription, "All 5 IVPN devices are in use. Sign out another device, then try again.")
-        XCTAssertEqual((limit as? AuthError)?.url, "https://www.ivpn.net/clientarea/")
+        // Every slot taken: the sign-in offers to sign the others out, for this very account.
+        let full = try XCTUnwrap(limit as? SlotsFull)
+        XCTAssertEqual(full.localizedDescription, "All 5 IVPN devices are in use.")
+        XCTAssertEqual(full.url, "https://www.ivpn.net/clientarea/")
+        XCTAssertEqual(full.account, "a")
+        XCTAssertEqual(full.retry, ["force": "a"])
+        XCTAssertTrue(full.confirm.contains("signs out every other device on this account"))
+        // Already forced and still full: nothing more to offer.
+        let forced = thrown { try Ivpn.session((400, D(#"{"status":602,"data":{"limit":5}}"#)), "a", "p", kemPrivate: "kem-private", kyber: IvpnFake(), force: true) }
+        XCTAssertEqual(forced?.localizedDescription, "All 5 IVPN devices are in use. Sign out another device, then try again.")
+        XCTAssertTrue(forced is AuthError)
         for body in [#"{"status":401,"message":"The provided Account ID is not valid"}"#, #"{"status":702,"message":"inactive"}"#, #"{"status":70001}"#] {
             XCTAssertTrue(thrown { try session((400, D(body)), "a", "p") } is AuthError)
         }
@@ -264,7 +272,7 @@ final class IvpnTests: XCTestCase {
         let body = #"{"config":{"ports":{"wireguard":[{"type":"UDP","port":2049},{"type":"UDP","port":443},{"type":"TCP","port":80}]},"antitracker_plus":{"DnsServers":[{"Description":"Example","Normal":"10.0.0.1","Hardcore":"10.0.0.2"}]}}}"#
         let l = try Ivpn.parse(D(body))
         XCTAssertEqual(l.ports, [443, 2049])
-        XCTAssertEqual(Ivpn.options(l).map(\.key), ["list", "hardcore", "port"])
+        XCTAssertEqual(Ivpn.options(l).map(\.key), ["list", "hardcore", "disguise", "port"])
         let p = Ivpn()
         XCTAssertFalse(try XCTUnwrap(p.option("port")).accepts("9999"))
         XCTAssertTrue(try XCTUnwrap(Ivpn.options(l).first { $0.key == "port" }).accepts("443"))
@@ -292,6 +300,100 @@ final class IvpnTests: XCTestCase {
         let offline = try await p.revoked(blob)
         XCTAssertFalse(offline)
     }
+    // MARK: Sign out the other devices
+
+    /// `force` only for the very account the user agreed for: an ID changed since never inherits it.
+    func testForceIsSentOnlyForTheAgreedAccount() throws {
+        func body(_ account: String, _ input: [String: String]) -> [String: Any] {
+            Ivpn.sessionBody(account, publicKey: "pk", kemPublic: "kp", input: input)
+        }
+        XCTAssertEqual(body("i-AAAA", [:])["force"] as? Bool, false)
+        XCTAssertEqual(body("i-AAAA", ["force": "i-AAAA"])["force"] as? Bool, true)
+        XCTAssertEqual(body("i-BBBB", ["force": "i-AAAA"])["force"] as? Bool, false)
+        XCTAssertEqual(body("i-AAAA", ["force": ""])["force"] as? Bool, false)
+        XCTAssertEqual(body("i-AAAA", ["force": "i-aaaa"])["force"] as? Bool, false)
+        // The rest of the request is as before, the quantum-safe key included, and two-factor answers go along.
+        let b = body("i-AAAA", ["confirmation": " 123 456 ", "captcha": "", "captcha_id": "id1"])
+        XCTAssertEqual(b["username"] as? String, "i-AAAA")
+        XCTAssertEqual(b["kem_public_key1"] as? String, "kp")
+        XCTAssertEqual(b["kem_library_version"] as? String, "0.10.0")
+        XCTAssertEqual(b["confirmation"] as? String, "123456")
+        XCTAssertNil(b["captcha"])
+        XCTAssertEqual(b["captcha_id"] as? String, "id1")
+        XCTAssertEqual(Ivpn.accountId(" i-ABCD-EFGH-IJKL\n"), "i-ABCD-EFGH-IJKL")
+        // A forced sign-in that IVPN then asks a question of stays forced when the question is answered.
+        let two = thrown { try Ivpn.session((400, D(#"{"status":70011}"#)), "i-AAAA", "p", kemPrivate: "kem-private", kyber: IvpnFake(), force: true) } as? Challenge
+        XCTAssertEqual(two?.state["force"], "i-AAAA")
+        let captcha = thrown { try Ivpn.session((400, D(#"{"status":70001,"captcha_id":"cid","captcha_image":"data:image/png;base64,YWJj"}"#)), "i-AAAA", "p", kemPrivate: "kem-private", kyber: IvpnFake(), force: true) } as? Challenge
+        XCTAssertEqual(captcha?.state, ["captcha_id": "cid", "force": "i-AAAA"])
+        let plain = thrown { try session((400, D(#"{"status":70011}"#)), "i-AAAA", "p") } as? Challenge
+        XCTAssertNil(plain?.state["force"])
+    }
+
+    /// The whole sign-in: refused with the offer first, then sent forced for the account agreed, and only then.
+    func testSignInOffersThenForces() async throws {
+        let sent = Mutex<[Bool]>([])
+        var provider = Ivpn()
+        provider.kyberOverride = IvpnFake()
+        provider.newSession = { json in
+            let force = ((try? JSONSerialization.jsonObject(with: Data(json.utf8))) as? [String: Any])?["force"] as? Bool == true
+            sent.withLock { $0.append(force) }
+            if force { return (200, D(#"{"status":200,"token":"tok","wireguard":{"ip_address":"172.16.1.2","kem_cipher1":"good"}}"#)) }
+            return (400, D(#"{"status":602,"data":{"limit":5}}"#))
+        }
+        let acct = "i-ABCD-EFGH-IJKL"
+        var offer: SlotsFull?
+        do { _ = try await provider.signIn(["account": acct]); XCTFail("expected the offer") } catch { offer = error as? SlotsFull }
+        let agreed = try XCTUnwrap(offer)
+        XCTAssertEqual(sent.withLock { $0.last }, false)
+        // Another ID typed after the offer isn't forced, whatever the agreement says.
+        do { _ = try await provider.signIn(["account": "i-WXYZ-WXYZ-WXYZ"].merging(agreed.retry) { $1 }); XCTFail("expected the offer again") } catch { XCTAssertTrue(error is SlotsFull) }
+        XCTAssertEqual(sent.withLock { $0.last }, false)
+        // The account agreed for goes through, forced.
+        let blob = try await provider.signIn(["account": acct].merging(agreed.retry) { $1 })
+        XCTAssertEqual(sent.withLock { $0.last }, true)
+        XCTAssertEqual(try Ivpn.account(blob).psk, IvpnFake.psk)
+    }
+
+    // MARK: Disguise
+
+    /// The list with IVPN's V2Ray section: the account-wide user id and the WireGuard port its servers forward to.
+    private func v2List(_ id: Any = "27de860d-5601-412d-8b71-baa048a94b98", port: Any = 15351) throws -> Ivpn.ServerList {
+        var body = try XCTUnwrap(JSONSerialization.jsonObject(with: Fixture.data("ivpn_servers.json")) as? [String: Any])
+        body["config"] = ["ports": ["wireguard": [["type": "UDP", "port": 2049]], "v2ray": ["id": id, "wireguard": [["type": "UDP", "port": port]]]]]
+        return try Ivpn.parse(JSONSerialization.data(withJSONObject: body))
+    }
+
+    func testDisguiseComesFromTheListsV2RaySection() throws {
+        let id = "27de860d-5601-412d-8b71-baa048a94b98"
+        let l = try v2List()
+        let loc = Location(provider: "ivpn", countryCode: "NL")
+        guard case .wg(let server, let peer, _, _) = try Ivpn.link(l, loc, acct) else { return XCTFail("not WireGuard") }
+        let host = try XCTUnwrap(l.wireguard.flatMap(\.hosts).first { $0.hostname == server.host })
+        XCTAssertNotNil(host.v2ray)
+        XCTAssertEqual(peer.disguise, Disguise(vmess: Vmess(server: try XCTUnwrap(host.v2ray), port: 80, uuid: id), wgPort: 15351))
+        XCTAssertNil(peer.vmess, "the hop is added only when Disguise is on")
+        XCTAssertEqual(peer.endpoint, "\(server.ip):2049")
+        // The option is always there, off by default; the quantum-safe key stays on the peer.
+        XCTAssertEqual(Providers.get("ivpn")?.option("disguise")?.defaultValue, "off")
+        XCTAssertTrue(Ivpn.options(l).contains { $0.key == "disguise" })
+        XCTAssertEqual(peer.presharedKey, IvpnFake.psk)
+        // A list without the section, a host without an address, a bad id or port: no disguise (the route then stays off).
+        XCTAssertNil(wg(try Ivpn.link(list, loc, acct)).peer.disguise)
+        XCTAssertNil(Ivpn.disguise(l, Ivpn.Host(hostname: "h", host: "1.2.3.4", publicKey: "k", localIp: "172.16.0.1/12", v2ray: nil)))
+        XCTAssertNil(Ivpn.disguise(l, Ivpn.Host(hostname: "h", host: "1.2.3.4", publicKey: "k", localIp: "172.16.0.1/12", v2ray: "10.0.0.1")))
+        XCTAssertNil(Ivpn.disguise(try v2List("not-an-id"), host))
+        XCTAssertNil(Ivpn.disguise(try v2List(port: 65536), host))
+        // A V2Ray section of another shape never spoils the list.
+        let odd = try v2List(42)
+        XCTAssertFalse(odd.wireguard.isEmpty)
+        XCTAssertNil(Ivpn.disguise(odd, host))
+        // A pinned server is read again from the list for its V2Ray address.
+        var pinned = loc
+        pinned.pinned = server
+        XCTAssertEqual(wg(try Ivpn.link(l, pinned, acct)).peer.disguise, peer.disguise)
+    }
+
     func testAutomaticPortsUseOnlyListedPorts() throws {
         var body = try XCTUnwrap(JSONSerialization.jsonObject(with: Fixture.data("ivpn_servers.json")) as? [String: Any])
         body["config"] = ["ports": ["wireguard": [["type": "UDP", "port": 443], ["type": "UDP", "port": 2049], ["type": "UDP", "port": 9999]]]]

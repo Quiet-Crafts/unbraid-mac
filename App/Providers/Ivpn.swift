@@ -95,7 +95,9 @@ nonisolated struct Ivpn: Provider {
         var load = 0.0
         /// The hosting company, shown in the server list.
         var isp: String? = nil
-        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load, isp }
+        /// The host's V2Ray address, for the disguise; nil when it has none.
+        var v2ray: String? = nil
+        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load, isp, v2ray }
     }
 
     struct Gateway: Decodable, Hashable {
@@ -108,7 +110,9 @@ nonisolated struct Ivpn: Provider {
     }
 
     struct Port: Decodable { var type: String?; var port: Int? }
-    struct Ports: Decodable { var wireguard: [Port]? }
+    /// IVPN's V2Ray: the account-wide VMess user id, and the WireGuard port its servers forward to.
+    struct V2ray: Decodable { var id: String?; var wireguard: [Port]? }
+    struct Ports: Decodable { var wireguard: [Port]?; var v2ray: V2ray? }
     struct Blocklist: Decodable { var Description: String?; var Normal: String?; var Hardcore: String? }
     struct AntiTracker: Decodable { var DnsServers: [Blocklist]? }
     struct Config: Decodable { var ports: Ports?; var antitracker_plus: AntiTracker? }
@@ -127,7 +131,7 @@ nonisolated struct Ivpn: Provider {
     }
 
     private static let api = "https://api.ivpn.net"
-    private static let port = 2049
+    static let port = 2049
     /// Besides its listed ports, IVPN's WireGuard servers answer on any UDP port in these ranges (IVPN's port guide).
     static let portRanges = [5500...19999, 30000...65000]
     private static let dns = "172.16.0.1"
@@ -143,7 +147,7 @@ nonisolated struct Ivpn: Provider {
     let keySetup = 90
     let deviceURL: String? = "https://www.ivpn.net/clientarea/"
     let protection: ProviderOption? = .init(key: "protect", label: "AntiTracker", kind: .toggle, defaultValue: "off", help: "Ads and trackers")
-    let defaults = ["protect": "off", "list": "10.0.254.2|10.0.254.3", "hardcore": "off", "port": "auto"]
+    let defaults = ["protect": "off", "list": "10.0.254.2|10.0.254.3", "hardcore": "off", "port": "auto", "disguise": "off"]
     var statusRequest: @Sendable (String) async throws -> (Int, Data) = { token in
         try await postJSONRaw("https://api.ivpn.net/v4/session/status", JSON.encode(["session_token": token]))
     }
@@ -182,6 +186,7 @@ nonisolated struct Ivpn: Provider {
         var out: [ProviderOption] = []
         if !choices.isEmpty { out.append(.init(key: "list", label: "Block list", kind: .choice(choices), defaultValue: "10.0.254.2|10.0.254.3", help: "What AntiTracker blocks, from IVPN's own lists")) }
         out.append(.init(key: "hardcore", label: "Hardcore mode", kind: .toggle, defaultValue: "off", advanced: true, help: "Also blocks Google and Facebook, and sites that need them"))
+        out.append(.disguise)
         out.append(.init(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic")] + list.ports.map { .init(value: String($0), label: "UDP \($0)") }), defaultValue: "auto", advanced: true, help: "Automatic tries 2049 first, then other ports when a network blocks it", custom: Self.portRanges))
         return out
     }
@@ -202,12 +207,10 @@ nonisolated struct Ivpn: Provider {
         let keys = WgKeys.generate()
         let kem: (public: String, private: String)
         do { kem = try kyber.keyPair() } catch { throw Fail("unbraid couldn't make a quantum-safe key. Try again") }
-        var body: [String: Any] = ["username": acct, "force": false, "wg_public_key": keys.publicKey,
-                                   "kem_public_key1": kem.public, "kem_library_version": Self.kemVersion]
-        for key in ["confirmation", "captcha", "captcha_id"] { if let v = input[key], !v.isEmpty { body[key] = v.filter { !$0.isWhitespace } } }
+        let body = Self.sessionBody(acct, publicKey: keys.publicKey, kemPublic: kem.public, input: input)
         let data = try JSONSerialization.data(withJSONObject: body)
         let reply = try await newSession(String(decoding: data, as: UTF8.self))
-        do { return try Self.session(reply, acct, keys.privateKey, kemPrivate: kem.private, kyber: kyber) }
+        do { return try Self.session(reply, acct, keys.privateKey, kemPrivate: kem.private, kyber: kyber, force: Self.forced(acct, input)) }
         catch {
             guard let token = Self.sessionToken(reply) else { throw error }
             // The session IVPN just opened is of no use: freed, or the user is told it still holds one of the account's devices.
@@ -215,6 +218,24 @@ nonisolated struct Ivpn: Provider {
             let said = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
             throw Fail("\(said). IVPN's new session couldn't be released either: remove it in the IVPN client area")
         }
+    }
+
+    /// The account ID as the sign-in sends it: without spaces. The agreement to sign out the other devices names it.
+    static func accountId(_ typed: String) -> String { typed.filter { !$0.isWhitespace } }
+
+    /// Forced only for the very account the user agreed for: the agreement carries its ID, so an ID changed since never
+    /// inherits it.
+    static func forced(_ account: String, _ input: [String: String]) -> Bool {
+        input["force"].map { !$0.isEmpty && $0 == account } == true
+    }
+
+    /// The sign-in request. `force` only after the user agreed: IVPN then signs out every other device on the account.
+    static func sessionBody(_ account: String, publicKey: String, kemPublic: String, input: [String: String]) -> [String: Any] {
+        var body: [String: Any] = ["username": account, "force": forced(account, input), "wg_public_key": publicKey,
+                                   "kem_public_key1": kemPublic, "kem_library_version": kemVersion]
+        // The answers to an earlier reply's two-factor or captcha question.
+        for key in ["confirmation", "captcha", "captcha_id"] { if let v = input[key], !v.isEmpty { body[key] = v.filter { !$0.isWhitespace } } }
+        return body
     }
 
     @concurrent func signOut(_ account: String) async -> Bool {
@@ -243,10 +264,16 @@ nonisolated struct Ivpn: Provider {
         return psk
     }
 
+    private static let clientArea = "https://www.ivpn.net/clientarea/"
+    /// Said before IVPN is asked to sign the other devices out.
+    static let slotsConfirm = "IVPN signs out every other device on this account, including the IVPN app on your phone or other computers. They stay off until someone signs in on them again. Then this Mac signs in and takes a free slot."
+
     static let noQuantumKey = "IVPN didn't send a quantum-safe key, so unbraid didn't finish signing in. Try again later"
 
-    static func session(_ reply: (Int, Data), _ account: String, _ privateKey: String, kemPrivate: String, kyber: any Kyber) throws -> String {
+    static func session(_ reply: (Int, Data), _ account: String, _ privateKey: String, kemPrivate: String, kyber: any Kyber, force: Bool = false) throws -> String {
         let (code, body) = reply
+        // A forced sign-in that IVPN still asks a question (two-factor, captcha) stays forced when it is answered.
+        let kept = force ? ["force": account] : [:]
         if code == 429 { throw Http.Status(code: code) }
         // An outage answers with a page, not IVPN's JSON: its status says more than "unexpected reply".
         guard let o = try? JSON.decode(SessionReply.self, body, "IVPN") else {
@@ -259,15 +286,20 @@ nonisolated struct Ivpn: Provider {
         case 200 where !(200..<300).contains(code): throw Http.Status(code: code)
         case 200: break
         case 401: throw AuthError("IVPN doesn't recognise that account ID")
-        case 602: throw AuthError(Limits.full("IVPN", o.data?.deviceLimit, "device"), url: "https://www.ivpn.net/clientarea/")
+        case 602:
+            // Already forced and still full: nothing more to offer.
+            if force { throw AuthError(Limits.full("IVPN", o.data?.deviceLimit, "device"), url: clientArea) }
+            let count = o.data?.deviceLimit.map { "\($0) " } ?? ""
+            throw SlotsFull(errorDescription: "All \(count)IVPN devices are in use.", url: clientArea, account: account, confirm: slotsConfirm,
+                            retry: ["force": account])
         case 702: throw AuthError("This IVPN account isn't active. Renew it first.")
         case 70001, 70002:
             guard let id = o.captcha_id, id.wholeMatch(of: /[A-Za-z0-9_-]{1,128}/) != nil else { throw AuthError("IVPN is asking for a captcha. Log in once on ivpn.net or in the IVPN app, then try again.") }
             let encoded = o.captcha_image ?? ""
             let image = Data(base64Encoded: encoded.components(separatedBy: "base64,").last ?? "", options: .ignoreUnknownCharacters)
-            throw Challenge(message: o.status == 70002 ? "That didn't match. Try this picture." : "Type the characters in the picture.", field: Field(key: "captcha", label: "Characters in the picture", secret: false), image: image, state: ["captcha_id": id])
+            throw Challenge(message: o.status == 70002 ? "That didn't match. Try this picture." : "Type the characters in the picture.", field: Field(key: "captcha", label: "Characters in the picture", secret: false), image: image, state: ["captcha_id": id].merging(kept) { $1 })
         case 70011, 70012:
-            throw Challenge(message: o.status == 70012 ? "That code didn't work. Enter the current one." : "Enter the code from your authenticator app.", field: Field(key: "confirmation", label: "Two-factor code", secret: false, hint: "6 digits"))
+            throw Challenge(message: o.status == 70012 ? "That code didn't work. Enter the current one." : "Enter the code from your authenticator app.", field: Field(key: "confirmation", label: "Two-factor code", secret: false, hint: "6 digits"), state: kept)
         case let status: throw Fail("IVPN error \(status)")
         }
         guard let ip = o.wireguard?.ipAddress, !ip.isEmpty, !ip.prefix(while: { $0 != "/" }).isEmpty else { throw Fail("IVPN didn't assign a WireGuard address") }
@@ -363,6 +395,16 @@ nonisolated struct Ivpn: Provider {
             .compactMap { $0.hosts?.wireguard?.hostname?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty } ?? [])
     }
 
+    /// How `h` takes a disguised tunnel: its V2Ray address on TCP 80 with the list's user id, to the list's WireGuard port.
+    /// Nil when the list or the host doesn't say all of that (then a disguised route stays off, never plain).
+    static func disguise(_ l: ServerList?, _ h: Host) -> Disguise? {
+        guard let v = l?.config?.ports?.v2ray,
+              let port = v.wireguard?.lazy.compactMap({ $0.port }).first(where: { (1...65535).contains($0) }),
+              let server = h.v2ray?.trimmingCharacters(in: .whitespaces), let id = v.id?.trimmingCharacters(in: .whitespaces) else { return nil }
+        let vmess = Vmess(server: server, port: 80, uuid: id)
+        return vmess.valid ? Disguise(vmess: vmess, wgPort: port) : nil
+    }
+
     static func parse(_ body: Data) throws -> ServerList { try JSON.decode(ServerList.self, body, "IVPN") }
 
     static func countries(_ l: ServerList) -> [Country] {
@@ -377,9 +419,10 @@ nonisolated struct Ivpn: Provider {
     static func link(_ l: ServerList?, _ loc: Location, _ a: Account) throws -> Link {
         // No quantum-safe key (signed in before it existed): the route stays off, never a plain tunnel.
         guard let psk = a.psk else { throw KeyNotReady("Sign in to IVPN again to get its quantum-safe key: until then this route stays off.") }
-        var sv: Server, dns: String
+        var sv: Server, dns: String, disguise: Disguise?
         if let pinned = loc.pinned {
             (sv, dns) = (pinned, Self.dns)
+            disguise = nil
             // Found by host name anywhere in the list (its place may have changed). Not by address: another host may
             // have that one now. An empty list proves nothing.
             if let l, !l.wireguard.isEmpty {
@@ -388,15 +431,17 @@ nonisolated struct Ivpn: Provider {
                 // Still listed, with a key or resolver that isn't one: worth trying again later, not gone.
                 guard h.valid else { throw Fail("\(pinned.name) can't be reached right now") }
                 (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
+                disguise = Self.disguise(l, h)
                 sv.name = pinned.name
             }
         } else {
             guard let l, let (g, h) = l.match(loc).min(by: l.best) else { throw Fail("No IVPN server for \(loc.label)") }
             (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
+            disguise = Self.disguise(l, h)
         }
         guard Catalog.Entry.publicIPv4(sv.ip) else { throw Fail("\(sv.name) can't be reached right now") }
         return .wg(sv, WgPeer(name: sv.name, privateKey: a.privateKey, address: ["\(a.ipAddress.prefix { $0 != "/" })/32"], publicKey: sv.publicKey, presharedKey: psk,
-                              endpoint: "\(sv.ip):\(port)", allowedIps: ["0.0.0.0/0"], dns: [dns]), ports: [2049, 443, 53, 80, 123, 2050, 1194, 500, 4500].filter { l?.ports.contains($0) == true })
+                              endpoint: "\(sv.ip):\(port)", allowedIps: ["0.0.0.0/0"], dns: [dns], disguise: disguise), ports: [2049, 443, 53, 80, 123, 2050, 1194, 500, 4500].filter { l?.ports.contains($0) == true })
     }
 
     private static func server(_ g: Gateway, _ h: Host) -> Server {
@@ -428,7 +473,8 @@ nonisolated extension Ivpn.Host {
         let c = try d.container(keyedBy: CodingKeys.self)
         self.init(hostname: try c.decode(String.self, forKey: .hostname), host: try c.decode(String.self, forKey: .host),
                   publicKey: try c.decode(String.self, forKey: .publicKey), localIp: try c.decode(String.self, forKey: .localIp), load: c(.load, 0.0),
-                  isp: (try? c.decodeIfPresent(String.self, forKey: .isp)) ?? nil)
+                  isp: (try? c.decodeIfPresent(String.self, forKey: .isp)) ?? nil,
+                  v2ray: (try? c.decodeIfPresent(String.self, forKey: .v2ray)) ?? nil)
     }
 }
 
@@ -443,4 +489,13 @@ nonisolated extension Ivpn.Gateway {
 nonisolated extension Ivpn.ServerList {
     init(from d: Decoder) throws { let c = try d.container(keyedBy: CodingKeys.self); wireguard = c(.wireguard, []); config = try c.decodeIfPresent(Ivpn.Config.self, forKey: .config) }
     enum CodingKeys: String, CodingKey { case wireguard, config }
+}
+
+nonisolated extension Ivpn.Ports {
+    /// A V2Ray section that isn't as expected leaves the disguise off; it never spoils the rest of the list.
+    init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        self.init(wireguard: try c.decodeIfPresent([Ivpn.Port].self, forKey: .wireguard), v2ray: (try? c.decodeIfPresent(Ivpn.V2ray.self, forKey: .v2ray)) ?? nil)
+    }
+    enum CodingKeys: String, CodingKey { case wireguard, v2ray }
 }

@@ -44,7 +44,7 @@ nonisolated enum ConfigVet {
     ]
 
     private static let endpoints: [String: [String: Field]] = [
-        "wireguard": fields("type", "tag", "mtu", "address", "private_key", "junk").merging([
+        "wireguard": fields("type", "tag", "mtu", "address", "private_key", "junk", "detour").merging([
             "peers": .objects(fields("address", "port", "public_key", "pre_shared_key", "allowed_ips", "persistent_keepalive_interval")),
         ]) { $1 },
         // Everything Manual's OpenVPN import writes.
@@ -71,6 +71,12 @@ nonisolated enum ConfigVet {
     private static let outbounds: [String: [String: Field]] = [
         "direct": fields("type", "tag"),
         "shadowsocks": fields("type", "tag", "server", "server_port", "method", "password", "plugin", "plugin_opts"),
+        // The V2Ray hop of a disguised WireGuard tunnel: VMess over TCP with an HTTP header, as the compiler writes it.
+        "vmess": fields("type", "tag", "server", "server_port", "uuid", "security", "alter_id").merging([
+            "transport": .object(fields("type", "method", "path", "host").merging([
+                "headers": .object(fields("accept-encoding", "connection", "pragma", "user-agent")),
+            ]) { $1 }),
+        ]) { $1 },
     ]
 
     /// What a routing rule may match on, and in a logical rule each of its own rules (those may also be inverted).
@@ -157,6 +163,19 @@ nonisolated enum ConfigVet {
             guard let j = e.first(where: { $0.key.lowercased() == "junk" })?.value else { return true }
             return !isFlag(j) && (j as? Int).map { (0...16).contains($0) } == true
         }) else { throw refused }
+        // V2Ray is only the hop a WireGuard endpoint dials through (its `detour`), each hop for one endpoint and every
+        // endpoint's detour a hop: never an exit a rule, resolver or the final route can name. A hop is as the compiler
+        // writes it: a plain IPv4 server, VMess without encryption over TCP with the HTTP header, nothing else.
+        let hops = outbounds.filter { type($0) == "vmess" }
+        guard hops.allSatisfy(vmessHop), let hopTags = tags(hops) else { throw refused }
+        let detours = endpoints.compactMap { $0["detour"] }
+        guard detours.allSatisfy({ $0 is String }), detours.count == hops.count, Set(detours.compactMap { $0 as? String }) == hopTags,
+              endpoints.allSatisfy({ $0["detour"] == nil || type($0) == "wireguard" }),
+              // Behind a hop, every peer is a plain address: a name would be looked up on the network's own resolver
+              // before anything goes through the hop.
+              endpoints.allSatisfy({ e in
+                  e["detour"] == nil || ((e["peers"] as? [Any])?.allSatisfy { p in ((p as? [String: Any]).flatMap(folded)?["address"] as? String).map(ipv4) == true } ?? false)
+              }) else { throw refused }
         // The app's own way into each exit: loopback only, on a port of the app's choosing (never a privileged one root
         // alone could take), and never without a password.
         guard proxies.count <= 1, proxies.allSatisfy({ p in
@@ -184,8 +203,8 @@ nonisolated enum ConfigVet {
         // turns overwriting it.
         guard exits.count(where: { type($0) == "tailscale" }) <= 1,
               let exitTags = tags(exits), let serverTags = tags(servers), !serverTags.isEmpty,
-              let final = route["final"] as? String, exitTags.contains(final),
-              servers.allSatisfy({ s in s["detour"] == nil || exitTags.contains(s["detour"] as? String ?? "") }),
+              let final = route["final"] as? String, exitTags.contains(final), !hopTags.contains(final),
+              servers.allSatisfy({ s in s["detour"] == nil || exitTags.contains(s["detour"] as? String ?? "") && !hopTags.contains(s["detour"] as? String ?? "") }),
               servers.allSatisfy({ s in s["domain_resolver"] == nil || (serverTags.contains(s["domain_resolver"] as? String ?? "") && s["domain_resolver"] as? String != s["tag"] as? String) }),
               // A tunnel's own resolver asks through an endpoint of its kind.
               servers.allSatisfy({ s in
@@ -211,7 +230,7 @@ nonisolated enum ConfigVet {
             }
         }
         let routeRules = try objects(route["rules"]), dnsRules = try objects(dns["rules"])
-        guard routeRules.allSatisfy({ routeRule($0, exits: exitTags) }), dnsRules.allSatisfy(dnsRule) else { throw refused }
+        guard routeRules.allSatisfy({ routeRule($0, exits: exitTags.subtracting(hopTags)) }), dnsRules.allSatisfy(dnsRule) else { throw refused }
         let fake = servers.filter { type($0) == "fakeip" }
         guard fake.count == 1, let range = fake[0]["inet4_range"] as? String else { throw refused }
         let noDrop = routeRules.filter { $0["no_drop"] != nil }
@@ -437,6 +456,29 @@ nonisolated enum ConfigVet {
         return text
     }
 
+    /// A V2Ray hop as the compiler writes it.
+    private static func vmessHop(_ hop: [String: Any]) -> Bool {
+        guard let server = hop["server"] as? String, ipv4(server), publicIPv4(server),
+              let port = hop["server_port"] as? Int, !isFlag(hop["server_port"]), (1...65535).contains(port),
+              let id = hop["uuid"] as? String, id.wholeMatch(of: /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/) != nil,
+              hop["security"] as? String == "none", let alter = hop["alter_id"] as? Int, !isFlag(hop["alter_id"]), alter == 0,
+              let transport = (hop["transport"] as? [String: Any]).flatMap(folded),
+              transport["type"] as? String == "http", transport["method"] as? String == "GET", transport["path"] as? String == "/",
+              let host = transport["host"] as? [String], host.count == 1,
+              let headers = (transport["headers"] as? [String: Any]).flatMap(folded), headers.values.allSatisfy({ $0 is String }) else { return false }
+        return true
+    }
+
+    /// An address on the internet: not this Mac, a local network, the carrier's shared range, a tailnet, multicast or
+    /// the engine's stand-in addresses.
+    private static func publicIPv4(_ address: String) -> Bool {
+        let p = address.split(separator: ".").compactMap { Int($0) }
+        guard p.count == 4 else { return false }
+        return !(p[0] == 0 || p[0] == 10 || p[0] == 127 || p[0] >= 224 || (p[0] == 169 && p[1] == 254)
+            || (p[0] == 172 && (16...31).contains(p[1])) || (p[0] == 192 && p[1] == 168) || (p[0] == 100 && (64...127).contains(p[1]))
+            || (p[0] == 198 && (18...19).contains(p[1])))
+    }
+
     private static func ipv4(_ address: String) -> Bool {
         let parts = address.split(separator: ".", omittingEmptySubsequences: false)
         return parts.count == 4 && parts.allSatisfy { !$0.isEmpty && $0.allSatisfy { $0.isASCII && $0.isNumber } && UInt8($0) != nil && ($0 == "0" || $0.first != "0") }
@@ -483,7 +525,9 @@ nonisolated enum ConfigVet {
         for (k, value) in o {
             let key = k.lowercased()
             let isPath = key == "path" || key.hasSuffix("_path") || key.hasSuffix("_directory") || key == "directory" || key == "torrc"
-            let dohPath = key == "path" && (o.first { $0.key.lowercased() == "type" }?.value as? String)?.lowercased() == "https" && (value as? String)?.hasPrefix("/") == true
+            // The V2Ray hop's HTTP header names the request path "/": a URL path, not a file.
+            let hopPath = key == "path" && (o.first { $0.key.lowercased() == "type" }?.value as? String)?.lowercased() == "http" && value as? String == "/"
+            let dohPath = hopPath || key == "path" && (o.first { $0.key.lowercased() == "type" }?.value as? String)?.lowercased() == "https" && (value as? String)?.hasPrefix("/") == true
             if isPath && !(cachePathAllowed && key == "path") && !dohPath && key != "state_directory" { return false }
             if !walk(value, cachePathAllowed: key == "cache_file") { return false }
         }

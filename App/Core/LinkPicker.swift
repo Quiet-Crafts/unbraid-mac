@@ -86,6 +86,10 @@ nonisolated enum LinkPicker {
             // pick holds it) rather than run on until Mullvad's list has been read for an owned one.
             || old.opt("mullvad", "owned") != "on" && new.opt("mullvad", "owned") == "on"
                 && new.activeRoutes.contains { !$0.imported && $0.loc.provider == "mullvad" && $0.loc.pinned == nil }
+            // IVPN's Disguise turned on: a running plain tunnel stops at once (the interim pick puts the disguised one in
+            // its place, or holds the route when its server has none) rather than run on plain until the list is read.
+            || old.opt("ivpn", "disguise") != "on" && new.opt("ivpn", "disguise") == "on"
+                && new.activeRoutes.contains { !$0.imported && $0.loc.provider == "ivpn" }
     }
 
     /// A route restored without its keys, or one given an own server still waiting for its config however it got there:
@@ -163,7 +167,8 @@ nonisolated enum LinkPicker {
                 } else if let k = keep[r.id], let a = applied?.route(r.id), !a.imported, a.loc == r.loc,
                           appliedAccounts[r.loc.provider] == accounts[r.loc.provider],
                           (r.loc.provider != "mullvad" || r.loc.pinned != nil || applied?.opt("mullvad", "owned") == setup.opt("mullvad", "owned")),
-                          (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, k))), dialable(k), trusted(k, r, accounts, providers) {
+                          (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, k))), dialable(k), trusted(k, r, accounts, providers),
+                          disguised(setup, r, k) {
                     // `trusted` also requires the provider and a signed-in account: it vouches for a server, not for the
                     // credentials in its tunnel, so two missing accounts never count as the same one.
                     link = k
@@ -174,13 +179,15 @@ nonisolated enum LinkPicker {
                     guard !(p.id == "mullvad" && r.loc.pinned == nil && setup.opt(p.id, "owned") == "on"),
                           let cached = last[cacheKey(r, account: account)],
                           (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))),
-                          dialable(cached), trusted(cached, r, accounts, providers) else {
+                          dialable(cached), trusted(cached, r, accounts, providers), disguised(setup, r, cached) else {
                         blocked[r.id] = .waiting
                         continue
                     }
                     link = cached
                 } else {
                     link = try await fresh(r, accounts, last, used, avoid, setup.opts[r.loc.provider] ?? [:], providers)
+                    // Never a plain tunnel under Disguise: a server without V2Ray data keeps the route off, and says why.
+                    if !disguised(setup, r, link) { throw NoDisguise(provider: providers(r.loc.provider)?.name ?? r.loc.provider, server: link.server.name) }
                 }
             } catch is CancellationError { throw CancellationError() }
             catch {
@@ -190,6 +197,8 @@ nonisolated enum LinkPicker {
                     blocked[r.id] = accounts[r.loc.provider] == nil ? .signedOut(provider) : .refused(provider, error.localizedDescription)
                 } else if let gone = error as? Catalog.Gone {
                     blocked[r.id] = .noLongerOffered(gone.server)
+                } else if let e = error as? NoDisguise {
+                    blocked[r.id] = .unreachable(e.errorDescription ?? "can't be reached through V2Ray")
                 } else if error is KeyNotReady {
                     blocked[r.id] = .unreachable(error.localizedDescription)
                 } else if error is Catalog.Damaged {
@@ -227,6 +236,19 @@ nonisolated enum LinkPicker {
         return Result(links: out, remember: remember, blocked: blocked)
     }
 
+    /// A server that can't take a disguised tunnel while the provider page's Disguise is on.
+    struct NoDisguise: LocalizedError {
+        let provider: String
+        let server: String
+        var errorDescription: String? { "\(server) can't be reached through V2Ray right now. Pick another server, or turn Disguise off on the \(provider) page" }
+    }
+
+    /// With Disguise on for its provider, a WireGuard tunnel must come with its V2Ray data: never a plain one instead.
+    static func disguised(_ setup: Setup, _ r: Route, _ l: Link) -> Bool {
+        guard !r.imported, setup.opt(r.loc.provider, "disguise") == "on", case .wg(_, let peer, _, _) = l else { return true }
+        return peer.disguise != nil
+    }
+
     /// Applies the selected provider ports to the links.
     static func ported(_ setup: Setup, _ links: [String: Link], step: [String: Int]) -> [String: Link] {
         var lists: [String: [Int]] = [:]
@@ -239,12 +261,14 @@ nonisolated enum LinkPicker {
             guard let route = setup.route(id), !route.imported else {
                 peer.mtu = min(peer.mtu, 1280)
                 peer.junk = 0
+                (peer.vmess, peer.disguise) = (nil, nil)
                 return .wg(server, peer, ports: ports, entries: entries)
             }
             let provider = route.loc.provider
             if let colon = peer.endpoint.lastIndex(of: ":") {
                 var host = String(peer.endpoint[..<colon])
-                let oldPort = String(peer.endpoint[peer.endpoint.index(after: colon)...])
+                // A tunnel that was disguised dials its V2Ray server's WireGuard port: not one to go back to.
+                let oldPort = peer.vmess == nil ? String(peer.endpoint[peer.endpoint.index(after: colon)...]) : String(Ivpn.port)
                 if let value = setup.opt(provider, "entry"), let index = Int(value), index > 0, index <= entries.count { host = entries[index - 1] }
                 let offered = ports.isEmpty ? (lists[provider] ?? []) : ports
                 // IVPN's fixed-port choices come from the complete server list; its automatic list is a smaller subset.
@@ -256,7 +280,17 @@ nonisolated enum LinkPicker {
                 peer.endpoint = "\(host):\(port)"
             }
             peer.mtu = Int(setup.opt(provider, "mtu") ?? "") ?? 1280
+            peer.vmess = nil
             peer.junk = setup.opt(provider, "junk") == "on" ? ProviderOption.junkCount : 0
+            // Disguised: the tunnel goes inside V2Ray to the server's own WireGuard port behind it. The port setting
+            // doesn't apply, and the small packet size does. A server without the data stays plain here and is held
+            // back by `disguised` before this (and refused by the compiler if it ever got this far).
+            if provider == "ivpn", setup.opt(provider, "disguise") == "on", let d = peer.disguise,
+               let colon = peer.endpoint.lastIndex(of: ":") {
+                peer.endpoint = "\(peer.endpoint[..<colon]):\(d.wgPort)"
+                peer.vmess = d.vmess
+                peer.mtu = 1280
+            }
             return .wg(server, peer, ports: ports, entries: entries)
         }
     }

@@ -25,6 +25,8 @@ final class AppModel {
     var speedTestRequest: SpeedTestRequest?
     var formError: [String: String] = [:]
     var formErrorURL: [String: String] = [:]
+    /// A provider that can free a device slot by signing out the account's other devices, once the user agrees.
+    var slotsFull: [String: SlotsFull] = [:]
     var challenges: [String: Challenge] = [:]
     private var forms = SignInForms()
 
@@ -42,6 +44,7 @@ final class AppModel {
         refusedSecrets.removeValue(forKey: id)?.forEach { clearClipboardIf($0) }
         formError[id] = nil
         formErrorURL[id] = nil
+        slotsFull[id] = nil
         challenges[id] = nil
     }
     /// Something sign-out couldn't finish and the user must do by hand; shown in Settings.
@@ -120,7 +123,8 @@ final class AppModel {
     // MARK: Providers
 
     /// Signs in with `input` as typed (secrets are never trimmed). The outcome lands in `formError` or `accounts`.
-    func signIn(_ provider: any Provider, _ input: [String: String], formVersion: Int? = nil, clipboardImageChangeCount: Int? = nil) async {
+    func signIn(_ provider: any Provider, _ input: [String: String], formVersion: Int? = nil, clipboardImageChangeCount: Int? = nil,
+                  extra: [String: String] = [:]) async {
         let id = provider.id
         let formVersion = formVersion ?? forms.version(id)
         func showError(_ error: String?, url: String? = nil) {
@@ -139,6 +143,7 @@ final class AppModel {
         }
         if accounts[id] != nil { showError("Already signed in to \(provider.name)"); return }
         showError(nil)
+        if forms.version(id) == formVersion { slotsFull[id] = nil }
         signing.insert(id)
         defer {
             signing.remove(id)
@@ -152,6 +157,8 @@ final class AppModel {
                 clean.merge(challenge.state) { _, new in new }
                 clean[challenge.field.key] = challengeAnswer(challenge.field, input[challenge.field.key] ?? "")
             }
+            // What a `SlotsFull` asked to add, after the user agreed to it.
+            clean.merge(extra) { _, new in new }
             let epoch = signOutEpoch
             let blob = try await provider.signIn(clean)
             // Sign Out of Everything ran meanwhile: this session is released, never stored behind it, and the user is told.
@@ -188,9 +195,12 @@ final class AppModel {
             if forms.version(id) == formVersion { challenges[id] = challenge }
             refuseSecrets(provider, input)
         } catch {
-            if forms.version(id) == formVersion { challenges[id] = nil }
+            if forms.version(id) == formVersion {
+                challenges[id] = nil
+                if let full = error as? SlotsFull { slotsFull[id] = full }
+            }
             refuseSecrets(provider, input)
-            showError(signInFailure(error, provider.name), url: (error as? AuthError)?.url)
+            showError(signInFailure(error, provider.name), url: (error as? AuthError)?.url ?? (error as? SlotsFull)?.url)
         }
     }
 
