@@ -82,6 +82,10 @@ nonisolated enum LinkPicker {
                 || old.prefs.lan != new.prefs.lan || old.prefs.effectiveFilter != new.prefs.effectiveFilter
                 || suffixes.map { Compiler.tsSuffix($0.old) != Compiler.tsSuffix($0.new) } == true)
             || Set(old.apps.keys).union(new.apps.keys).contains { changes(old.routeOf($0), new.routeOf($0)) }
+            // "Mullvad-owned servers only" turned on: a running route on a rented server stops at once (the interim
+            // pick holds it) rather than run on until Mullvad's list has been read for an owned one.
+            || old.opt("mullvad", "owned") != "on" && new.opt("mullvad", "owned") == "on"
+                && new.activeRoutes.contains { !$0.imported && $0.loc.provider == "mullvad" && $0.loc.pinned == nil }
     }
 
     /// A route restored without its keys, or one given an own server still waiting for its config however it got there:

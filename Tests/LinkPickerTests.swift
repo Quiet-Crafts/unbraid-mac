@@ -269,6 +269,29 @@ final class LinkPickerTests: XCTestCase {
         XCTAssertEqual(result.blocked["1"], .waiting)
     }
 
+    /// Turning "Mullvad-owned servers only" on stops a running unpinned Mullvad route at once: the interim pick runs, and
+    /// it holds the route (its kept tunnel may be on a rented server) until an owned one is found.
+    func testOwnedOnlyTurnedOnStopsARunningRouteAtOnce() async throws {
+        let r = Route(id: "1", loc: Location(provider: "mullvad", countryCode: "SE"))
+        let before = setup(r)
+        var after = before
+        after.opts = ["mullvad": ["owned": "on"]]
+        XCTAssertTrue(LinkPicker.needsInterim(from: before, to: after))
+        XCTAssertFalse(LinkPicker.needsInterim(from: after, to: after))
+        XCTAssertFalse(LinkPicker.needsInterim(from: after, to: before))
+        let interim = try await LinkPicker.pick(after, keep: ["1": link(a)], applied: before, appliedAccounts: ["mullvad": "acc"],
+            accounts: ["mullvad": "acc"], last: [LinkPicker.cacheKey(r, account: "acc"): link(a)], offline: true) { _ in
+            Fake(best: [], failIfCalled: true, id: "mullvad")
+        }
+        XCTAssertEqual(interim.blocked["1"], .waiting)
+        // A pinned route keeps its server: the owner chose it.
+        var pinned = before
+        pinned.routes[0].loc.pinned = a
+        var pinnedAfter = pinned
+        pinnedAfter.opts = after.opts
+        XCTAssertFalse(LinkPicker.needsInterim(from: pinned, to: pinnedAfter))
+    }
+
     func testOfflineImportsStillApplyPortsAndBlockClashes() async throws {
         guard case .wg(_, var peer, _, _) = link(a) else { return XCTFail() }
         peer.mtu = 1280
