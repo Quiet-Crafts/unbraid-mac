@@ -545,6 +545,9 @@ private struct ProviderDetail: View {
     @State private var limit: Limit?
     @State private var editingLimit = false
     @State private var limitText = ""
+    /// The option whose "Another…" number is being typed (IVPN's port).
+    @State private var typing: ProviderOption?
+    @State private var typedText = ""
     @State private var runningLinks: [String: Link] = [:]
     @State private var runningSetup: Setup?
     @State private var advanced = false
@@ -669,6 +672,21 @@ private struct ProviderDetail: View {
             listDate = try? await provider.listDate(account)
             revoked = (try? await provider.revoked(account)) ?? false
         }
+        .sheet(item: Binding(get: { typing.map { TypedOption(option: $0) } }, set: { typing = $0?.option })) { t in
+            let ranges = t.option.custom.map { "\($0.lowerBound)–\($0.upperBound)" }.joined(separator: " or ")
+            FormSheet(title: "Another Port", width: 400) {
+                Section {
+                    TextField("UDP port", text: $typedText, prompt: Text(ranges))
+                } footer: {
+                    Text("Any UDP port \(provider.name)'s servers answer on: \(ranges). For networks that block the listed ones.")
+                }
+            } actions: {
+                Button("Cancel", role: .cancel) { typing = nil }.keyboardShortcut(.cancelAction)
+                Button("Save") { model.setOpt(provider.id, t.option.key, Int(typedText).map(String.init) ?? typedText, offered: t.option); typing = nil }
+                    .keyboardShortcut(.defaultAction).contentButton(prominent: true)
+                    .disabled(!t.option.allows(typed: typedText))
+            }
+        }
         .sheet(isPresented: $editingLimit) {
             FormSheet(title: "Connection Limit", width: 400) {
                 Section {
@@ -688,12 +706,23 @@ private struct ProviderDetail: View {
         .onChange(of: model.accounts[id] == nil, initial: true) { _, gone in if gone { path.removeAll() } }
     }
 
+    /// The picker's tag for "Another…": never a value an option saves.
+    private static let another = "\u{0}another"
+    private struct TypedOption: Identifiable { var option: ProviderOption; var id: String { option.key } }
+
     @ViewBuilder private func optionRow(_ option: ProviderOption, _ s: Setup) -> some View {
         switch option.kind {
         case .choice(let choices):
+            let current = s.opt(provider.id, option.key) ?? option.defaultValue
+            // A typed value the list doesn't name shows as its own row, and "Another…" opens the field to type one.
+            let typed = option.custom.isEmpty || choices.contains { $0.value == current } ? nil : current
             SettingsRow(title: option.label, symbol: "slider.horizontal.3") {
-                Picker(option.label, selection: Binding(get: { s.opt(provider.id, option.key) ?? option.defaultValue }, set: { model.setOpt(provider.id, option.key, $0, offered: option) })) {
+                Picker(option.label, selection: Binding(get: { current }, set: { value in
+                    if value == Self.another { typedText = typed ?? ""; typing = option } else { model.setOpt(provider.id, option.key, value, offered: option) }
+                })) {
                     ForEach(choices, id: \.value) { Text($0.label).tag($0.value) }
+                    if let typed { Text("UDP \(typed)").tag(typed) }
+                    if !option.custom.isEmpty { Text("Another Port…").tag(Self.another) }
                 }.labelsHidden().accessibilityLabel(option.label).help(option.help)
             }
         case .number:
@@ -716,7 +745,7 @@ private struct ProviderDetail: View {
 
     private func optionValue(_ option: ProviderOption, _ setup: Setup) -> String {
         let value = setup.opt(provider.id, option.key) ?? option.defaultValue
-        if case .choice(let choices) = option.kind { return choices.first { $0.value == value }?.label ?? value }
+        if case .choice(let choices) = option.kind { return choices.first { $0.value == value }?.label ?? (option.custom.isEmpty ? value : "UDP \(value)") }
         return value
     }
 

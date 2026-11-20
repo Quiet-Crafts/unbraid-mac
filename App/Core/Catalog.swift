@@ -378,6 +378,6 @@ nonisolated enum Catalog {
     static func server(_ e: Entry, name: String? = nil) throws -> Server {
         guard let ip = e.ipv4 else { throw Fail("No usable address for \(e.hostname)") }
         return Server(name: name ?? e.serverName ?? String(e.hostname.split(separator: ".").first ?? ""), host: e.hostname, ip: ip,
-                      publicKey: e.wgpubkey ?? "", load: e.load, city: e.city ?? "", country: code(e.place))
+                      publicKey: e.wgpubkey ?? "", load: e.load, city: e.city ?? "", country: code(e.place), note: e.warning, flagged: e.warning != nil)
     }
 }

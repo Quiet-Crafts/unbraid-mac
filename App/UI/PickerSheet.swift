@@ -538,7 +538,7 @@ private struct PlaceRow: View {
     }
 }
 
-/// Up to 20 Nord servers or 200 elsewhere, lowest load first (unknown last).
+/// Up to 20 Nord servers or 200 elsewhere: servers with a problem last, then lowest load first (unknown last).
 private struct ServerList: View {
     private let model = AppModel.shared
     let provider: any Provider
@@ -567,7 +567,7 @@ private struct ServerList: View {
                                 HStack {
                                     VStack(alignment: .leading, spacing: 0) {
                                         Text(s.name)
-                                        Text([s.city.nilIfEmpty, provider.hasLoad && s.load >= 0 ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · "))
+                                        Text([s.city.nilIfEmpty, provider.hasLoad && s.load >= 0 ? "\(s.load)% load" : nil, s.note].compactMap { $0 }.joined(separator: " · "))
                                             .font(.caption).foregroundStyle(.secondary)
                                     }
                                     Spacer()
@@ -591,7 +591,11 @@ private struct ServerList: View {
             let result = try? await provider.servers(loc, account, limit: provider.id == "nord" ? 20 : 200, opts: model.setup.opts[provider.id] ?? [:])
             guard !Task.isCancelled else { return }
             guard let found = result else { failed = true; return }
-            list = found.sorted { ($0.load < 0 ? .max : $0.load) < ($1.load < 0 ? .max : $1.load) }
+            // Servers with a problem the provider names (a warning, out of service) after the others, then by load.
+            list = found.sorted { a, b in
+                if a.flagged != b.flagged { return b.flagged }
+                return (a.load < 0 ? .max : a.load) < (b.load < 0 ? .max : b.load)
+            }
         }
     }
 

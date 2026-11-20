@@ -71,11 +71,19 @@ nonisolated struct ProviderOption: Hashable, Sendable {
     var help = ""
     var affectsCountries = false
     var affectsLinks = true
+    /// Numbers the user may type instead of a choice (a port, say); empty = choices only.
+    var custom: [ClosedRange<Int>] = []
+
+    /// A typed value `custom` takes: digits only, within one of its ranges.
+    func allows(typed: String) -> Bool {
+        guard !typed.isEmpty, typed.allSatisfy(\.isASCII), typed.allSatisfy(\.isNumber), let n = Int(typed) else { return false }
+        return custom.contains { $0.contains(n) }
+    }
 
     func accepts(_ value: String) -> Bool {
         switch kind {
         case .toggle: return value == "on" || value == "off"
-        case .choice(let choices): return choices.contains { $0.value == value }
+        case .choice(let choices): return choices.contains { $0.value == value } || allows(typed: value)
         case .number(let range): return value.isEmpty || (Int(value).map { range.contains($0) } ?? false)
         }
     }

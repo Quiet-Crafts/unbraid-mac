@@ -102,6 +102,21 @@ final class IvpnTests: XCTestCase {
         XCTAssertEqual(plain.first?.host, nl[0].hostname)
     }
 
+    /// The server list says more about each server: out of service, and the company hosting it. Notes never make two
+    /// servers differ, and are never saved with a pin.
+    func testServerNotes() throws {
+        var l = try Ivpn.parse(D(#"{"wireguard":[{"gateway":"nl.wg.ivpn.net","country_code":"NL","country":"Netherlands","city":"Amsterdam","hosts":[{"hostname":"nl1.wg.ivpn.net","host":"1.2.3.4","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","local_ip":"172.16.0.1/12","load":5,"isp":" Datapacket "},{"hostname":"nl2.wg.ivpn.net","host":"1.2.3.5","public_key":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=","local_ip":"172.16.0.1/12","load":50}]}]}"#))
+        l.down = ["nl1.wg.ivpn.net"]
+        let listed = Ivpn.listed(l, Location(provider: "ivpn", countryCode: "NL"), limit: 10)
+        XCTAssertEqual(listed.map(\.host), ["nl2.wg.ivpn.net", "nl1.wg.ivpn.net"])
+        XCTAssertEqual(listed.map(\.note), [nil, "Out of service · Datapacket"])
+        XCTAssertEqual(listed.map(\.flagged), [false, true])
+        var plain = listed[1]; plain.note = nil; plain.flagged = false
+        XCTAssertEqual(plain, listed[1])
+        let saved = try JSONDecoder().decode(Server.self, from: JSONEncoder().encode(listed[1]))
+        XCTAssertNil(saved.note); XCTAssertFalse(saved.flagged)
+    }
+
     func testCityLinkStaysInThatGateway() throws {
         let l = wg(try Ivpn.link(list, Location(provider: "ivpn", countryCode: "US", region: "us-ny.wg.ivpn.net"), acct))
         XCTAssertEqual(l.server.city, "New York, NY")
@@ -236,6 +251,13 @@ final class IvpnTests: XCTestCase {
         let p = Ivpn()
         XCTAssertFalse(try XCTUnwrap(p.option("port")).accepts("9999"))
         XCTAssertTrue(try XCTUnwrap(Ivpn.options(l).first { $0.key == "port" }).accepts("443"))
+        // A port of your own: any UDP port within IVPN's ranges, typed; nothing else.
+        let port = try XCTUnwrap(Ivpn.options(l).first { $0.key == "port" })
+        for ok in ["5500", "19999", "30000", "65000", "8443"] { XCTAssertTrue(port.allows(typed: ok), ok); XCTAssertTrue(port.accepts(ok), ok) }
+        for bad in ["5499", "20000", "29999", "65001", "", "+6000", "６０００", "6000 ", "-1"] { XCTAssertFalse(port.allows(typed: bad), bad) }
+        var s = Setup()
+        s.opts["ivpn"] = ["port": "8443"]
+        XCTAssertEqual(s.opt("ivpn", "port"), "8443")
         XCTAssertEqual(p.blockingDns { ["list":"10.0.0.1|10.0.0.2", "hardcore":"on"][$0] }, "10.0.0.2")
         XCTAssertEqual(p.blockingDns { _ in "bad|bad" }, "10.0.254.2")
     }

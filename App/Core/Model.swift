@@ -46,6 +46,17 @@ nonisolated struct Server: Codable, Hashable, Sendable {
     var load: Int
     var city = ""
     var country = ""
+    /// For the server list only, never saved or compared: what the provider says about it ("Low packet loss", the
+    /// hosting company), and `flagged` when that is a problem, so it is listed after the others.
+    var note: String? = nil
+    var flagged = false
+
+    enum CodingKeys: String, CodingKey { case name, host, ip, publicKey, load, city, country }
+
+    static func == (a: Server, b: Server) -> Bool {
+        a.name == b.name && a.host == b.host && a.ip == b.ip && a.publicKey == b.publicKey && a.load == b.load && a.city == b.city && a.country == b.country
+    }
+    func hash(into h: inout Hasher) { h.combine(name); h.combine(host); h.combine(ip); h.combine(publicKey); h.combine(load); h.combine(city); h.combine(country) }
 }
 
 /// A plain WireGuard peer, e.g. a FRITZ!Box export.

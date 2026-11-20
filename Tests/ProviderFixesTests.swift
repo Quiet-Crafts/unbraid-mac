@@ -91,6 +91,9 @@ final class ProviderFixesTests: XCTestCase {
         """), serverKey: F.key)
         XCTAssertEqual(air.map(\.serverName), ["Busy", "Lossy", "Quiet"])
         XCTAssertEqual(air.map(\.warning), [nil, "Low packet loss", "Warning"])
+        let noted = try Catalog.server(air[1])
+        XCTAssertEqual(noted.note, "Low packet loss"); XCTAssertTrue(noted.flagged)
+        XCTAssertNil(try Catalog.server(air[0]).note)
         XCTAssertEqual(Catalog.pick(air, Location(provider: "airvpn", country: "Austria")).map(\.serverName).first, "Busy")
         let sv = try await F.air().link(Location(provider: "airvpn", country: "Austria"), account) { air }.server
         XCTAssertEqual(sv.name, "Busy")

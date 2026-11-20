@@ -51,7 +51,9 @@ nonisolated struct Ivpn: Provider {
         let publicKey: String
         let localIp: String
         var load = 0.0
-        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load }
+        /// The hosting company, shown in the server list.
+        var isp: String? = nil
+        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load, isp }
     }
 
     struct Gateway: Decodable, Hashable {
@@ -84,6 +86,8 @@ nonisolated struct Ivpn: Provider {
 
     private static let api = "https://api.ivpn.net"
     private static let port = 2049
+    /// Besides its listed ports, IVPN's WireGuard servers answer on any UDP port in these ranges (IVPN's port guide).
+    static let portRanges = [5500...19999, 30000...65000]
     private static let dns = "172.16.0.1"
 
     let id = "ivpn"
@@ -135,7 +139,7 @@ nonisolated struct Ivpn: Provider {
         var out: [ProviderOption] = []
         if !choices.isEmpty { out.append(.init(key: "list", label: "Block list", kind: .choice(choices), defaultValue: "10.0.254.2|10.0.254.3", help: "What AntiTracker blocks, from IVPN's own lists")) }
         out.append(.init(key: "hardcore", label: "Hardcore mode", kind: .toggle, defaultValue: "off", advanced: true, help: "Also blocks Google and Facebook, and sites that need them"))
-        out.append(.init(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic")] + list.ports.map { .init(value: String($0), label: "UDP \($0)") }), defaultValue: "auto", advanced: true, help: "Automatic tries 2049 first, then other ports when a network blocks it"))
+        out.append(.init(key: "port", label: "Port", kind: .choice([.init(value: "auto", label: "Automatic")] + list.ports.map { .init(value: String($0), label: "UDP \($0)") }), defaultValue: "auto", advanced: true, help: "Automatic tries 2049 first, then other ports when a network blocks it", custom: Self.portRanges))
         return out
     }
 
@@ -230,9 +234,22 @@ nonisolated struct Ivpn: Provider {
 
     @concurrent func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] {
         let list = try await withStatus()
-        return list.match(loc).enumerated().sorted { a, b in
+        return Self.listed(list, loc, limit: limit)
+    }
+
+    /// `loc`'s servers best first, each with its note: out of service (inactive or in maintenance), and the hosting company.
+    static func listed(_ list: ServerList, _ loc: Location, limit: Int) -> [Server] {
+        list.match(loc).enumerated().sorted { a, b in
             list.best(a.element, b.element) || !list.best(b.element, a.element) && a.offset < b.offset
-        }.prefix(limit).map { Self.server($0.element.0, $0.element.1) }
+        }.prefix(limit).map { item in
+            let (g, h) = item.element
+            var sv = server(g, h)
+            let down = list.down.contains(h.hostname)
+            let isp = (h.isp ?? "").trimmingCharacters(in: .whitespacesAndNewlines).filter { !$0.isNewline }
+            let note = [down ? "Out of service" : nil, isp.isEmpty ? nil : String(isp.prefix(40))].compactMap { $0 }.joined(separator: " · ")
+            (sv.note, sv.flagged) = (note.isEmpty ? nil : note, down)
+            return sv
+        }
     }
 
     /// The server list; tests replace it.
@@ -333,7 +350,8 @@ nonisolated extension Ivpn.Host {
     init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         self.init(hostname: try c.decode(String.self, forKey: .hostname), host: try c.decode(String.self, forKey: .host),
-                  publicKey: try c.decode(String.self, forKey: .publicKey), localIp: try c.decode(String.self, forKey: .localIp), load: c(.load, 0.0))
+                  publicKey: try c.decode(String.self, forKey: .publicKey), localIp: try c.decode(String.self, forKey: .localIp), load: c(.load, 0.0),
+                  isp: (try? c.decodeIfPresent(String.self, forKey: .isp)) ?? nil)
     }
 }
 
