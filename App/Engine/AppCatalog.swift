@@ -209,7 +209,7 @@ final class AppCatalog {
         _ = apps // Still observed: a view that looks an app up redraws when the list changes.
         if id == StatsMath.otherPrograms { return AppInfo(id: id, name: "Other programs", path: "", system: false) }
         // A website counted in an app's place (statistics) is named by its address, whether or not its rule is still there.
-        if let site = StatsMath.site(id) { return AppInfo(id: id, name: site, path: "", system: false) }
+        if let site = StatsMath.site(id) { return AppInfo(id: id, name: Sites.shown(site), path: "", system: false) }
         return index[id] ?? (id.hasPrefix("/") || id.hasPrefix("~/") ? Self.tool(id) : nil)
     }
 

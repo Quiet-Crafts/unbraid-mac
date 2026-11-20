@@ -157,7 +157,14 @@ nonisolated enum Sites {
         if let at = host.range(of: "@", options: .backwards) { host = host[at.upperBound...] }
         // An IPv6 address, bracketed in a link or bare: two colons or more, or a bracket.
         if host.hasPrefix("[") || host.filter({ $0 == ":" }).count > 1 { return .refused(address) }
-        if let port = host.range(of: ":") { host = host[..<port.lowerBound] }
+        // A port as a browser takes it: digits only, at most 65535 (leading zeros and none at all are fine); anything
+        // else makes the link one no browser opens.
+        if let colon = host.range(of: ":") {
+            let port = host[colon.upperBound...]
+            guard port.allSatisfy({ $0.isASCII && $0.isNumber }), port.drop(while: { $0 == "0" }).count <= 5,
+                  Int(port).map({ $0 <= 65535 }) ?? port.isEmpty else { return .refused(notAName) }
+            host = host[..<colon.lowerBound]
+        }
         guard var name = ascii(String(host).trimmingCharacters(in: CharacterSet(charactersIn: "."))) else { return .refused(notAName) }
         let full = name
         // Every leading "www." goes while a name is left, so what is kept reads back as itself.

@@ -38,6 +38,16 @@ final class SitesTests: XCTestCase {
                             ("exam\tple.com", "example.com"), ("https://exa\nmple.com/\r", "example.com"), ("example.com:443", "example.com")] {
             XCTAssertEqual(Sites.clean(raw), want, raw.debugDescription)
         }
+        // A port as a browser takes it, or no website at all.
+        for (raw, want) in [("example.com:99999", nil), ("example.com:1x", nil), ("http://example.com:abc/", nil),
+                            ("https:/example.com:99999/path", nil), ("example.com:+80", nil), ("example.com:٨٠", nil),
+                            ("http://example.com:065535/", "example.com"), ("Example.com:", "example.com"), ("example.com:0", "example.com")] as [(String, String?)] {
+            XCTAssertEqual(Sites.clean(raw), want, raw)
+        }
+        // An international name shows its own letters beside its xn-- form, a long one xn-- first; others as they are.
+        XCTAssertEqual(Sites.shown("xn--mnchen-3ya.de"), "münchen.de (xn--mnchen-3ya.de)")
+        XCTAssertEqual(Sites.shown("xn--mnchen-3ya.de", asciiFirst: true), "xn--mnchen-3ya.de (münchen.de)")
+        XCTAssertEqual(Sites.shown("example.com"), "example.com")
         // What is kept reads back as itself: a saved address is checked that way.
         for raw in ["WWW.netflix.com", "www.www.example.com", "www.com", "www.www.com", "https://www.a.b.example/x", "münchen.de"] {
             let kept = Sites.clean(raw)
