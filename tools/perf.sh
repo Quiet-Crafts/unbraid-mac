@@ -21,7 +21,7 @@
 #                                     every min-* picture must be exactly the smallest window, with the band below the
 #                                     toolbar and no list past the window's bottom), the own server "Home server"
 #                                     not answering on its page and in the panel (route-silent, panel-silent), and the
-#                                     widget (widget-small, widget-small-failing, widget-medium-failing,
+#                                     widget (widget-small, -medium, -large, widget-small-failing, widget-medium-failing,
 #                                     widget-large-failing); dark ones end in -dark
 #   EMPTY=1 SHOTS=<folder> tools/perf.sh   the same pages and panel with no traffic at all, as on a first day
 #                                     (empty-apps, empty-route, ..., empty-min-*, empty-panel, with -dark too)

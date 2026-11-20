@@ -363,6 +363,7 @@ private final class Meter: NSObject {
         for i in partial.routes.indices where i > 0 { partial.routes[i].ok = nil }
         for i in unchecked.routes.indices { unchecked.routes[i].ok = nil }
         for (name, s, size) in [("small", ok, WidgetFamily.systemSmall), ("small-failing", failing, .systemSmall),
+                                ("medium", ok, .systemMedium), ("large", ok, .systemLarge),
                                 ("medium-partial", partial, .systemMedium), ("medium-unchecked", unchecked, .systemMedium),
                                 ("medium-failing", failing, .systemMedium), ("large-failing", failing, .systemLarge)] {
             openWidget(s, size); await meter.frames(30)
