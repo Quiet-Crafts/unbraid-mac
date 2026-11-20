@@ -44,7 +44,7 @@ nonisolated enum ConfigVet {
     ]
 
     private static let endpoints: [String: [String: Field]] = [
-        "wireguard": fields("type", "tag", "mtu", "address", "private_key").merging([
+        "wireguard": fields("type", "tag", "mtu", "address", "private_key", "junk").merging([
             "peers": .objects(fields("address", "port", "public_key", "pre_shared_key", "allowed_ips", "persistent_keepalive_interval")),
         ]) { $1 },
         // Everything Manual's OpenVPN import writes.
@@ -152,6 +152,11 @@ nonisolated enum ConfigVet {
               isFlag(route["auto_detect_interface"]), route["auto_detect_interface"] as? Bool == true,
               route["default_domain_resolver"] as? String == "local",
               servers.allSatisfy({ type($0) != "fakeip" || (["198.18.0.0/15"] + fakeRanges).contains($0["inet4_range"] as? String ?? "") }) else { throw refused }
+        // Junk packets before a WireGuard handshake: a count the engine takes (0 to 16), never anything else.
+        guard endpoints.allSatisfy({ e in
+            guard let j = e.first(where: { $0.key.lowercased() == "junk" })?.value else { return true }
+            return !isFlag(j) && (j as? Int).map { (0...16).contains($0) } == true
+        }) else { throw refused }
         // The app's own way into each exit: loopback only, on a port of the app's choosing (never a privileged one root
         // alone could take), and never without a password.
         guard proxies.count <= 1, proxies.allSatisfy({ p in

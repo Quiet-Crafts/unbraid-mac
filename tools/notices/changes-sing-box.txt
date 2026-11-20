@@ -28,3 +28,5 @@ the unbraid authors with the patches in the tools folder of unbraid's source (pu
   by address dials only the addresses that rule covers, never the public ones of the same name's answer.
 - sing-box-kyber.patch, 2026-11-20: libbox can make a Round-3 Kyber-1024 key pair and turn the provider's reply into
   a WireGuard preshared key, for IVPN's quantum-safe connections.
+- sing-box-junk.patch, 2026-11-20: a WireGuard endpoint can send up to 16 random packets of 30 to 100 bytes before
+  each handshake, from the same socket (the option junk); with it on, the engine's own sending socket is used.

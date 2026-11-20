@@ -238,6 +238,7 @@ nonisolated enum LinkPicker {
             guard case .wg(let server, var peer, let ports, let entries) = link else { return link }
             guard let route = setup.route(id), !route.imported else {
                 peer.mtu = min(peer.mtu, 1280)
+                peer.junk = 0
                 return .wg(server, peer, ports: ports, entries: entries)
             }
             let provider = route.loc.provider
@@ -255,6 +256,7 @@ nonisolated enum LinkPicker {
                 peer.endpoint = "\(host):\(port)"
             }
             peer.mtu = Int(setup.opt(provider, "mtu") ?? "") ?? 1280
+            peer.junk = setup.opt(provider, "junk") == "on" ? ProviderOption.junkCount : 0
             return .wg(server, peer, ports: ports, entries: entries)
         }
     }

@@ -97,6 +97,11 @@ nonisolated struct ProviderOption: Hashable, Sendable {
     static let mtu = ProviderOption(key: "mtu", label: "MTU", kind: .choice(
         [Choice(value: "auto", label: "Default (1280)")] + [1320, 1360, 1380, 1400, 1420].map { Choice(value: String($0), label: String($0)) }),
         defaultValue: "auto", advanced: true, help: "Default works on every network. Larger can be faster on Wi-Fi but can stall uploads on mobile data")
+    /// Random packets before each WireGuard handshake: they get past some networks that recognise WireGuard's first packet.
+    static let junk = ProviderOption(key: "junk", label: "Junk packets", kind: .toggle, defaultValue: "off", advanced: true,
+        help: "Sends a few random packets before each connection starts, which gets past some VPN blocking. The servers ignore them")
+    /// How many the engine sends when the switch is on.
+    static let junkCount = 5
     static let limit = ProviderOption(key: "limit", label: "Your plan's limit", kind: .number(1...999), defaultValue: "", advanced: true, affectsLinks: false)
 }
 
@@ -249,7 +254,7 @@ nonisolated extension Provider {
     @concurrent func revoked(_ account: String) async throws -> Bool { false }
     @concurrent func facts(_ account: String) async throws -> String? { nil }
 
-    var commonOptions: [ProviderOption] { proto == "WireGuard" ? [.mtu, .limit] : [.limit] }
+    var commonOptions: [ProviderOption] { proto == "WireGuard" ? [.mtu, .junk, .limit] : [.limit] }
     var linkOptions: [ProviderOption] {
         var result: [ProviderOption] = []
         if id == "mullvad" {

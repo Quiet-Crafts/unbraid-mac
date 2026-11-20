@@ -211,7 +211,7 @@ refuse files sent through Taildrop, give an OpenVPN tunnel a resolver inside it 
 the app's connection checks look up their servers through the tunnel being checked. They also put the network's IPv4
 DNS servers first, narrow how UDP traffic is matched to its app, keep a test or Tailscale sign-out that overlaps a
 reload from stopping the engine, bound OpenVPN's exit notifications, send a connection that the local network or home
-rules take to only the addresses those rules cover, make the quantum-safe key IVPN's sign-in asks for, and take security fixes of some dependencies (the
+rules take to only the addresses those rules cover, make the quantum-safe key IVPN's sign-in asks for, send random packets before each WireGuard handshake when a provider's Junk packets switch is on, and take security fixes of some dependencies (the
 full list: `tools/notices/changes-sing-box.txt`). `tools/build-cli.sh` builds the engine's command-line version, which
 the tests use to check every generated configuration.
 

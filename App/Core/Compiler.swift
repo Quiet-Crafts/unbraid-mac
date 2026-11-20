@@ -751,8 +751,10 @@ nonisolated enum Compiler {
         if (p.keepalive ?? 25) > 0 { peer["persistent_keepalive_interval"] = .i(p.keepalive ?? 25) }
         if let psk = p.presharedKey { peer["pre_shared_key"] = .s(psk) }
         // 1280 fits every path (tethering, 464XLAT); 1420 makes 1480-byte packets that stall big uploads there.
-        return ["type": "wireguard", "tag": .s(tag), "mtu": .i(min(p.mtu, maxMtu)), "address": J.strings(p.address),
-                "private_key": .s(p.privateKey), "peers": [peer]]
+        var endpoint: J = ["type": "wireguard", "tag": .s(tag), "mtu": .i(min(p.mtu, maxMtu)), "address": J.strings(p.address),
+                           "private_key": .s(p.privateKey), "peers": [peer]]
+        if p.junk > 0 { endpoint["junk"] = .i(min(p.junk, 16)) }
+        return endpoint
     }
 
     private static let openVpnRouting = ["route ", "route-ipv6 ", "route-metric", "redirect-gateway", "redirect-private", "block-ipv6", "block-outside-dns"]
@@ -829,7 +831,7 @@ nonisolated enum Compiler {
     private static func wgKey(_ p: WgPeer, maxMtu: Int = 1280) -> String {
         let port = p.endpoint.lastIndex(of: ":").map { String(p.endpoint[p.endpoint.index(after: $0)...]) } ?? ""
         return ["wg", wgHost(p), port, p.publicKey, sha(p.privateKey), sha(p.presharedKey ?? ""),
-                p.address.joined(separator: ","), String(min(p.mtu, maxMtu)), String(p.keepalive ?? 25)].joined(separator: "|")
+                p.address.joined(separator: ","), String(min(p.mtu, maxMtu)), String(p.keepalive ?? 25), String(min(max(p.junk, 0), 16))].joined(separator: "|")
     }
 
     static func clashes(_ s: Setup, _ links: [String: Link]) -> Set<String> {

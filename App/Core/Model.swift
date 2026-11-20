@@ -71,6 +71,10 @@ nonisolated struct WgPeer: Codable, Hashable, Sendable {
     var dns: [String] = []
     var mtu = 1420
     var keepalive: Int? = nil
+    /// Random packets the engine sends before each handshake (the provider page's Junk packets switch); 0 = none. Set
+    /// when a tunnel is picked from the page's setting, never saved with the peer.
+    var junk = 0
+    enum CodingKeys: String, CodingKey { case name, privateKey, address, publicKey, presharedKey, endpoint, allowedIps, dns, mtu, keepalive }
 }
 
 /// An imported OpenVPN profile (ExpressVPN, CyberGhost…): the raw .ovpn plus its login.

@@ -1601,6 +1601,7 @@ final class CompilerTests: XCTestCase {
         let two = Setup(routes: [Route(id: "a", wg: p), rb], defaultRoute: "a", apps: ["com.b": "b"])
         XCTAssertEqual(Compiler.clashes(two, ["a": .wg(sv("a"), p), "b": .wg(sv("b"), reversed)]), ["b"])
         p = a; p.keepalive = 0; variants.append(p)
+        p = a; p.junk = 5; variants.append(p)
         p = a; p.endpoint = a.endpoint.replacingOccurrences(of: ":51820", with: ":51821"); variants.append(p)
         for b in variants {
             XCTAssertEqual(Compiler.clashes(setup, pairs(b)), ["b"])
@@ -1609,6 +1610,31 @@ final class CompilerTests: XCTestCase {
         }
         var home = setup; home.home.wg = a
         XCTAssertFalse(Compiler.clashes(home, pairs(a)).isEmpty)
+    }
+
+    /// Junk packets: the provider page's switch reaches each of that provider's WireGuard endpoints, and only those; an
+    /// imported config and the old default have none.
+    func testJunkPacketsFollowTheProviderPage() throws {
+        func junk(_ setup: Setup) throws -> [Int?] {
+            let linked = LinkPicker.ported(setup, links(setup), step: [:])
+            return endpoints(try compile(setup, links: linked)).filter { $0["type"] as? String == "wireguard" }.map { $0["junk"] as? Int }
+        }
+        let base = example
+        XCTAssertEqual(try junk(base), [nil, nil, nil])
+        var on = base; on.opts["nord"] = ["junk": "on"]
+        XCTAssertEqual(try junk(on), [5, 5, 5])
+        on.opts["nord"] = ["junk": "off"]
+        XCTAssertEqual(try junk(on), [nil, nil, nil])
+        // An imported WireGuard config has no provider page: it never gets junk, whatever its stored peer says.
+        var mine = try WgConf.parse(Self.fritz, name: "Home box"); mine.junk = 5
+        var withOwn = base; withOwn.routes.append(Route(id: "w1", wg: mine, hue: 3)); withOwn.apps["com.c"] = "w1"; withOwn.opts["nord"] = ["junk": "on"]
+        XCTAssertEqual(try junk(withOwn), [5, 5, 5, nil])
+        XCTAssertEqual(ProviderOption.junkCount, 5)
+        XCTAssertNotNil(Providers.get("nord")?.option("junk"))
+        XCTAssertNil(Providers.get("nord")?.option("junk").flatMap { $0.accepts("maybe") ? $0 : nil })
+        // It is derived from the page's setting at connect time, so it is never written with a saved peer.
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(mine)) as? [String: Any])
+        XCTAssertNil(json["junk"])
     }
 
     func testWireGuardNumericHostIdentity() throws {
@@ -2806,6 +2832,8 @@ extension CompilerTests {
         var direct = example; direct.defaultRoute = DIRECT
         try add("direct-default", direct)
         try add("probe", example, probe: (port: 40123, password: "p"))
+        var junk = example; junk.opts["nord"] = ["junk": "on"]
+        try add("wireguard-junk", junk, links: LinkPicker.ported(junk, links(junk), step: [:]))
         try add("empty", Setup(routes: [], defaultRoute: DIRECT), links: [:])
         var internet = example; internet.apps["com.blocked"] = BLOCK; internet.prefs.killLevel = .internet
         try add("kill-internet-blocked", internet)

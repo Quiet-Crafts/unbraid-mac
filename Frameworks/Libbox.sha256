@@ -1,4 +1,4 @@
-44ff74dc1e1681639d7248a5fd61c052271efeaa933671ba21780cb70db16d1c  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
+e8201e226829404e745695569fa5a4517c0737150be47748d1b376ba8aeb3d7f  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
 54808197c77fea31eb2c22504c5f2b8c817d8eef1c06dd40affb23d2619a76cf  Libbox.xcframework/Info.plist
 link Versions/Current/Headers  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Headers
 link Versions/Current/Libbox  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Libbox
@@ -17,6 +17,7 @@ patch sing-box-darwin-effective-pid.patch a7237c6327deffed7d0c0486c19321f7491e16
 patch sing-box-darwin-local-dns-ipv4-first.patch bd751722b396e6596731f373649e2f351562123e46b54592bb3b3e8705ccd6ac
 patch sing-box-darwin-udp-owner.patch 9358ab87ff382815eebafce11927d27b4716c0d45416ee7aa41d3800336ee48c
 patch sing-box-fakeip-no-reuse.patch a382c2eb059c3e11222ef660341cffc1f3e52bdedad4701fb82884c733a5dedc
+patch sing-box-junk.patch 6841eabd753d875a55d4b519490e9aba5c76b803abfdb8cef739c892738ea501
 patch sing-box-kyber.patch 801e04731acae949d093639cf56147b287470f00e00e47f22a209979d0161251
 patch sing-box-no-config-snapshot.patch 9ea258403aae06434e9f3a7661bed1175b81a6d0eaf96a1fbc5dc743135803f5
 patch sing-box-no-taildrop-receiver.patch 5ec526e5276a209b821103cc17af83757ffdf097593c8936e16051af5f016cfa

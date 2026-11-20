@@ -39,6 +39,21 @@ final class ConfigVetTests: XCTestCase {
     }
 
     /// An OpenVPN tunnel's pushed resolver is named after the tunnel, not a route, so routes sharing it share one.
+    /// Junk packets before a WireGuard handshake: a count the engine takes, 0 to 16, never anything else.
+    func testJunkCountIsOneTheEngineTakes() throws {
+        let text = Fixture.text("golden/wireguard-junk.json")
+        XCTAssertNoThrow(try ConfigVet.check(text))
+        func with(_ value: Any) throws -> Bool {
+            var c = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+            var e = try XCTUnwrap(c["endpoints"] as? [[String: Any]])
+            for i in e.indices where e[i]["type"] as? String == "wireguard" { e[i]["junk"] = value }
+            c["endpoints"] = e
+            return (try? ConfigVet.check(String(decoding: try JSONSerialization.data(withJSONObject: c), as: UTF8.self))) != nil
+        }
+        XCTAssertTrue(try with(0)); XCTAssertTrue(try with(16))
+        for bad in [-1, 17, 1000] as [Any] + ["5", true, 2.5] { XCTAssertFalse(try with(bad), "\(bad)") }
+    }
+
     func testProtectionServerShapesAndReferences() throws {
         var config = try example()
         var dns = try XCTUnwrap(config["dns"] as? [String: Any])
