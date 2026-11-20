@@ -171,8 +171,9 @@ final class KeyProvidersTests: XCTestCase {
         XCTAssertTrue(cs.contains { $0.name == "Netherlands" && $0.code == "NL" })
         XCTAssertTrue(cs.allSatisfy { F.iso.contains($0.code) })
         XCTAssertFalse(entries.compactMap(\.city).contains { $0.contains(",") })
-        let body = #"{"servers":[{"country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.4","health":"warning"},{"country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.5","health":"ok"}]}"#
-        XCTAssertEqual(try AirVpn.parse(F.data(body), serverKey: F.key).flatMap(\.ips), ["1.2.3.5"])
+        // `error` servers refuse connections and are left out; `warning` ones work and stay.
+        let body = #"{"servers":[{"country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.4","health":"error"},{"country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.5","health":"ok"},{"country_name":"Austria","country_code":"at","ip_v4_in1":"1.2.3.6","health":"warning"}]}"#
+        XCTAssertEqual(try AirVpn.parse(F.data(body), serverKey: F.key).flatMap(\.ips), ["1.2.3.5", "1.2.3.6"])
         // The second address is dialled as the "Entry address" option: a first one that isn't public never stands with it.
         for first in ["10.1.2.3", "entry.example", "1.2.3"] {
             let two = #"{"servers":[{"country_name":"Austria","country_code":"at","ip_v4_in1":"\#(first)","ip_v4_in3":"1.2.3.6","health":"ok"}]}"#
