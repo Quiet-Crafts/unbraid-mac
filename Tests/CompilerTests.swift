@@ -1728,6 +1728,30 @@ final class CompilerTests: XCTestCase {
         XCTAssertFalse(config.contains("vmess"))
     }
 
+    /// A plain imported route owning a tunnel with the same WireGuard settings never hands it to a Disguise-on IVPN route, in
+    /// either order; a disguised tunnel (the hop is part of the key) is its own.
+    func testDisguiseOnRouteNeverSharesAPlainImportedTunnel() throws {
+        let (s0, all0) = disguising(true, data: false)
+        guard case .wg(_, let peer, _, _) = all0["iv"]! else { return XCTFail() }
+        let imported = Route(id: "imp", wg: peer)
+        for first in [true, false] {
+            var s = s0
+            s.routes = first ? [imported] + s0.routes : s0.routes + [imported]
+            s.apps["com.imp"] = "imp"
+            var all = all0
+            all["imp"] = .wg(sv("imp"), peer)
+            XCTAssertThrowsError(try Compiler.shared(s, all), "imported first: \(first)")
+            XCTAssertNoThrow(try Compiler.shared(s, all, blocked: ["iv"]))
+        }
+        let (s1, all1) = disguising()
+        var s = s1
+        s.routes.append(imported)
+        var all = all1
+        if case .wg(_, var plain, _, _) = all1["iv"]! { plain.disguise = nil; plain.vmess = nil; all["imp"] = .wg(sv("imp"), plain) }
+        let tags = try Compiler.shared(s, LinkPicker.ported(s, all, step: [:]))
+        XCTAssertNotEqual(tags["iv"], tags["imp"])
+    }
+
     func testWireGuardNumericHostIdentity() throws {
         let peer = try WgConf.parse(Self.fritz, name: "a")
         func pair(_ first: String, _ second: String) -> (Setup, [String: Link], WgPeer, WgPeer) {

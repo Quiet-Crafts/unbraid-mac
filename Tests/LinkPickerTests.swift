@@ -376,6 +376,31 @@ final class LinkPickerTests: XCTestCase {
         XCTAssertEqual(again.vmess, vmess)
     }
 
+    /// A pinned IVPN route with Disguise on while the provider can't be reached: its saved disguised tunnel stands in, a plain
+    /// one never does.
+    func testPinnedDisguiseOutageUsesOnlyADisguisedCachedTunnel() async throws {
+        let a = self.a
+        var r = Route(id: "1", loc: Location(provider: "ivpn", countryCode: "NL"))
+        r.loc.pinned = a
+        var on = setup(r)
+        on.opts = ["ivpn": ["disguise": "on"]]
+        let data = Disguise(vmess: Vmess(server: "149.22.83.102", port: 80, uuid: "27de860d-5601-412d-8b71-baa048a94b98"), wgPort: 15351)
+        guard case .wg(let s0, var p0, let ports, let entries) = link(a) else { return XCTFail() }
+        p0.disguise = data
+        let disguised = Link.wg(s0, p0, ports: ports, entries: entries)
+        func run(_ cached: Link) async throws -> LinkPicker.Result {
+            try await LinkPicker.pick(on, keep: [:], applied: nil, appliedAccounts: [:], accounts: ["ivpn": "acc"],
+                                      last: [LinkPicker.cacheKey(r, account: "acc"): cached]) { _ in Fake(best: [a], online: false, id: "ivpn") }
+        }
+        let ok = try await run(disguised)
+        guard case .wg(_, let peer, _, _)? = ok.links["1"] else { return XCTFail("the cached disguised tunnel stands in") }
+        XCTAssertNotNil(peer.disguise)
+        XCTAssertNil(ok.blocked["1"])
+        let plain = try await run(link(a))
+        XCTAssertTrue(plain.links.isEmpty, "a plain cached tunnel never stands in under Disguise")
+        XCTAssertNotNil(plain.blocked["1"])
+    }
+
     func testOfflineImportsStillApplyPortsAndBlockClashes() async throws {
         guard case .wg(_, var peer, _, _) = link(a) else { return XCTFail() }
         peer.mtu = 1280

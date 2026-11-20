@@ -394,6 +394,27 @@ final class IvpnTests: XCTestCase {
         XCTAssertEqual(wg(try Ivpn.link(l, pinned, acct)).peer.disguise, peer.disguise)
     }
 
+    /// With Disguise on, a pinned server during a list outage is an outage (the picker's saved tunnel may stand in), never a plain
+    /// tunnel made from the saved values; with Disguise off the saved values still stand in.
+    func testPinnedDisguiseNeedsTheListNow() async throws {
+        struct Down: Error {}
+        var p = Ivpn()
+        p.catalogue = { throw Down() }
+        var pinned = Location(provider: "ivpn", countryCode: "NL")
+        pinned.pinned = Server(name: "nl1", host: "nl1.wg.ivpn.net", ip: "1.2.3.4", publicKey: "k", load: 0)
+        let blob = JSON.encode(acct)
+        do { _ = try await p.connect(pinned, blob, opts: ["disguise": "on"]); XCTFail("a plain tunnel under Disguise") } catch {}
+        _ = try await p.connect(pinned, blob, opts: [:])
+        _ = try await p.connect(pinned, blob, opts: ["disguise": "off"])
+        // With a list read, the pin is looked up as before.
+        let l = try v2List()
+        p.catalogue = { l }
+        let host = try XCTUnwrap(l.wireguard.flatMap(\.hosts).first)
+        pinned.pinned = Server(name: host.hostname, host: host.hostname, ip: host.host, publicKey: host.publicKey, load: 0)
+        let on = try await p.connect(pinned, blob, opts: ["disguise": "on"])
+        XCTAssertNotNil(wg(on).peer.disguise)
+    }
+
     func testAutomaticPortsUseOnlyListedPorts() throws {
         var body = try XCTUnwrap(JSONSerialization.jsonObject(with: Fixture.data("ivpn_servers.json")) as? [String: Any])
         body["config"] = ["ports": ["wireguard": [["type": "UDP", "port": 443], ["type": "UDP", "port": 2049], ["type": "UDP", "port": 9999]]]]

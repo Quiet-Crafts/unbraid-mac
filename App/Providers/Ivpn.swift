@@ -339,6 +339,16 @@ nonisolated struct Ivpn: Provider {
         return try Self.link(list, loc, try Self.account(account))
     }
 
+    /// With Disguise on, a pinned server's V2Ray data comes only from a list read now: when it can't be read, this is an
+    /// outage (the picker's saved tunnel stands in if it is disguised), never a plain tunnel from the saved values.
+    @concurrent func connect(_ loc: Location, _ account: String, opts: [String: String]) async throws -> Link {
+        if loc.pinned != nil, opts["disguise"] == "on" {
+            guard let list = try await Catalog.unlessOutage({ try await catalogue() }), !list.wireguard.isEmpty else { throw Fail("IVPN's server list can't be read right now") }
+            return try Self.link(list, loc, try Self.account(account))
+        }
+        return try await connect(loc, account)
+    }
+
     @concurrent func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] {
         let list = try await withStatus()
         return Self.listed(list, loc, limit: limit)

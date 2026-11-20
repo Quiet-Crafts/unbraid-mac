@@ -251,6 +251,12 @@ nonisolated enum LinkPicker {
         return peer.disguise != nil
     }
 
+    /// The same from a provider's raw options (the cached tunnel that stands in for a failed lookup): only IVPN has Disguise.
+    static func disguised(_ opts: [String: String], _ r: Route, _ l: Link) -> Bool {
+        guard !r.imported, r.loc.provider == "ivpn", opts["disguise"] == "on", case .wg(_, let peer, _, _) = l else { return true }
+        return peer.disguise != nil
+    }
+
     /// Applies the selected provider ports to the links. `step` is the number of ports that have failed, per tunnel (provider and
     /// server, `serverKey`): routes on one server share it, another server keeps its port, and a route changed to another
     /// provider or server starts over.
@@ -365,7 +371,7 @@ nonisolated enum LinkPicker {
             throw e
         } catch {
             guard !(p.id == "mullvad" && pinned == nil && opts["owned"] == "on"),
-                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), trusted(cached, r, accounts, providers), AutoProtocol.matches(r, cached) else {
+                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), trusted(cached, r, accounts, providers), disguised(opts, r, cached), AutoProtocol.matches(r, cached) else {
                 throw pinned.map { Fail("\(r.name): \($0.name) is unreachable") } ?? error
             }
             l = cached

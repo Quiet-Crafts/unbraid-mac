@@ -76,11 +76,21 @@ nonisolated enum Compiler {
         var out: [String: String] = [:]
         for r in s.activeRoutes(tailnet: tailnet) where r.tsExit == nil && !blocked.contains(r.id) {
             guard let link = links[r.id] else { throw Fail("No server for \(r.name)") }
+            // Each route is checked before it can share: a plain tunnel owned by another route is never handed to it.
+            try requireDisguise(r, link, s)
             let key = linkKey(r, link)
             if owners[key] == nil { owners[key] = "r-\(r.id)" }
             out[r.id] = owners[key]
         }
         return out
+    }
+
+    /// With Disguise on, never a plain tunnel: the picker holds such a route back, and this is the last stop. Run for
+    /// every route before tunnels are shared (the hop is part of a tunnel's key, `wgKey`).
+    private static func requireDisguise(_ r: Route, _ link: Link, _ s: Setup) throws {
+        if case .wg(_, let peer, _, _) = link, !r.imported, s.opt(r.loc.provider, "disguise") == "on", peer.vmess == nil {
+            throw Fail("Disguise is on, but \(r.name) has no V2Ray hop")
+        }
     }
 
     static func compile(_ input: Input) throws -> String {
@@ -449,10 +459,7 @@ nonisolated enum Compiler {
             guard p.shared[r.id] == "r-\(r.id)", let link = p.i.links[r.id] else { continue }
             switch link {
             case .wg(_, let peer, _, _):
-                // With Disguise on, never a plain tunnel: the picker holds such a route back, and this is the last stop.
-                if !r.imported, s.opt(r.loc.provider, "disguise") == "on", peer.vmess == nil {
-                    throw Fail("Disguise is on, but \(r.name) has no V2Ray hop")
-                }
+                try requireDisguise(r, link, s)
                 endpoints.append(try wg(p.tag(r.id), peer, r.name, maxMtu: r.imported ? 1280 : 1420))
                 // The V2Ray hop is only ever the WireGuard endpoint's `detour`: no routing rule names it.
                 if let v = peer.vmess { outbounds.append(try vmess(p.tag(r.id), v, r.name)) }
