@@ -289,6 +289,12 @@ nonisolated struct Ivpn: Provider {
         return peer.privateKey == a.privateKey && peer.presharedKey == psk
     }
 
+    /// Without the account: an IVPN WireGuard tunnel without a preshared key is never one of unbraid's now.
+    func vouches(_ link: Link) -> Bool {
+        guard case .wg(_, let peer, _, _) = link else { return true }
+        return peer.presharedKey.map(validWgKey) == true
+    }
+
     static func account(_ blob: String) throws -> Account { try JSON.decode(Account.self, Data(blob.utf8), "IVPN") }
 
     @concurrent func countries(_ account: String) async throws -> [Country] { Self.countries(try await catalogue()) }

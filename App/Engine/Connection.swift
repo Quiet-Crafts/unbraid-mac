@@ -1117,7 +1117,9 @@ final class Connection {
             // quantum-safe key, say): refused rather than sealed again for macOS to start on its own.
             let blocked = Set(record.setup.activeRoutes.filter { r in
                 (!r.imported && record.links[r.id] == nil && store.accounts[r.loc.provider] == nil) || LinkPicker.keyLeftOut(r, in: record.setup)
-                    || (!r.imported && store.accounts[r.loc.provider] != nil && record.links[r.id].map { !LinkPicker.trusted($0, r, store.accounts, Providers.get) } == true)
+                    || (!r.imported && record.links[r.id].map { l in
+                        !(Providers.get(r.loc.provider)?.vouches(l) ?? true) || (store.accounts[r.loc.provider] != nil && !LinkPicker.trusted(l, r, store.accounts, Providers.get))
+                    } == true)
             }.map(\.id))
             guard let kept = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
             // The tailnet domain as accepted now, so routes, DNS and the seal key all come from the same Home.

@@ -394,4 +394,15 @@ final class IvpnTests: XCTestCase {
         }
     }
 
+
+    /// Without the account (a keychain that can't be read yet), an IVPN tunnel without a preshared key is never vouched for.
+    func testATunnelWithoutAPresharedKeyIsNeverVouchedFor() throws {
+        let sv = Server(name: "nl1", host: "nl1.wg.ivpn.net", ip: "203.0.113.5", publicKey: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", load: 0)
+        var peer = WgPeer(name: "nl1", privateKey: "k", address: ["172.16.0.2/32"], publicKey: sv.publicKey, endpoint: "203.0.113.5:2049", allowedIps: ["0.0.0.0/0"])
+        XCTAssertFalse(Ivpn().vouches(.wg(sv, peer)))
+        peer.presharedKey = "not a key"
+        XCTAssertFalse(Ivpn().vouches(.wg(sv, peer)))
+        peer.presharedKey = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        XCTAssertTrue(Ivpn().vouches(.wg(sv, peer)))
+    }
 }
