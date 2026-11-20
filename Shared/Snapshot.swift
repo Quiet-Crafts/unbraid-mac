@@ -58,6 +58,16 @@ nonisolated struct Snapshot: Codable, Equatable, Sendable {
     /// Tailscale as the widgets name it: "Tailscale on", "Tailscale off", or "Headscale on" for a self-hosted control
     /// server (an earlier build wrote "TS on"); nil when it isn't set up, and in older snapshots.
     var tailscale: String? = nil
+    /// unbraid can't open its saved settings (the keychain won't open, or they were saved by a newer unbraid): the
+    /// widgets say so instead of showing a stand-in setup. Nil otherwise, and in older snapshots.
+    var held: Bool? = nil
+    /// With `held`: the apps are kept offline meanwhile. Nil when they aren't, and in older snapshots.
+    var appsOffline: Bool? = nil
+
+    /// What the widgets say while the saved settings won't open.
+    static let heldTitle = "Settings won't open"
+    static let heldOffline = "Apps offline"
+    static let heldOpen = "Open unbraid to see why"
 
     /// How many apps and websites take a route: "5 apps · 2 websites", "2 websites", or the apps alone.
     static func count(apps: Int, sites: Int) -> String {

@@ -511,4 +511,40 @@ final class SnapshotTests: XCTestCase {
         XCTAssertEqual(labels(step: 500_000_000, ticks: 4), ["0", "0.5 GB", "1.0 GB", "1.5 GB", "2.0 GB"])
         XCTAssertEqual(labels(step: 25, ticks: 4), ["0", "25 B", "50 B", "75 B", "100 B"])
     }
+
+    /// With the device list, an exit route works only while its device is the exit in use and online.
+    func testATailscaleExitNeedsItsDevice() {
+        let exit = Route(id: "ts", tsExit: "100.64.0.9", tsName: "exit")
+        let s = Setup(routes: [nl, exit], defaultRoute: "nl", apps: ["com.a": "ts"])
+        func ok(online: Bool, used: String?, nodes: Bool = true, state: String = "Running") -> Bool? {
+            let list = nodes ? [RouteHealth.ExitDevice(name: "exit", ip: "100.64.0.9", online: online, id: "n1")] : []
+            return Snapshot.make(phase: .on, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 2, week: [],
+                                 answering: ["nl"], tsState: state, tsExit: (used, list)).routes.first { $0.id == "ts" }?.ok
+        }
+        XCTAssertEqual(ok(online: true, used: "n1"), true)
+        XCTAssertEqual(ok(online: false, used: "n1"), false)
+        XCTAssertNil(ok(online: true, used: "n2"))
+        XCTAssertNil(ok(online: true, used: "n1", nodes: false))
+        XCTAssertEqual(ok(online: true, used: "n1", state: "Stopped"), false)
+    }
+
+    /// Settings that won't open ride in the snapshot; an older snapshot without the fields still reads.
+    func testHeldSettingsInTheSnapshot() throws {
+        let s = Setup(routes: [nl], defaultRoute: "nl")
+        func make(held: Bool, offline: Bool) -> Snapshot {
+            Snapshot.make(phase: .on, since: nil, pausedUntil: nil, failed: false, edited: s, running: s, exits: 1, week: [], settingsHeld: held, appsOffline: offline)
+        }
+        XCTAssertNil(make(held: false, offline: true).held)
+        XCTAssertNil(make(held: false, offline: true).appsOffline)
+        XCTAssertEqual(make(held: true, offline: false).held, true)
+        XCTAssertNil(make(held: true, offline: false).appsOffline)
+        let both = make(held: true, offline: true)
+        XCTAssertEqual(both.appsOffline, true)
+        XCTAssertEqual(try JSONDecoder().decode(Snapshot.self, from: JSONEncoder().encode(both)), both)
+        // An older snapshot has neither key.
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(both)) as? [String: Any])
+        json["held"] = nil; json["appsOffline"] = nil
+        let old = try JSONDecoder().decode(Snapshot.self, from: JSONSerialization.data(withJSONObject: json))
+        XCTAssertNil(old.held); XCTAssertNil(old.appsOffline)
+    }
 }

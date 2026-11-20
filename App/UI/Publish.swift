@@ -80,6 +80,8 @@ extension Snapshot {
         return make(phase: v.phase, since: v.phase == .on ? v.since : nil, pausedUntil: v.pausedUntil, failed: v.error != nil,
                     edited: m.setup, running: m.vpn.running, exits: Set(m.vpn.tags.values).count, week: week, profileGeneration: m.profileGeneration,
                     protection: v.phase == .on ? v.runState.protection(blocked: Set(v.blocked.keys)) : nil,
-                    silent: v.silent, answering: Set(v.answering), blocked: Set(v.blocked.keys), tsState: v.tsState)
+                    silent: v.silent, answering: Set(v.answering), blocked: Set(v.blocked.keys), tsState: v.tsState,
+                    tsExit: (Connection.shared.tsStatus?.exitNode, v.tsExitNodes.map { RouteHealth.ExitDevice(name: $0.name, ip: $0.ip, online: $0.online, id: $0.id) }), settingsHeld: m.store.setupStandIn,
+                    appsOffline: v.phase == .on && v.runState.standIn == .denyAll)
     }
 }

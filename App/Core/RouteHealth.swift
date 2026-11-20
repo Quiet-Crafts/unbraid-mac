@@ -37,6 +37,33 @@ nonisolated enum RouteHealth: Equatable, Sendable {
         return first + cause + " unbraid keeps checking." + why
     }
 
+    /// A Tailscale device as Tailscale lists it: [id] is the stable id its status names the exit in use by.
+    struct ExitDevice: Equatable, Sendable {
+        var name: String, ip: String, online: Bool, id = ""
+    }
+
+    /// Whether a route through the Tailscale exit device at [ip] works, from Tailscale's own list: false while the device is
+    /// offline (its apps get no internet), true while it is online and the exit in use ([used], Tailscale's id for it).
+    /// Nil when Tailscale says nothing certain: no list yet, the device isn't in it, or it uses another device (a speed
+    /// test's switch, or one not made yet), which says nothing about this one.
+    static func exitWorks(ip: String, used: String?, nodes: [ExitDevice]) -> Bool? {
+        guard let node = nodes.first(where: { $0.ip == ip }) else { return nil }
+        if !node.online { return false }
+        return !node.id.isEmpty && node.id == used ? true : nil
+    }
+
+    /// The Tailscale exit device a route goes through, when Tailscale lists it and says it is offline; nil otherwise.
+    static func offlineExit(ip: String?, nodes: [ExitDevice]) -> ExitDevice? {
+        guard let ip, exitWorks(ip: ip, used: nil, nodes: nodes) == false else { return nil }
+        return nodes.first { $0.ip == ip }
+    }
+
+    /// What the route page says about an offline exit device.
+    static func offlineExitText(_ device: String) -> String {
+        "\(device) is offline: its apps have no internet. Choose another exit."
+    }
+    static let chooseExit = "Choose Exit…"
+
     /// The "Check internet access" switch is offered for an own server only: provider routes are always checked, and
     /// Tailscale exits never are.
     static func offersInternetCheck(_ r: Route) -> Bool { r.imported && r.tsExit == nil }

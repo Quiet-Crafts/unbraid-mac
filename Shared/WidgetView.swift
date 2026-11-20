@@ -24,6 +24,8 @@ struct WidgetView: View {
 
     var body: some View {
         Group {
+            // Settings that won't open say so at every size: a stand-in setup's routes and totals aren't the user's.
+            if live && s.held == true { held } else {
             switch family {
             // Medium and large list the routes as the app does: a slash, the name, how many apps it carries.
             case .systemMedium: HStack(spacing: 14) { status.frame(width: 112); Divider(); routes }
@@ -35,8 +37,24 @@ struct WidgetView: View {
                 }
             default: status
             }
+            }
         }
         .containerBackground(.fill.tertiary, for: .widget)
+    }
+
+    /// unbraid can't open its saved settings: what that means, and the way to the app.
+    private var held: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            HStack(spacing: 6) {
+                Circle().fill(Palette.block).frame(width: 8, height: 8).widgetAccentable()
+                Text("unbraid").font(.caption).foregroundStyle(.secondary)
+            }
+            Text(Snapshot.heldTitle).font(.headline).lineLimit(2).minimumScaleFactor(0.8).padding(.top, 8)
+            Text(s.appsOffline == true ? Snapshot.heldOffline : Snapshot.heldOpen).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+            Spacer(minLength: 8)
+            SwiftUI.Link(destination: URL(string: "unbraid://open")!) { Text("Open unbraid").frame(maxWidth: .infinity) }
+                .buttonStyle(.bordered).buttonBorderShape(.capsule)
+        }
     }
 
     @ViewBuilder private var status: some View {

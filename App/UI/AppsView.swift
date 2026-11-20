@@ -474,12 +474,32 @@ struct MoveItems: View {
 private struct RouteHealthCards: View {
     let route: Route
     private let model = AppModel.shared
+    @Environment(\.openPicker) private var openPicker
+
+    /// The exit device the running route goes through, while Tailscale runs and lists it as offline: its apps have no
+    /// internet until it is back or the route gets another exit.
+    private var offlineDevice: RouteHealth.ExitDevice? {
+        let v = model.vpn.state
+        guard v.phase == .on, TailscaleStatus(v.tsState) == .connected, let ip = route.tsExit,
+              model.vpn.running?.routes.first(where: { $0.id == route.id })?.tsExit == ip else { return nil }
+        return RouteHealth.offlineExit(ip: ip, nodes: v.tsExitNodes.map { RouteHealth.ExitDevice(name: $0.name, ip: $0.ip, online: $0.online, id: $0.id) })
+    }
 
     var body: some View {
         let silent = model.vpn.state.health(route.id) == .silent
         let check = RouteHealth.offersInternetCheck(route)
-        if silent || check {
+        let offline = offlineDevice
+        if silent || check || offline != nil {
             VStack(spacing: 12) {
+                if let offline {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
+                        Text(RouteHealth.offlineExitText(offline.name)).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(RouteHealth.chooseExit) { openPicker(route.id) }.controlSize(.small)
+                    }
+                    .padding(.horizontal, Layout.inset).padding(.vertical, 14).card()
+                }
                 if silent {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)

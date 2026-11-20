@@ -10,7 +10,8 @@ extension Snapshot {
     /// check was answered; `tsState`: Tailscale's own state.
     static func make(phase: Phase, since: Date?, pausedUntil: Date?, failed: Bool, edited: Setup, running: Setup?,
                      exits: Int, week: [Day], profileGeneration: String? = nil, protection: Bool? = nil,
-                     silent: [String] = [], answering: Set<String> = [], blocked: Set<String> = [], tsState: String? = nil) -> Snapshot {
+                     silent: [String] = [], answering: Set<String> = [], blocked: Set<String> = [], tsState: String? = nil,
+                     tsExit: (used: String?, nodes: [RouteHealth.ExitDevice])? = nil, settingsHeld: Bool = false, appsOffline: Bool = false) -> Snapshot {
         let s = phase == .on ? running ?? edited : edited
         let counts = Dictionary(grouping: s.apps.values, by: { $0 }).mapValues(\.count)
         let sites = Dictionary(grouping: Sites.applied(s).values, by: { $0 }).mapValues(\.count)
@@ -24,21 +25,26 @@ extension Snapshot {
         }
         // Working only on evidence: a check answered, or Tailscale saying it runs. A route not checked (an own server
         // with its check off) or not checked yet (right after connecting, a wake or a network change) is not known.
-        func ok(_ id: String, exit: Bool) -> Bool? {
+        // With the device list (`tsExit`), a route works only while its device is the exit in use and online, and fails
+        // while it is offline.
+        func ok(_ id: String, exit: String?) -> Bool? {
             guard phase == .on else { return nil }
             if down.contains(id) { return false }
-            return exit ? ts : answering.contains(id) ? true : nil
+            guard let exit else { return answering.contains(id) ? true : nil }
+            guard ts == true, let tsExit else { return ts }
+            return RouteHealth.exitWorks(ip: exit, used: tsExit.used, nodes: tsExit.nodes)
         }
         return Snapshot(
             phase: phase, since: since, pausedUntil: pausedUntil, exits: exits,
             routes: s.activeRoutes.map {
                 Route(id: $0.id, name: $0.name, code: $0.code, hue: $0.hue, apps: counts[$0.id] ?? 0, isDefault: $0.id == s.defaultRoute,
-                      country: $0.imported ? nil : $0.loc.countryCode, sites: sites[$0.id], ok: ok($0.id, exit: $0.tsExit != nil))
+                      country: $0.imported ? nil : $0.loc.countryCode, sites: sites[$0.id], ok: ok($0.id, exit: $0.tsExit))
             },
             direct: counts[DIRECT] ?? 0, blocked: counts[BLOCK] ?? 0, directSites: sites[DIRECT], blockedSites: sites[BLOCK], week: week,
             failed: failed ? true : nil, defaultRoute: s.defaultRoute == DIRECT ? DIRECT : nil,
             profiles: edited.profiles.map(\.name), profile: edited.profile, profileGeneration: profileGeneration, protected: protection,
-            tailscale: tailscale(s, on: phase == .on && TailscaleStatus(tsState) == .connected))
+            tailscale: tailscale(s, on: phase == .on && TailscaleStatus(tsState) == .connected),
+            held: settingsHeld ? true : nil, appsOffline: settingsHeld && appsOffline ? true : nil)
     }
 
     /// "Tailscale on" or "Headscale off": Headscale for a self-hosted control server, as the Android widget names it; on

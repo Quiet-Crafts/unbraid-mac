@@ -63,4 +63,28 @@ final class RouteHealthTests: XCTestCase {
         XCTAssertLessThanOrEqual(HealthSchedule.every.upperBound, 90)
         XCTAssertFalse(RouteHealth.title.contains("network"), "the network isn't blamed when it may be the server")
     }
+
+    /// A Tailscale exit device works while it is online and the exit in use; offline it fails; anything else is unknown.
+    func testExitWorks() {
+        let ip = "100.64.0.9"
+        func nodes(online: Bool) -> [RouteHealth.ExitDevice] { [RouteHealth.ExitDevice(name: "home-mac", ip: ip, online: online, id: "n1"), RouteHealth.ExitDevice(name: "other", ip: "100.64.0.8", online: true, id: "n2")] }
+        XCTAssertEqual(RouteHealth.exitWorks(ip: ip, used: "n1", nodes: nodes(online: false)), false)
+        XCTAssertEqual(RouteHealth.exitWorks(ip: ip, used: "n2", nodes: nodes(online: false)), false)
+        XCTAssertEqual(RouteHealth.exitWorks(ip: ip, used: "n1", nodes: nodes(online: true)), true)
+        // Another device in use (a speed test, or a switch not made yet): nothing is known about this one.
+        XCTAssertNil(RouteHealth.exitWorks(ip: ip, used: "n2", nodes: nodes(online: true)))
+        XCTAssertNil(RouteHealth.exitWorks(ip: ip, used: nil, nodes: nodes(online: true)))
+        XCTAssertNil(RouteHealth.exitWorks(ip: ip, used: "", nodes: [RouteHealth.ExitDevice(name: "x", ip: ip, online: true)]))
+        // No list, or the device isn't in it.
+        XCTAssertNil(RouteHealth.exitWorks(ip: ip, used: "n1", nodes: []))
+        XCTAssertNil(RouteHealth.exitWorks(ip: "100.64.0.1", used: "n1", nodes: nodes(online: false)))
+    }
+
+    func testOfflineExitText() {
+        let nodes = [RouteHealth.ExitDevice(name: "home-mac", ip: "100.64.0.9", online: false, id: "n1")]
+        XCTAssertEqual(RouteHealth.offlineExit(ip: "100.64.0.9", nodes: nodes)?.name, "home-mac")
+        XCTAssertNil(RouteHealth.offlineExit(ip: nil, nodes: nodes))
+        XCTAssertNil(RouteHealth.offlineExit(ip: "100.64.0.9", nodes: [RouteHealth.ExitDevice(name: "home-mac", ip: "100.64.0.9", online: true, id: "n1")]))
+        XCTAssertEqual(RouteHealth.offlineExitText("home-mac"), "home-mac is offline: its apps have no internet. Choose another exit.")
+    }
 }
