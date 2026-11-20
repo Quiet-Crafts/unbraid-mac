@@ -19,6 +19,8 @@ private struct Fake: Provider {
     var suitsServer = true
     /// What the provider says about taking a disguised tunnel; nil = nothing.
     var disguise: Disguise? = nil
+    /// The port the provider takes multi-hop tunnels on; nil = none.
+    var hop: Int? = nil
     var id = "fake"
     let name = "Fake"
     let fields: [Field] = []
@@ -33,8 +35,9 @@ private struct Fake: Provider {
         return marked(link(loc.pinned ?? best[0]))
     }
     private func marked(_ l: Link) -> Link {
-        guard let disguise, case .wg(let s, var p, let ports, let entries) = l else { return l }
+        guard disguise != nil || hop != nil, case .wg(let s, var p, let ports, let entries) = l else { return l }
         p.disguise = disguise
+        p.hopPort = hop
         return .wg(s, p, ports: ports, entries: entries)
     }
     func servers(_ loc: Location, _ account: String, limit: Int) async throws -> [Server] {
@@ -827,5 +830,343 @@ extension LinkPickerTests {
         let legacy = #"{"routes":[{"id":"a","loc":{"provider":"pia"},"filter":true},{"id":"b","loc":{"provider":"pia"},"filter":false},{"id":"c","loc":{"provider":"pia"}}]}"#
         let migrated = try JSONDecoder().decode(Setup.self, from: Data(legacy.utf8))
         XCTAssertEqual(migrated.routes.map(\.filter), [true, false, nil])
+    }
+}
+
+// MARK: Via and the provider's own multi-hop
+
+private let viaKey = "aGVsbG8taGVsbG8taGVsbG8taGVsbG8taGVsbG8tMTI="
+private let viaOtherKey = "5p4RkybdRU5uaDi90eu4KZPTFif0lKCg4Qp6t1c4F30="
+
+private func ownPeer(_ name: String, _ endpoint: String) -> WgPeer {
+    WgPeer(name: name, privateKey: viaKey, address: ["10.5.0.2/32"], publicKey: viaOtherKey, endpoint: endpoint, allowedIps: ["0.0.0.0/0"])
+}
+
+final class ViaTests: XCTestCase {
+    private func own(_ id: String, _ endpoint: String, via: String? = nil) -> Route {
+        Route(id: id, wg: ownPeer(id, endpoint), hue: 1, via: via)
+    }
+
+    private func provider(_ id: String, _ code: String, provider: String = "fake", pinned: Server? = nil, via: String? = nil, native: Bool = false) -> Route {
+        Route(id: id, loc: Location(provider: provider, countryCode: code, country: code, pinned: pinned), via: via, viaNative: native)
+    }
+
+    private func setup(_ routes: [Route], apps: [String: String] = [:], defaultRoute: String? = nil) -> Setup {
+        Setup(routes: routes, defaultRoute: defaultRoute ?? routes[0].id, apps: apps)
+    }
+
+    private func pick(_ s: Setup, offline: Bool = false, last: [String: Link] = [:], keep: [String: Link] = [:], applied: Setup? = nil,
+                      providers: @escaping (String) -> (any Provider)? = { _ in nil }) async throws -> LinkPicker.Result {
+        try await LinkPicker.pick(s, keep: keep, applied: applied, appliedAccounts: [:], accounts: ["fake": "acc", "ivpn": "acc", "pia": "acc"], last: last, offline: offline, providers: providers)
+    }
+
+    private func text(_ b: LinkPicker.Blocked?) -> String { b?.text ?? "" }
+
+    // MARK: Setup
+
+    func testWhyAViaCantBeUsed() throws {
+        let entry = own("e", "203.0.113.5:51820"), exit = own("x", "203.0.113.9:51820", via: "e")
+        var s = setup([entry, exit])
+        XCTAssertNil(s.viaProblem(exit))
+        XCTAssertNil(s.viaProblem(entry), "no Via, no problem")
+        func problem(_ change: (inout Setup) -> Void) -> String? { var t = s; change(&t); return t.viaProblem(t.route("x")!) }
+        XCTAssertTrue(try XCTUnwrap(problem { $0.routes[1].via = "gone" }).contains("first route was removed"))
+        XCTAssertTrue(try XCTUnwrap(problem { $0.routes[1].via = "x" }).contains("straight to its server only"))
+        // A chain of three: the entry goes through another route itself.
+        s.routes.append(own("y", "203.0.113.11:51820"))
+        s.routes[0].via = "y"
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("straight to its server only"))
+        s.routes[0].via = nil
+        // Entries that can't carry one: a Tailscale exit, a Shadowsocks server with a plugin, OpenVPN.
+        s.routes.append(Route(id: "ts", tsExit: "nas"))
+        XCTAssertTrue(try XCTUnwrap(problem { $0.routes[1].via = "ts" }).contains("Tailscale"))
+        let ss = try Manual.parseSs("ss://\(Data("chacha20-ietf-poly1305:secret".utf8).base64EncodedString())@ss.example.net:8388/?plugin=obfs-local%3Bobfs%3Dhttp#Mine", name: "Mine")
+        s.routes.append(Route(id: "ss", ss: ss))
+        XCTAssertTrue(try XCTUnwrap(problem { $0.routes[1].via = "ss" }).contains("plugin"))
+        // Exits that can't go through one: OpenVPN, Shadowsocks, PIA, a name instead of an address.
+        s.routes[1].ss = ss; s.routes[1].wg = nil
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("WireGuard"))
+        s.routes[1] = provider("x", "NL", provider: "pia", via: "e")
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("contacts its server directly"))
+        s.routes[1] = own("x", "vpn.example.org:51820", via: "e")
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("address, not a name"))
+        s.routes[1] = own("x", "[2001:db8::1]:51820", via: "e")
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("IPv4"), "the engine's check takes plain IPv4 addresses behind another tunnel")
+        // A provider's WireGuard route is fine: the provider's own servers are named by address.
+        s.routes[1] = provider("x", "NL", provider: "mullvad", via: "e")
+        XCTAssertNil(s.viaProblem(s.routes[1]))
+        s.routes[1].loc.proto = "openvpn_udp"
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("WireGuard"))
+    }
+
+    func testWhyAMultiHopCantBeUsed() throws {
+        var s = setup([provider("e", "CH", provider: "ivpn"), provider("x", "DE", provider: "ivpn", via: "e", native: true)])
+        XCTAssertNil(s.viaProblem(s.routes[1]))
+        s.routes[0].loc.countryCode = "de"
+        XCTAssertNil(s.viaProblem(s.routes[1]), "the countries are checked on the servers picked, not the places saved")
+        s.routes[0] = provider("e", "CH", provider: "mullvad")
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("same provider that offers it"))
+        s = setup([provider("e", "CH", provider: "mullvad"), provider("x", "DE", provider: "mullvad", via: "e", native: true)])
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("same provider that offers it"), "only a provider with its own multi-hop")
+        s = setup([own("e", "203.0.113.5:51820"), provider("x", "DE", provider: "ivpn", via: "e", native: true)])
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(s.routes[1])).contains("same provider that offers it"))
+    }
+
+    func testAnEntryRunsOnlyWhenItsViaCanBeUsed() throws {
+        var s = setup([own("n", "203.0.113.1:51820"), own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820", via: "e")], apps: ["app": "x"])
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["n", "e", "x"], "the entry runs though no app uses it")
+        s.routes[2].via = "gone"
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["n", "x"])
+        s = setup([provider("n", "NL"), provider("e", "CH", provider: "ivpn"), provider("x", "DE", provider: "ivpn", via: "e", native: true)], apps: ["app": "x"])
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["n", "x"], "one tunnel by the provider's own multi-hop needs no entry tunnel")
+    }
+
+    func testASetupWithAViaIsSavedAsFormat4AndOlderOnesAreNotChanged() throws {
+        func encoded(_ s: Setup) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any]) }
+        var s = setup([own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820")])
+        XCTAssertNil(try encoded(s)["version"], "nothing new is written without a Via")
+        s.sites["example.com"] = "x"
+        XCTAssertEqual(try encoded(s)["version"] as? Int, 2)
+        s.routes[1].via = "e"
+        let json = try encoded(s)
+        XCTAssertEqual(json["version"] as? Int, 4)
+        let routes = try XCTUnwrap(json["routes"] as? [[String: Any]])
+        XCTAssertNil(routes[0]["via"]); XCTAssertNil(routes[0]["viaNative"])
+        XCTAssertEqual(routes[1]["via"] as? String, "e")
+        XCTAssertNil(routes[1]["viaNative"], "written only when set")
+        let back = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(s))
+        XCTAssertEqual(back.routes[1].via, "e")
+        XCTAssertFalse(back.routes[1].viaNative)
+        s.routes[1] = provider("x", "DE", provider: "ivpn", via: "e", native: true)
+        let native = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(s))
+        XCTAssertTrue(native.routes[1].viaNative)
+        XCTAssertEqual(try encoded(s)["version"] as? Int, 4)
+        // Android's field names: a setup it saved reads here, and a newer format is refused whole.
+        let android = #"{"version":4,"routes":[{"id":"e","wg":{"name":"e","privateKey":"\#(viaKey)","address":["10.5.0.2/32"],"publicKey":"\#(viaOtherKey)","endpoint":"203.0.113.5:51820","allowedIps":["0.0.0.0/0"],"mtu":1420}},{"id":"x","loc":{"provider":"ivpn","countryCode":"DE"},"via":"e","viaNative":true}],"defaultRoute":"e"}"#
+        let read = try JSONDecoder().decode(Setup.self, from: Data(android.utf8))
+        XCTAssertEqual(read.routes[1].via, "e"); XCTAssertTrue(read.routes[1].viaNative)
+        XCTAssertThrowsError(try JSONDecoder().decode(Setup.self, from: Data(#"{"version":5,"routes":[]}"#.utf8))) { XCTAssertEqual($0 as? Setup.Newer, Setup.Newer(format: 5)) }
+        XCTAssertNoThrow(try JSONDecoder().decode(Setup.self, from: Data(#"{"version":3,"routes":[]}"#.utf8)))
+    }
+
+    // MARK: Picking
+
+    func testAViaRouteGoesThroughAnEntryThatRunsAndNeverAtFullSize() async throws {
+        let s = setup([own("n", "203.0.113.1:51820"), own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820", via: "e")], apps: ["app": "x"])
+        let r = try await pick(s)
+        XCTAssertEqual(Set(r.links.keys), ["n", "e", "x"])
+        XCTAssertTrue(r.blocked.isEmpty)
+        guard case .wg(_, let peer, _, _)? = r.links["x"], case .wg(_, let entry, _, _)? = r.links["e"] else { return XCTFail() }
+        XCTAssertEqual(peer.mtu, 1200)
+        XCTAssertEqual(entry.mtu, 1280)
+    }
+
+    /// The entry first: the exit waits until the entry has its tunnel, and is blocked, never left straight.
+    func testARouteWaitsForItsEntryAndNeverGoesStraight() async throws {
+        let s = setup([own("n", "203.0.113.1:51820"), provider("e", "NL"), own("x", "203.0.113.9:51820", via: "e")], apps: ["app": "x"])
+        let down = try await pick(s) { _ in Fake(best: [Server(name: "a", host: "h", ip: "10.0.0.1", publicKey: "p", load: 0)], online: false) }
+        XCTAssertNil(down.links["x"])
+        XCTAssertTrue(text(down.blocked["x"]).contains("waits for"), text(down.blocked["x"]))
+        // Offline, with nothing remembered: the entry waits and so does the route.
+        let offline = try await pick(s, offline: true) { _ in Fake(best: [], failIfCalled: true) }
+        XCTAssertEqual(offline.blocked["e"], .waiting)
+        XCTAssertNil(offline.links["x"])
+        XCTAssertNotNil(offline.blocked["x"])
+        // Once the entry is up the route goes through it.
+        let up = try await pick(s) { _ in Fake(best: [Server(name: "a", host: "h", ip: "10.0.0.1", publicKey: "p", load: 0)]) }
+        XCTAssertNotNil(up.links["x"]); XCTAssertNotNil(up.links["e"])
+    }
+
+    /// A route whose Via can't be used is stopped before its provider is asked anything (PIA's set-up reaches the server).
+    func testAViaThatCantBeUsedIsCheckedBeforeAnyProviderIsAsked() async throws {
+        let s = setup([own("e", "203.0.113.5:51820"), provider("x", "NL", provider: "pia", via: "e")], apps: ["app": "x"])
+        let r = try await pick(s) { _ in Fake(best: [], failIfCalled: true, id: "pia") }
+        XCTAssertNil(r.links["x"])
+        XCTAssertTrue(text(r.blocked["x"]).contains("contacts its server directly"))
+        // A missing entry blocks too, and the route isn't tried.
+        let t = setup([own("x", "203.0.113.9:51820", via: "gone")])
+        let gone = try await pick(t)
+        XCTAssertNil(gone.links["x"]); XCTAssertNotNil(gone.blocked["x"])
+    }
+
+    func testDisguiseAndViaAreNeverCombined() async throws {
+        var s = setup([own("e", "203.0.113.5:51820"), provider("x", "NL", provider: "ivpn", via: "e")], apps: ["app": "x"])
+        s.opts["ivpn"] = ["disguise": "on"]
+        let data = Disguise(vmess: Vmess(server: "149.22.83.102", port: 80, uuid: "27de860d-5601-412d-8b71-baa048a94b98"), wgPort: 15351)
+        let server = Server(name: "a", host: "h", ip: "10.0.0.1", publicKey: viaOtherKey, load: 0)
+        let r = try await pick(s) { _ in Fake(best: [server], disguise: data, id: "ivpn") }
+        XCTAssertNil(r.links["x"])
+        XCTAssertTrue(text(r.blocked["x"]).contains("Disguise doesn't work with Via"), text(r.blocked["x"]))
+        // The entry disguised is as bad.
+        var t = setup([provider("e", "CH", provider: "ivpn"), own("x", "203.0.113.9:51820", via: "e")], apps: ["app": "x"])
+        t.opts["ivpn"] = ["disguise": "on"]
+        let entry = try await pick(t) { _ in Fake(best: [server], disguise: data, id: "ivpn") }
+        XCTAssertNil(entry.links["x"])
+        XCTAssertTrue(text(entry.blocked["x"]).contains("Disguise doesn't work with Via"))
+    }
+
+    // MARK: The provider's own multi-hop
+
+    private let entryServer = Server(name: "ch1", host: "ch1.example", ip: "93.184.1.1", publicKey: viaOtherKey, load: 0)
+    private let exitServer = Server(name: "de1", host: "de1.example", ip: "93.184.2.2", publicKey: "exit-key", load: 0)
+
+    private func hop() -> Setup {
+        setup([provider("e", "CH", provider: "ivpn", pinned: entryServer), provider("x", "DE", provider: "ivpn", pinned: exitServer, via: "e", native: true)],
+              apps: [:], defaultRoute: "x")
+    }
+
+    func testTheProvidersMultiHopGoesToTheEntryAddressOnTheForwardingPort() async throws {
+        let s = hop()
+        let r = try await pick(s) { _ in Fake(best: [self.entryServer], hop: 2049, id: "ivpn") }
+        XCTAssertEqual(Set(r.links.keys), ["x"], "the entry needs no tunnel of its own")
+        guard case .wg(let server, let peer, _, _)? = r.links["x"] else { return XCTFail() }
+        XCTAssertEqual(server.ip, "93.184.2.2")
+        XCTAssertEqual(peer.endpoint, "93.184.1.1:2049")
+        XCTAssertEqual(peer.hopEntry, "93.184.1.1")
+        XCTAssertEqual(peer.publicKey, "exit-key", "the exit's own key")
+        XCTAssertEqual(peer.mtu, 1280, "no tunnel inside another")
+        // Never kept or cached: what is remembered is the plain exit.
+        guard case .wg(_, let plain, _, _)? = r.remember.first(where: { $0.key.contains("DE") })?.value else { return XCTFail("\(r.remember.keys)") }
+        XCTAssertNil(plain.hopEntry)
+        XCTAssertEqual(plain.endpoint, "93.184.2.2:51820")
+        XCTAssertTrue(r.blocked.isEmpty)
+        // A kept multi-hop tunnel is not reused, and the offline pass has nothing for it: it waits.
+        let kept = try await pick(s, offline: true, keep: ["x": r.links["x"]!], applied: s) { _ in Fake(best: [], failIfCalled: true, id: "ivpn") }
+        XCTAssertNil(kept.links["x"])
+        XCTAssertEqual(kept.blocked["x"], .waiting)
+        // Nor a cached one.
+        let cached = try await pick(s, offline: true, last: r.remember) { _ in Fake(best: [], failIfCalled: true, id: "ivpn") }
+        XCTAssertNil(cached.links["x"], "the plain exit is cached, and the entry's server is only asked for online")
+        XCTAssertEqual(cached.blocked["x"], .waiting)
+    }
+
+    func testAMultiHopNeedsTwoCountriesAndAPortAndTwoServers() async throws {
+        var same = hop()
+        same.routes[0].loc.countryCode = "DE"
+        let sameCountry = try await pick(same) { _ in Fake(best: [self.entryServer], hop: 2049, id: "ivpn") }
+        XCTAssertNil(sameCountry.links["x"])
+        XCTAssertTrue(text(sameCountry.blocked["x"]).contains("different countries"), text(sameCountry.blocked["x"]))
+        let noPort = try await pick(hop()) { _ in Fake(best: [self.entryServer], id: "ivpn") }
+        XCTAssertNil(noPort.links["x"])
+        XCTAssertTrue(text(noPort.blocked["x"]).contains("doesn't say how to reach it by multi-hop"), text(noPort.blocked["x"]))
+        // The entry's own tunnel, when an app uses it, gives its server; the same server twice is refused.
+        var both = hop()
+        both.apps["app"] = "e"
+        both.routes[1].loc.pinned = entryServer
+        let twin = try await pick(both) { _ in Fake(best: [self.entryServer], hop: 2049, id: "ivpn") }
+        XCTAssertNil(twin.links["x"])
+        XCTAssertTrue(text(twin.blocked["x"]).contains("same server"), text(twin.blocked["x"]))
+        XCTAssertNotNil(twin.links["e"])
+        let apart = try await pick({ var t = both; t.routes[1].loc.pinned = exitServer; return t }()) { _ in Fake(best: [self.entryServer], hop: 2049, id: "ivpn") }
+        XCTAssertEqual(apart.links.count, 2)
+        guard case .wg(_, let peer, _, _)? = apart.links["x"] else { return XCTFail() }
+        XCTAssertEqual(peer.endpoint, "93.184.1.1:2049")
+    }
+
+    // MARK: Backups
+
+    func testMovingAnAppToAViaRouteOrRemovingAnEntryTakesTheInterimPath() {
+        var old = setup([own("n", "203.0.113.1:51820"), own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820", via: "e"), own("y", "203.0.113.12:51820")], apps: ["app": "y"])
+        var new = old
+        new.apps["app"] = "x"
+        XCTAssertTrue(LinkPicker.needsInterim(from: old, to: new), "an app moves from a single-hop route to one not running yet")
+        old = new
+        new.routes.removeAll { $0.id == "e" }
+        XCTAssertTrue(LinkPicker.needsInterim(from: old, to: new), "the entry is gone: its route is held")
+        new = old; new.routes[2].via = nil
+        XCTAssertFalse(LinkPicker.needsInterim(from: old, to: new))
+    }
+
+    func testMovingAnAppOntoAnActiveNativeHopRouteTakesTheInterimPath() {
+        let old = setup([provider("n", "NL"), provider("e", "CH", provider: "ivpn"), provider("x", "DE", provider: "ivpn", via: "e", native: true), provider("y", "FR")],
+                        apps: ["a": "x", "b": "y"])
+        var new = old
+        new.apps["b"] = "x"
+        XCTAssertTrue(LinkPicker.needsInterim(from: old, to: new), "its tunnel is looked up again: the app is held meanwhile")
+        new = old; new.apps["a"] = "y"
+        XCTAssertFalse(LinkPicker.needsInterim(from: old, to: new))
+    }
+
+    func testAOneTunnelFlagWithoutAViaIsDamageNeverAStraightRoute() async throws {
+        var r = provider("x", "DE", provider: "ivpn")
+        r.viaNative = true
+        let s = setup([own("n", "203.0.113.1:51820"), r], apps: ["app": "x"])
+        XCTAssertTrue(try XCTUnwrap(s.viaProblem(r)).contains("damaged"))
+        XCTAssertNotNil(s.viaProblem(r))
+        // Saved with the flag, read with it: nothing drops it silently.
+        let back = try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(s))
+        XCTAssertTrue(back.route("x")!.viaNative)
+        let r2 = try await pick(s) { _ in Fake(best: [Server(name: "a", host: "h", ip: "93.184.1.1", publicKey: "p", load: 0)], id: "ivpn") }
+        XCTAssertNil(r2.links["x"], "blocked, never connected straight")
+        XCTAssertNotNil(r2.blocked["x"])
+    }
+
+    func testPausedSealHoldsARouteGivenAViaSinceTheRecord() {
+        let record = setup([own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820")], apps: ["app": "x"])
+        var store = record
+        XCTAssertEqual(Lifecycle.viaHeld(record: record, store: store), [])
+        store.routes[1].via = "e"
+        XCTAssertEqual(Lifecycle.viaHeld(record: record, store: store), ["x"])
+        var same = record; same.routes[1].via = "e"
+        XCTAssertEqual(Lifecycle.viaHeld(record: same, store: same), [])
+        store = same; store.routes.removeAll { $0.id == "e" }
+        XCTAssertEqual(Lifecycle.viaHeld(record: same, store: store), ["x"])
+    }
+
+    func testANativeHopNeverAsksAgainForAnEntryTheMainPickBlocked() async throws {
+        var s = hop()
+        s.apps["app"] = "e"
+        var gone = LinkPicker.RemovedPins()
+        gone.remember(["e": .noLongerOffered("ch1")], setup: s, accounts: ["ivpn": "acc"])
+        let r = try await LinkPicker.pick(s, keep: [:], applied: nil, appliedAccounts: [:], accounts: ["ivpn": "acc"], last: [:], gone: gone) { _ in Fake(best: [self.entryServer], hop: 2049, id: "ivpn") }
+        XCTAssertEqual(r.blocked["e"], .noLongerOffered("ch1"))
+        XCTAssertNil(r.links["x"])
+        XCTAssertTrue(text(r.blocked["x"]).contains("waits for"), text(r.blocked["x"]))
+    }
+
+    func testAChangeOfViaStopsTheRunningTunnelAtOnce() {
+        let old = setup([own("n", "203.0.113.1:51820"), own("e", "203.0.113.5:51820"), own("x", "203.0.113.9:51820")], apps: ["app": "x"])
+        var new = old
+        XCTAssertFalse(LinkPicker.needsInterim(from: old, to: new))
+        new.routes[2].via = "e"
+        XCTAssertTrue(LinkPicker.needsInterim(from: old, to: new), "a tunnel running straight stops until the new path is installed")
+        let was = new
+        new.routes[2].via = "n"
+        XCTAssertTrue(LinkPicker.needsInterim(from: was, to: new))
+        new = old; new.routes[2].via = nil
+        XCTAssertFalse(LinkPicker.needsInterim(from: was, to: new), "taking a Via off needs no stop")
+    }
+}
+
+/// A Via the picker opened with stays as it is when only the place changes: a held or damaged one-tunnel Via never
+/// turns the route straight by itself. Only a choice the user made changes it.
+final class ViaChoiceTests: XCTestCase {
+    func testOnlyAChosenViaChangesTheRoute() {
+        var held = Route(id: "exit")
+        (held.via, held.viaNative) = (nil, true)
+        XCTAssertTrue(ViaChoice(entry: nil, native: true).applied(to: held) == (nil, true))
+        XCTAssertTrue(ViaChoice().applied(to: held) == (nil, false))
+        var two = Route(id: "exit")
+        two.via = "entry"
+        XCTAssertTrue(ViaChoice(entry: "entry").applied(to: two) == ("entry", false))
+        XCTAssertTrue(ViaChoice(entry: "entry", native: true).applied(to: two) == ("entry", true))
+        XCTAssertTrue(ViaChoice(entry: "entry", native: true).applied(to: two, native: false) == ("entry", false))
+        XCTAssertTrue(ViaChoice(entry: nil, native: true).applied(to: Route(id: "straight")) == (nil, false))
+    }
+
+    /// A route switched to an own server keeps its Via as it is: a held one-tunnel Via stays (and holds the route back)
+    /// rather than leaving it straight.
+    func testAnOwnServerKeepsAHeldVia() {
+        var r = Route(id: "exit")
+        (r.via, r.viaNative) = (nil, true)
+        var s = Setup(routes: [r, Route(id: "entry")], defaultRoute: "entry")
+        s.addImported("exit", id: "unused", signedIn: ["nord"]) { _ in }
+        XCTAssertEqual(s.route("exit")?.viaNative, true)
+        XCTAssertNotNil(s.viaProblem(s.route("exit")!))
+        var two = Route(id: "exit")
+        two.via = "entry"
+        var t = Setup(routes: [two, Route(id: "entry")], defaultRoute: "entry")
+        t.addImported("exit", id: "unused", signedIn: ["nord"]) { _ in }
+        XCTAssertEqual(t.route("exit")?.via, "entry")
     }
 }

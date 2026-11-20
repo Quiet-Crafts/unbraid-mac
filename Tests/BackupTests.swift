@@ -1133,3 +1133,113 @@ private extension Result {
 private extension Backup.Content {
     func with(_ change: (inout Backup.Content) -> Void) -> Backup.Content { var c = self; change(&c); return c }
 }
+
+// MARK: Via
+
+extension BackupTests {
+    private var second: WgPeer {
+        try! WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 10.0.0.3/32\n[Peer]\nPublicKey = \(peerKey)\nEndpoint = 198.51.100.7:51820\nAllowedIPs = 0.0.0.0/0\n", name: "Second box")
+    }
+    private var third: WgPeer {
+        try! WgConf.parse("[Interface]\nPrivateKey = \(key)\nAddress = 10.0.0.4/32\n[Peer]\nPublicKey = \(peerKey)\nEndpoint = 198.51.100.8:51820\nAllowedIPs = 0.0.0.0/0\n", name: "Third box")
+    }
+
+    private func throughAnother() -> Setup {
+        Setup(routes: [Route(id: "a", wg: wg, hue: 1), Route(id: "b", wg: second, hue: 2, via: "a")], defaultRoute: "a", apps: ["org.example.x": "b"])
+    }
+
+    func testAViaSurvivesABackupAndIsSavedAsFormat4() throws {
+        let s = throughAnother()
+        let data = Backup.export(s, app: "1.2.0", created: .now, keys: true)
+        let top = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(top["format"] as? Int, 1, "the backup's own format is unchanged")
+        XCTAssertEqual((top["mac"] as? [String: Any])?["version"] as? Int, 4)
+        let back = try Backup.read(data)
+        XCTAssertEqual(back.setup.route("b")?.via, "a")
+        // A backup from a build that knows a newer format is refused whole, as before.
+        XCTAssertEqual(failure { try Backup.read(self.edited(s) { $0["version"] = 5 }) }, .newer)
+    }
+
+    func testAViaThatCantBeUsedIsRefusedBeforeAnythingChanges() throws {
+        var gone = throughAnother(); gone.routes[1].via = "nowhere"
+        XCTAssertNoThrow(try Backup.valid(gone), "a route whose first route was removed is saved as it is and stays blocked")
+        var itself = throughAnother(); itself.routes[1].via = "b"
+        XCTAssertTrue(refused(itself).contains("goes through a route"))
+        // A loop, and a chain of three.
+        var loop = throughAnother(); loop.routes[0].via = "b"
+        XCTAssertTrue(refused(loop).contains("goes through a route"))
+        var chain = throughAnother(); chain.routes.append(Route(id: "c", wg: third, hue: 3, via: "b"))
+        XCTAssertTrue(refused(chain).contains("goes through a route"))
+        var ts = throughAnother(); ts.routes.append(Route(id: "t", tsExit: "100.64.0.1", tsName: "box")); ts.routes[1].via = "t"
+        XCTAssertTrue(refused(ts).contains("goes through a route"))
+        var pia = throughAnother(); pia.routes[1] = Route(id: "b", loc: Location(provider: "pia", countryCode: "NL", country: "Netherlands"), hue: 2, via: "a")
+        XCTAssertTrue(refused(pia).contains("goes through a route"))
+        // One tunnel by a provider's multi-hop between two routes of another provider or an own server's.
+        var native = throughAnother(); native.routes[1].viaNative = true
+        XCTAssertTrue(refused(native).contains("goes through a route"))
+        XCTAssertNoThrow(try Backup.valid(throughAnother()))
+    }
+
+    /// Keeping this Mac's setup as a profile gives its routes new ids where the backup uses theirs for something else:
+    /// a route's Via follows its entry to the new id.
+    func testRestoreKeepingTheCurrentSetupRemapsItsVia() throws {
+        let current = throughAnother()
+        // The backup uses the ids a and b for other servers, and has its own Via between them.
+        let other = Setup(routes: [Route(id: "a", wg: third, hue: 1), Route(id: "b", wg: wg, hue: 2, via: "a")], defaultRoute: "a", apps: ["org.example.y": "b"])
+        let plan = Backup.plan(onto: current, from: try read(other), keepPrevious: true, now: .now, judge: false)
+        let s = plan.setup
+        XCTAssertEqual(s.routes.count, 4)
+        XCTAssertEqual(s.route("b")?.via, "a", "the backup's own Via is as it was")
+        let moved = s.routes.filter { $0.wg == second }, entry = s.routes.filter { $0.wg == wg && $0.id != "b" }
+        XCTAssertEqual(moved.count, 1); XCTAssertEqual(entry.count, 1)
+        XCTAssertNotEqual(entry[0].id, "a")
+        XCTAssertEqual(moved[0].via, entry[0].id, "this Mac's route goes through its own entry, not the backup's")
+        XCTAssertNoThrow(try Backup.valid(s), "the setup that results can be saved as a backup and restored again")
+        // The kept profile names the new ids.
+        let kept = try XCTUnwrap(s.profiles.first { $0.name == plan.keptAs })
+        XCTAssertEqual(kept.apps["org.example.x"], moved[0].id)
+    }
+
+    /// A route that is the very same one in both setups keeps its id and its Via.
+    func testARouteTheBackupAlsoHasKeepsItsViaWhenKept() throws {
+        let current = throughAnother()
+        var backup = throughAnother()
+        backup.routes.append(Route(id: "c", wg: third, hue: 3))
+        let plan = Backup.plan(onto: current, from: try read(backup), keepPrevious: true, now: .now, judge: false)
+        XCTAssertEqual(plan.setup.routes.map(\.id), ["a", "b", "c"])
+        XCTAssertEqual(plan.setup.route("b")?.via, "a")
+    }
+
+    /// A Via to a route this Mac no longer has never ends up on a route of the backup that has that id.
+    func testAViaToARemovedRouteIsNeverAttachedToAnotherRoute() throws {
+        var current = throughAnother()
+        current.routes[1].via = "ghost"
+        let other = Setup(routes: [Route(id: "ghost", wg: third, hue: 1), Route(id: "b", wg: wg, hue: 2)], defaultRoute: "ghost", apps: ["org.example.y": "b"])
+        let plan = Backup.plan(onto: current, from: try read(other), keepPrevious: true, now: .now, judge: false)
+        let moved = try XCTUnwrap(plan.setup.routes.first { $0.wg == second })
+        XCTAssertNotNil(moved.via)
+        XCTAssertNil(plan.setup.route(moved.via ?? ""), "it points at nothing, so it stays blocked")
+    }
+
+    /// A removed native-hop entry is saved like a removed two-tunnel one; a one-tunnel flag with no Via is damage.
+    func testADanglingNativeHopIsSavedAndAFlagWithoutAViaIsRefused() throws {
+        var s = Setup(routes: [Route(id: "a", wg: wg, hue: 1), Route(id: "x", loc: Location(provider: "ivpn", countryCode: "DE", country: "Germany"), hue: 2, via: "gone", viaNative: true)],
+                      defaultRoute: "a", apps: [:])
+        XCTAssertNoThrow(try Backup.valid(s))
+        let back = try read(s)
+        XCTAssertTrue(back.setup.route("x")?.viaNative == true, "kept through a save and a restore")
+        s.routes[1].via = nil
+        XCTAssertTrue(refused(s).contains("damaged"))
+    }
+
+    /// A Via of the backup that points at nothing doesn't attach to this Mac's route with that id.
+    func testABackupsDanglingViaNeverAttachesToThisMacsRoute() throws {
+        let current = Setup(routes: [Route(id: "a", wg: wg, hue: 1), Route(id: "ghost", wg: third, hue: 2)], defaultRoute: "a", apps: ["org.example.x": "ghost"])
+        var backup = Setup(routes: [Route(id: "a", wg: wg, hue: 1), Route(id: "b", wg: second, hue: 2, via: "ghost")], defaultRoute: "a", apps: ["org.example.y": "b"])
+        backup.routes[1].via = "ghost"
+        let plan = Backup.plan(onto: current, from: try read(backup), keepPrevious: true, now: .now, judge: false)
+        let b = try XCTUnwrap(plan.setup.route("b"))
+        XCTAssertNotNil(b.via)
+        XCTAssertNil(plan.setup.route(b.via ?? ""), "still pointing at nothing")
+    }
+}

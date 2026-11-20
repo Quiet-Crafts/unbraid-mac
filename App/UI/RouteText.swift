@@ -6,8 +6,14 @@ let nordGroups: [(key: String?, label: String)] = [
 ]
 
 /// Where a route leaves, in words: "NordVPN · P2P · Amsterdam · OpenVPN", or the kind of own server.
-/// `tcp`: the Automatic routes now on OpenVPN TCP (`VpnState.autoTcp`).
-func place(_ r: Route, _ live: [String: Server], tcp: [String] = []) -> String {
+/// `tcp`: the Automatic routes now on OpenVPN TCP (`VpnState.autoTcp`). `routes`: the setup's, to name a Via entry.
+func place(_ r: Route, _ live: [String: Server], tcp: [String] = [], routes: [Route] = []) -> String {
+    let base = placeOnly(r, live, tcp: tcp)
+    guard let v = r.via else { return base }
+    return base + " · via \(routes.first { $0.id == v }?.name ?? "a removed route")" + (r.viaNative ? ", one tunnel" : "")
+}
+
+private func placeOnly(_ r: Route, _ live: [String: Server], tcp: [String]) -> String {
     if r.wg != nil { return "WireGuard" }
     if r.ovpn != nil { return "OpenVPN" }
     if r.ss != nil { return "Shadowsocks" }

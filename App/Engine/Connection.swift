@@ -957,6 +957,10 @@ final class Connection {
                 guard !store.setupStandIn else { return wakeWhenHeld(g) { await self.reconcilePause(launch: launch) } }
                 cancelHeldWake()
                 let input = makePausedInput(), key = PauseKey(input, search: search(input))
+                // The pause stopped the tunnel and a Via was given since: what a start from System Settings would run is the
+                // old copy, which sends that route straight on. Nothing can be sealed again with the tunnel down: drop it.
+                if pausedInput == nil, tunnel.status != .connected, case .record(let ran) = await Running.read(),
+                   !Lifecycle.viaHeld(record: ran.setup, store: store.setup).isEmpty { _ = await Running.unsealed() }
                 let previous = state
                 var step = Lifecycle.pauseStep(wanted: key, running: pausedInput.map { PauseKey($0, search: pausedSearch) }, connected: tunnel.status == .connected,
                                                retry: pauseRetry, now: .now)
@@ -1127,6 +1131,8 @@ final class Connection {
         var search: String
         /// The tailnet domain websites are judged by: one accepted during the pause seals again.
         var siteDomain: String?
+        /// The routes refused because their Via changed since the pause: a Via given while paused seals again.
+        var held: Set<String> = []
     }
     private var pauseSealed: SealKey?
     /// Seal attempts that may pass are tried again by this wake (not by a change's retry, which may replace its own).
@@ -1173,12 +1179,19 @@ final class Connection {
             // Routes with no tunnel to run: a provider's while signed out, an own server's that waits for its config, and
             // a provider's whose recorded tunnel its provider no longer vouches for (an IVPN tunnel from before the
             // quantum-safe key, say): refused rather than sealed again for macOS to start on its own.
-            let blocked = Set(record.setup.activeRoutes.filter { r in
+            var blocked = Set(record.setup.activeRoutes.filter { r in
                 (!r.imported && record.links[r.id] == nil && store.accounts[r.loc.provider] == nil) || LinkPicker.keyLeftOut(r, in: record.setup)
                     || (!r.imported && record.links[r.id].map { l in
                         !(Providers.get(r.loc.provider)?.vouches(l) ?? true) || (store.accounts[r.loc.provider] != nil && !LinkPicker.trusted(l, r, store.accounts, Providers.get))
                     } == true)
             }.map(\.id))
+            // A route that goes through another runs only with its entry: refused, never sealed to go straight on.
+            blocked.formUnion(Lifecycle.viaHeld(record: record.setup, store: store.setup))
+            for r in record.setup.activeRoutes where r.via != nil {
+                let entry = r.via.flatMap { record.setup.route($0) }
+                if record.setup.viaProblem(r) != nil || record.links[r.id] == nil
+                    || (!r.viaNative && (entry.map { blocked.contains($0.id) || record.links[$0.id] == nil } ?? true)) { blocked.insert(r.id) }
+            }
             guard let kept = Lifecycle.protected(record: record.setup, linked: Set(record.links.keys), store: store.setup, blockedRoutes: blocked) else { return nil }
             // The tailnet domain as accepted now, so routes, DNS and the seal key all come from the same Home.
             let setup = Sites.withDomain(kept, of: store.setup)
@@ -1187,7 +1200,7 @@ final class Connection {
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) && !blocked.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
                                        selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
                                        tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: .given(domain), probe: nil, ownerless: .refusedWhileSplit)
-            return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input), siteDomain: domain), input)
+            return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input), siteDomain: domain, held: input.blocked), input)
         }
         // What holds now (`Lifecycle.sealAdmission`): the record read above, the setup and the accounts as they are.
         func admitted(_ p: (key: SealKey, input: Compiler.Input)?) -> Bool {

@@ -83,7 +83,29 @@ final class PromisesTests: XCTestCase {
             let installed = Dictionary(uniqueKeysWithValues: appKeys.filter { $0 != missing || remembered.contains($0) }
                 .map { ($0, [Compiler.pattern(forPath: "/Applications/\($0).app")]) })
             let ownerless = [Compiler.Ownerless.followsDefault, .refusedWhileBlocking, .refusedWhileSplit][next(3)]
-            var input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: installed, remembered: remembered,
+            // Via: "us" sometimes through "nl" (two tunnels), the second IVPN route sometimes through the first as IVPN's
+            // own multi-hop (one tunnel, to the exit's forwarding port at the entry). Neither with Disguise (the picker holds
+            // such a route back), nor beside a route on the same server
+            // without one (that is refused: one key, one server, two settings). A route whose entry has no tunnel waits, as the picker leaves it.
+            var blockedNow = blocked
+            let via = !disguise && !share && next(4) == 0, native = !disguise && !share && next(4) == 0
+            if via, let i = s.routes.firstIndex(where: { $0.id == "us" }) {
+                s.routes[i].via = "nl"
+                if blocked.contains("nl") { links["us"] = nil; blockedNow.insert("us") }
+            }
+            if native, let i = s.routes.firstIndex(where: { $0.id == "iw" }) {
+                (s.routes[i].via, s.routes[i].viaNative) = ("iv", true)
+                if case .wg(let sv, var peer, let ports, let entries)? = links["iw"] {
+                    peer.hopEntry = server("iv").ip
+                    peer.disguise = nil
+                    // The exit server's own key: every generated server shares one, which a multi-hop through the
+                    // entry's address would otherwise read as one server with two settings.
+                    peer.publicKey = "ZXhpdC1leGl0LWV4aXQtZXhpdC1leGl0LWV4aXQtMTI="
+                    peer.endpoint = server("iv").ip + ":" + (peer.endpoint.split(separator: ":").last.map(String.init) ?? "51820")
+                    links["iw"] = .wg(sv, peer, ports: ports, entries: entries)
+                }
+            }
+            var input = Compiler.Input(setup: s, links: links, blocked: blockedNow, apps: installed, remembered: remembered,
                                        selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: s.tailscale ? s.home.tsSuffix : nil,
                                        probe: next(4) == 0 ? (port: 18080, password: "probe") : nil, ownerless: ownerless,
                                        tsLoginPending: next(5) == 0)
@@ -97,7 +119,7 @@ final class PromisesTests: XCTestCase {
             }
             let label = "case \(n): default \(s.defaultRoute) apps \(s.apps.sorted { $0.key < $1.key }) sites \(s.sites.sorted { $0.key < $1.key }) "
                 + "blocked \(blocked.sorted()) remembered \(remembered.sorted()) \(ownerless) kill \(s.prefs.killLevel) lan \(s.prefs.lan) "
-                + "tailscale \(s.home.tailscale) suffix \(s.home.tsSuffix ?? "-") disguise \(disguise) share \(share) domain \(input.websiteDomain ?? "-")"
+                + "tailscale \(s.home.tailscale) suffix \(s.home.tsSuffix ?? "-") disguise \(disguise) share \(share) via \(via) native \(native) domain \(input.websiteDomain ?? "-")"
             return Case(input: input, label: label)
         }
     }
@@ -128,7 +150,7 @@ final class PromisesTests: XCTestCase {
         "Route": [
             "id": "gen", "loc": "gen", "tsExit": "gen", "tsName": "gen", "hue": "window only",
             "wg": "imported: batch 4", "ovpn": "imported: batch 4", "ss": "imported: batch 4", "keyless": "imported: batch 4",
-            "own": "own servers: batch 4", "filter": "lookups: batch 2", "checkInternet": "health checks: batch 5",
+            "via": "gen", "viaNative": "gen", "own": "own servers: batch 4", "filter": "lookups: batch 2", "checkInternet": "health checks: batch 5",
         ],
         "Input": [
             "setup": "gen", "links": "gen", "blocked": "gen", "apps": "gen", "remembered": "gen", "selfPattern": "gen",
@@ -252,9 +274,10 @@ final class PromisesTests: XCTestCase {
                     }
                 }
                 // P1, read from the tunnel itself rather than its name: the tunnel an app's route goes out on dials that
-                // route's own server.
-                if !i.blocked.contains(route), s.route(route)?.tsExit == nil, case .wg(let sv, _, _, _)? = i.links[route] {
-                    XCTAssertEqual(addresses[w.tag(route)], sv.ip, "P1 server of \(route) for \(app), \(c.label)")
+                // route's own server; a one-tunnel multi-hop dials its entry route's server, which forwards to the exit.
+                if !i.blocked.contains(route), let r = s.route(route), r.tsExit == nil, case .wg(let sv, let peer, _, _)? = i.links[route] {
+                    XCTAssertEqual(addresses[w.tag(route)], r.viaNative ? peer.hopEntry : sv.ip, "P1 server of \(route) for \(app), \(c.label)")
+                    if r.viaNative { XCTAssertNotNil(peer.hopEntry, "P1 multi-hop without its entry, \(c.label)") }
                 }
                 // P1 (websites): a name with an applied website rule, and any name under it, follows the rule (a block
                 // refuses, Direct goes Direct, a route its tunnel), whatever the app's route; a blocked app is refused

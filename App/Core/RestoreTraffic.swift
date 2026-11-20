@@ -109,6 +109,11 @@ nonisolated enum RestoreTraffic {
             else if let l = LinkPicker.imported(r) { links[r.id] = l }
             else { links[r.id] = standIn(r, n) }
         }
+        // Routes on a Via (a provider's included) behave as they will: through an entry that has a tunnel, else refused.
+        for r in s.activeRoutes where r.via != nil {
+            if s.viaProblem(r) != nil || (!r.viaNative && r.via.map { links[$0] == nil } == true) { links[r.id] = nil; blocked.insert(r.id) }
+            else if r.viaNative, case .wg(let sv, var p, let ports, let entries)? = links[r.id] { p.hopEntry = "192.0.2.1"; links[r.id] = .wg(sv, p, ports: ports, entries: entries) }
+        }
         let input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
                                    tsSuffix: s.tailscale ? Compiler.trustedStoredSuffix(s.home) : nil)
         guard let text = try? Compiler.compile(input), let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],

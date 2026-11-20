@@ -78,6 +78,14 @@ final class IvpnTests: XCTestCase {
         XCTAssertTrue(hosts.allSatisfy { $0.publicKey.count == 44 && validWgKey($0.publicKey) })
     }
 
+    /// The server carries its gateway's country (a multi-hop needs two) and its multi-hop port, wherever it was picked from.
+    func testTheServerCarriesItsCountryAndMultiHopPort() throws {
+        let anywhere = wg(try Ivpn.link(list, Location(provider: "ivpn"), acct))
+        let host = try XCTUnwrap(list.wireguard.flatMap { g in g.hosts.map { (g, $0) } }.first { $0.1.hostname == anywhere.server.host })
+        XCTAssertEqual(anywhere.server.country, host.0.countryCode.uppercased())
+        XCTAssertEqual(anywhere.peer.hopPort, host.1.multihopPort)
+    }
+
     func testCountryLinkPicksTheLeastLoadedHost() throws {
         let l = wg(try Ivpn.link(list, Location(provider: "ivpn", countryCode: "NL"), acct))
         let best = try XCTUnwrap(list.wireguard.filter { $0.countryCode == "NL" }.flatMap(\.hosts).min { $0.load < $1.load })

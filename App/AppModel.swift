@@ -630,13 +630,24 @@ final class AppModel {
     /// Points route `id` at a provider location, dropping any imported source it had.
     /// `filter`, when given, is set in the same change (`.some(nil)` = as set for the provider in Settings): nothing
     /// changes if the limit question is answered with Cancel. `completion` says whether the change was made.
-    func setLocation(_ id: String, _ loc: Location, filter: Bool?? = nil, completion: @escaping (Bool) -> Void = { _ in }) {
+    /// The route keeps its Via (the entry stays whatever the exit is); `via`, when given, sets it in the same change.
+    func setLocation(_ id: String, _ loc: Location, filter: Bool?? = nil, via: ViaChoice? = nil, completion: @escaping (Bool) -> Void = { _ in }) {
         guarded({ s in
             guard let i = s.routes.firstIndex(where: { $0.id == id }) else { return }
             let r = s.routes[i]
-            s.routes[i] = Route(id: r.id, loc: loc, hue: r.hue, filter: !r.imported && r.loc.provider == loc.provider ? r.filter : nil)
+            s.routes[i] = Route(id: r.id, loc: loc, hue: r.hue, filter: !r.imported && r.loc.provider == loc.provider ? r.filter : nil, via: r.via, viaNative: r.viaNative)
             if let filter { s.routes[i].filter = filter }
+            if let via { (s.routes[i].via, s.routes[i].viaNative) = via.applied(to: r) }
         }, targets: [.location(id)], finished: completion)
+    }
+
+    /// Route `id` goes through route `entry` first (`native`: as one tunnel, by the provider's own multi-hop), or straight
+    /// to its server when `entry` is nil.
+    func setVia(_ id: String, _ entry: String?, native: Bool = false) {
+        guarded({ s in
+            guard let i = s.routes.firstIndex(where: { $0.id == id }) else { return }
+            (s.routes[i].via, s.routes[i].viaNative) = (entry, entry != nil && native)
+        }, targets: [.location(id)])
     }
 
     func renameRoute(_ id: String, _ name: String) {
@@ -869,8 +880,13 @@ final class AppModel {
 
     /// Route `target` exits through saved server `s`; returns the route id.
     @discardableResult
-    func useServer(_ target: String, _ s: OwnServer) -> String {
-        addImported(target) { $0.wg = s.wg; $0.ovpn = s.ovpn; $0.ss = s.ss; $0.own = s.id }
+    func useServer(_ target: String, _ s: OwnServer, via: ViaChoice? = nil) -> String {
+        let before = setup.route(target)
+        return addImported(target) {
+            $0.wg = s.wg; $0.ovpn = s.ovpn; $0.ss = s.ss; $0.own = s.id
+            // An own server has no provider multi-hop: a choice made here is two tunnels.
+            if let via { ($0.via, $0.viaNative) = before.map { via.applied(to: $0, native: false) } ?? (via.entry, false) }
+        }
     }
 
     /// Renames a saved server and every route using it.

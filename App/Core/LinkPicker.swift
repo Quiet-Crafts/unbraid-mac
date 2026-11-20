@@ -77,7 +77,23 @@ nonisolated enum LinkPicker {
         // leaves the saved websites alike: the tailnet's domain accepted and the switches that decide which private names
         // answer before them (Reach your tailnet, Reach devices on this network), which can take names under a saved
         // public website away from it; and the filter that looks a Direct website's names up.
-        return changes(old.defaultRoute, new.defaultRoute) || old.sites != new.sites
+        // A route given a Via, or one whose Via changed (another entry, or one tunnel by the provider's multi-hop): the
+        // tunnel that runs now goes straight to its server, so it stops at once (the interim pick holds the route until
+        // its entry is up) rather than run on until the providers have answered.
+        let oldActive = Set(old.activeRoutes.map(\.id))
+        // Any change that puts traffic on a Via route (a route not running before, or one whose Via changed) takes the
+        // interim path, and so does one that removes or invalidates an entry: the routes that depended on it are held.
+        let viaChanged = new.activeRoutes.contains { r in
+            r.via != nil && (!oldActive.contains(r.id) || old.route(r.id).map { $0.via != r.via || $0.viaNative != r.viaNative } != false)
+        } || old.activeRoutes.contains { o in
+            o.via != nil && new.route(o.id).map { $0.via != nil && new.viaProblem($0) != nil } == true
+        }
+        // Traffic moving onto a route that goes by the provider's own multi-hop: its tunnel is asked for again each time.
+        let native = Set(new.routes.filter { $0.viaNative && $0.via != nil }.map(\.id))
+        let toNative = !native.isEmpty && ((native.contains(new.defaultRoute) && old.defaultRoute != new.defaultRoute)
+            || Set(old.apps.keys).union(new.apps.keys).contains { native.contains(new.routeOf($0)) && old.routeOf($0) != new.routeOf($0) }
+            || new.sites.contains { native.contains($0.value) && old.sites[$0.key] != $0.value })
+        return viaChanged || toNative || changes(old.defaultRoute, new.defaultRoute) || old.sites != new.sites
             || !new.sites.isEmpty && (Sites.tailnet(of: old) != Sites.tailnet(of: new) || old.home.tailscale != new.home.tailscale
                 || old.prefs.lan != new.prefs.lan || old.prefs.effectiveFilter != new.prefs.effectiveFilter
                 || suffixes.map { Compiler.tsSuffix($0.old) != Compiler.tsSuffix($0.new) } == true)
@@ -177,6 +193,8 @@ nonisolated enum LinkPicker {
         var blocked: [String: Blocked] = [:]
         for r in setup.activeRoutes {
             if keyLeftOut(r, in: setup) { blocked[r.id] = .keyLeftOut; continue }
+            // A Via that can't be used stops the route before any provider is asked anything (PIA's set-up would reach the exit).
+            if let why = setup.viaProblem(r) { blocked[r.id] = .unreachable(why); continue }
             if let reason = gone.reason(for: r) { blocked[r.id] = reason; continue }
             if let reason = deferred[r.id] { blocked[r.id] = reason; continue }
             if !r.imported, let reason = refused[r.loc.provider] { blocked[r.id] = reason; continue }
@@ -184,7 +202,7 @@ nonisolated enum LinkPicker {
             do {
                 if let l = imported(r) {
                     link = l
-                } else if let k = keep[r.id], let a = applied?.route(r.id), !a.imported, a.loc == r.loc,
+                } else if let k = keep[r.id], let a = applied?.route(r.id), !a.imported, a.loc == r.loc, a.viaNative == r.viaNative, !hopped(k),
                           appliedAccounts[r.loc.provider] == accounts[r.loc.provider],
                           (r.loc.provider != "mullvad" || r.loc.pinned != nil || applied?.opt("mullvad", "owned") == setup.opt("mullvad", "owned")),
                           r.loc.pinned != nil || providers(r.loc.provider)?.suits(k.server, opts: setup.opts[r.loc.provider] ?? [:]) != false,
@@ -200,7 +218,7 @@ nonisolated enum LinkPicker {
                     guard !(p.id == "mullvad" && r.loc.pinned == nil && setup.opt(p.id, "owned") == "on"),
                           let cached = last[cacheKey(r, account: account)],
                           (r.loc.pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))),
-                          dialable(cached), trusted(cached, r, accounts, providers), disguised(setup, r, cached), AutoProtocol.matches(r, cached) else {
+                          dialable(cached), !hopped(cached), trusted(cached, r, accounts, providers), disguised(setup, r, cached), AutoProtocol.matches(r, cached) else {
                         blocked[r.id] = .waiting
                         continue
                     }
@@ -250,12 +268,111 @@ nonisolated enum LinkPicker {
                 blocked[r.id] = gone; out.removeValue(forKey: r.id)
             }
         }
+        // The provider's own multi-hop: the exit's tunnel goes to its forwarding port at the entry's server. The entry
+        // needs no tunnel of its own: its server is asked for when no app uses it. Anything missing blocks the route.
+        var bases: [String: Link] = [:] // the exits as picked, for the fallback cache: a multi-hop is never reused
+        for r in setup.activeRoutes where r.viaNative && out[r.id] != nil {
+            do {
+                let hopped = try await nativeHop(r, setup: setup, out: out, blocked: blocked, gone: gone, refused: refused, accounts: accounts, offline: offline, providers: providers)
+                bases[r.id] = out[r.id]
+                out[r.id] = hopped
+            } catch is CancellationError { throw CancellationError() }
+            catch let e as Hop { out.removeValue(forKey: r.id); blocked[r.id] = e.reason }
+            catch let e as AuthError {
+                out.removeValue(forKey: r.id)
+                let name = providers(setup.route(r.via ?? "")?.loc.provider ?? "")?.name ?? r.loc.provider
+                blocked[r.id] = accounts[r.loc.provider] == nil ? .signedOut(name) : .refused(name, e.localizedDescription)
+            } catch {
+                try Task.checkCancellation()
+                out.removeValue(forKey: r.id)
+                blocked[r.id] = .unreachable("\(r.name): can't reach its entry's servers right now")
+            }
+        }
         out = ported(setup, out, step: portStep)
         for id in Compiler.clashes(setup, out) { out.removeValue(forKey: id); blocked[id] = .clash }
-        let remember = Dictionary(setup.activeRoutes.filter { !$0.imported }.compactMap { r in out[r.id].map { (cacheKey(r, account: accounts[r.loc.provider]), $0) } }) { $1 }
+        // Via, once every entry is settled: a route whose entry can't be used or isn't connected is blocked, never sent
+        // straight to its server instead; only a WireGuard tunnel can go through another.
+        for r in setup.activeRoutes where r.via != nil && out[r.id] != nil {
+            if let why = viaBlock(r, setup: setup, out: out, providers: providers) { out.removeValue(forKey: r.id); blocked[r.id] = .unreachable(why) }
+        }
+        let remember = Dictionary(setup.activeRoutes.filter { !$0.imported }.compactMap { r -> (String, Link)? in
+            guard let link = out[r.id] else { return nil }
+            return (cacheKey(r, account: accounts[r.loc.provider]), bases[r.id] ?? link)
+        }) { $1 }
         // A provider can return success after its request was cancelled. Its answer no longer belongs to this pick.
         try Task.checkCancellation()
         return Result(links: out, remember: remember, blocked: blocked)
+    }
+
+    /// Why a Via route can't be used with the tunnels picked, or nil when it can.
+    private static func viaBlock(_ r: Route, setup: Setup, out: [String: Link], providers: (String) -> (any Provider)?) -> String? {
+        if let why = setup.viaProblem(r) { return why }
+        guard case .wg(_, let peer, _, _)? = out[r.id] else { return "Via works for WireGuard routes only" }
+        if !r.viaNative {
+            let host = peer.endpoint.split(separator: ":", omittingEmptySubsequences: false).dropLast().joined(separator: ":").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            if !FilterServer.ipv4(host) { return "\(r.name) needs an IPv4 server address to go through another route" }
+        }
+        guard let entry = r.via.flatMap(setup.route) else { return nil }
+        // Not tried together yet: blocked rather than sent without the disguise or the Via.
+        if let x = [r, entry].first(where: { !$0.imported && setup.opt($0.loc.provider, "disguise") == "on" }) {
+            return "\(r.name): Disguise doesn't work with Via yet. Turn Disguise off on the \(providers(x.loc.provider)?.name ?? x.loc.provider) page, or remove the Via"
+        }
+        if !r.viaNative {
+            guard case .wg? = out[entry.id] else { return "\(r.name) waits for \(entry.name), the route it goes through" }
+        }
+        return nil
+    }
+
+    /// A route blocked for a reason the picker words itself (see `nativeHop`).
+    private struct Hop: Error { let reason: Blocked }
+
+    /// `r`'s tunnel as the provider's own multi-hop: the exit's key and server key, dialed at the entry server's address
+    /// on the exit's forwarding port. The entry's server is the entry route's own when it runs, else asked for (never
+    /// while offline: the route waits until then, it is never left straight). The two must be in different countries.
+    private static func nativeHop(_ r: Route, setup: Setup, out: [String: Link], blocked: [String: Blocked], gone: RemovedPins, refused: [String: Blocked],
+                                  accounts: [String: String], offline: Bool, providers: (String) -> (any Provider)?) async throws -> Link {
+        guard let v = r.via, let e = setup.route(v), case .wg(let server, var peer, let ports, let entries)? = out[r.id] else {
+            throw Hop(reason: .unreachable("\(r.name): multi-hop works for WireGuard routes only"))
+        }
+        guard let port = peer.hopPort else {
+            throw Hop(reason: .unreachable("\(r.name): \(server.name) doesn't say how to reach it by multi-hop right now. Try again later, or use two tunnels"))
+        }
+        let entry: Server
+        if case .wg(let s, _, _, _)? = out[e.id] { entry = s }
+        // The main pick's word on the entry stands: one it blocked is not asked for again, nor a removed or refused one.
+        else if blocked[e.id] != nil || setup.activeRoutes.contains(where: { $0.id == e.id }) {
+            throw Hop(reason: .unreachable("\(r.name) waits for \(e.name), the route it goes through"))
+        }
+        else if let why = gone.reason(for: e) ?? refused[e.loc.provider] { throw Hop(reason: why) }
+        else if offline { throw Hop(reason: .waiting) }
+        else {
+            guard let p = providers(e.loc.provider) else { throw Fail("Unknown provider \(e.loc.provider)") }
+            guard let account = accounts[p.id] else { throw AuthError("Sign in to \(p.name) for \(e.name)") }
+            do {
+                guard case .wg(let s, _, _, _) = try await p.connect(AutoProtocol.resolved(e), account, opts: setup.opts[p.id] ?? [:]) else {
+                    throw Hop(reason: .unreachable("\(r.name): its entry \(e.name) is not a WireGuard route"))
+                }
+                entry = s
+            } catch is Catalog.Gone {
+                throw Hop(reason: .unreachable("\(r.name): its entry \(e.name) is on a server that's no longer offered. Choose another for \(e.name)"))
+            }
+        }
+        guard Catalog.Entry.publicIPv4(entry.ip) else { throw Hop(reason: .unreachable("\(r.name): its entry \(e.name) has no address to connect to")) }
+        if entry.ip == server.ip { throw Hop(reason: .unreachable("\(r.name) and its entry are on the same server")) }
+        let inEntry = entry.country.isEmpty ? (e.loc.countryCode ?? "") : entry.country
+        let inExit = server.country.isEmpty ? (r.loc.countryCode ?? "") : server.country
+        if inEntry.isEmpty || inExit.isEmpty || inEntry.caseInsensitiveCompare(inExit) == .orderedSame {
+            throw Hop(reason: .unreachable("\(r.name) and its entry must be in two different countries. Pick servers in two countries"))
+        }
+        peer.endpoint = "\(entry.ip):\(port)"
+        peer.hopEntry = entry.ip
+        return .wg(server, peer, ports: ports, entries: entries)
+    }
+
+    /// A tunnel already made to go through an entry server's address: never kept, cached or reused.
+    static func hopped(_ l: Link) -> Bool {
+        if case .wg(_, let peer, _, _) = l { return peer.hopEntry != nil }
+        return false
     }
 
     /// A server that can't take a disguised tunnel while the provider page's Disguise is on.
@@ -284,11 +401,18 @@ nonisolated enum LinkPicker {
         let stepFor = steps(setup, links, step: step)
         var lists: [String: [Int]] = [:]
         for id in links.keys.sorted() {
-            guard let r = setup.route(id), !r.imported, case .wg(_, _, let ports, _) = links[id], !ports.isEmpty else { continue }
+            guard let r = setup.route(id), !r.imported, case .wg(_, let p, let ports, _) = links[id], !ports.isEmpty, p.hopEntry == nil else { continue }
             if lists[r.loc.provider] == nil { lists[r.loc.provider] = ports }
         }
-        return links.mapValuesWithKey { id, link in
+        let plain = links.mapValuesWithKey { id, link in
             guard case .wg(let server, var peer, let ports, let entries) = link else { return link }
+            // The provider's multi-hop has its own forwarding port at the entry: no port or entry setting moves it.
+            if peer.hopEntry != nil, let route = setup.route(id), !route.imported {
+                peer.mtu = Int(setup.opt(route.loc.provider, "mtu") ?? "") ?? 1280
+                peer.junk = setup.opt(route.loc.provider, "junk") == "on" ? ProviderOption.junkCount : 0
+                (peer.vmess, peer.disguise) = (nil, nil)
+                return .wg(server, peer, ports: ports, entries: entries)
+            }
             guard let route = setup.route(id), !route.imported else {
                 peer.mtu = min(peer.mtu, 1280)
                 peer.junk = 0
@@ -331,7 +455,16 @@ nonisolated enum LinkPicker {
             }
             return .wg(server, peer, ports: ports, entries: entries)
         }
+        // A tunnel inside another one loses its outer headers' room: 1280 less WireGuard's 80.
+        return plain.mapValuesWithKey { id, link in
+            guard case .wg(let server, var peer, let ports, let entries) = link, let route = setup.route(id), route.via != nil, !route.viaNative else { return link }
+            peer.mtu = min(peer.mtu, viaMtu)
+            return .wg(server, peer, ports: ports, entries: entries)
+        }
     }
+
+    /// The largest packet size of a tunnel that goes through another route.
+    static let viaMtu = 1200
 
     /// A provider's WireGuard tunnel names the host and port it dials. One without (a server that had no address) is
     /// never compiled: the engine would get a peer with an empty address.
@@ -392,7 +525,7 @@ nonisolated enum LinkPicker {
             throw e
         } catch {
             guard !(p.id == "mullvad" && pinned == nil && opts["owned"] == "on"),
-                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), trusted(cached, r, accounts, providers), disguised(opts, r, cached), AutoProtocol.matches(r, cached) else {
+                  let cached = last[cacheKey(r, account: acc)], (pinned != nil || r.loc.group == Nord.dedicatedIp || !avoid.contains(serverKey(r, cached))), dialable(cached), !hopped(cached), trusted(cached, r, accounts, providers), disguised(opts, r, cached), AutoProtocol.matches(r, cached) else {
                 throw pinned.map { Fail("\(r.name): \($0.name) is unreachable") } ?? error
             }
             l = cached

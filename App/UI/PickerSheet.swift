@@ -50,6 +50,11 @@ struct PickerSheet: View {
     @State private var timedOut = false
     /// Provider blocking chosen for this route in the sheet (nil = untouched; then nil = as set in Settings), applied on "Use".
     @State private var filterChoice: Bool??
+    /// The Via chosen for this route in the sheet, applied on "Use" (starts as the route's own).
+    @State private var viaChoice: ViaChoice
+    /// The user picked something in the Via menu: only then does "Use" change the route's Via (a Via restored or held
+    /// meanwhile stays as it is when only the place changes).
+    @State private var viaTouched = false
     /// A change waiting on the limit question: the sheet stays until it is answered, and Cancel waits with it.
     @State private var applying = false
     /// A retry is under way: the earlier failure is not shown again until the new try has ended.
@@ -65,6 +70,7 @@ struct PickerSheet: View {
         let signed = Providers.all.filter { m.accounts[$0.id] != nil }
         // A route that already uses a Tailscale exit or a saved server opens on "My Servers".
         _mine = State(initialValue: route?.imported == true || signed.isEmpty && (s.tailscale || !s.servers.isEmpty))
+        _viaChoice = State(initialValue: ViaChoice(entry: route?.via, native: route?.viaNative ?? false))
         _groupChoice = State(initialValue: current?.group)
         _protocolChoice = State(initialValue: current?.proto)
         // Preselect the current place with the protocol the rows will carry, so its row is highlighted.
@@ -107,6 +113,7 @@ struct PickerSheet: View {
             sourceRow
             if !mine { controls }
             if mine { searchRow }
+            if route != nil { viaRow }
             Divider()
             content
         } status: {
@@ -114,7 +121,7 @@ struct PickerSheet: View {
         } actions: {
             Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(applying)
             Button(existingRoute != nil ? "Show \(picked ?? "…")" : "Use \(picked ?? "…")") { apply() }
-                .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil || applying)
+                .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil || applying || viaProblem != nil)
         }
         .frame(height: 620)
         .task(id: "\(provider?.id ?? "")\(group ?? "")") {
@@ -281,6 +288,82 @@ struct PickerSheet: View {
     }
 
     private func setGroup(_ g: String?) { groupChoice = g; retag() }
+
+    // MARK: Via
+
+    /// The route as "Use" would make it, without its Via: the pending place or server in its place.
+    private var pending: Route? {
+        guard let r = route else { return nil }
+        var p = Route(id: r.id, hue: r.hue)
+        switch selection {
+        case .loc(let l): p.loc = l
+        case .own(let id): if let o = model.setup.servers.first(where: { $0.id == id }) { (p.wg, p.ovpn, p.ss) = (o.wg, o.ovpn, o.ss) } else { return r }
+        case .ts(let ip, let name): (p.tsExit, p.tsName) = (ip, name)
+        case nil: return r
+        }
+        return p
+    }
+
+    /// `entry` as the pending route's Via, `native` as one tunnel: why it can't be used, or nil.
+    private func problem(_ entry: Route, native: Bool) -> String? {
+        guard var p = pending, let i = model.setup.routes.firstIndex(where: { $0.id == p.id }) else { return nil }
+        (p.via, p.viaNative) = (entry.id, native)
+        var s = model.setup
+        s.routes[i] = p
+        return s.viaProblem(p)
+    }
+
+    /// Why the chosen Via can't be used with the pending place, which then stops "Use".
+    private var viaProblem: String? {
+        guard let id = viaChoice.entry, let e = model.setup.route(id) else { return viaChoice.entry == nil ? nil : "This route goes through a route that no longer exists. Choose another Via" }
+        return problem(e, native: viaChoice.native)
+    }
+
+    private func label(_ r: Route) -> String { [r.name, r.source].joined(separator: " · ") }
+
+    /// Whether this route can go through another at all: a WireGuard route (a provider's, or an own server's), or one that
+    /// already has a Via, so it can be taken off.
+    private var viaOffered: Bool {
+        guard let p = pending else { return false }
+        return route?.via != nil || p.wg != nil || (!p.imported && p.loc.proto?.hasPrefix("openvpn") != true)
+    }
+
+    @ViewBuilder private var viaRow: some View {
+        if viaOffered, let r = route {
+            let entries = model.setup.routes.filter { $0.id != r.id && $0.via == nil && $0.tsExit == nil }
+            let chosen = viaChoice.entry.flatMap { model.setup.route($0) }
+            let hops = pending.flatMap { p in p.imported ? nil : Providers.get(p.loc.provider).flatMap { $0.nativeHop ? $0 : nil } }
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Via").font(.callout).foregroundStyle(.secondary)
+                    Menu {
+                        Button { viaChoice = ViaChoice(); viaTouched = true } label: { Label("None, straight to the server", systemImage: viaChoice.entry == nil ? "checkmark" : "") }
+                        ForEach(entries) { e in
+                            let why = problem(e, native: false)
+                            Button { viaChoice = ViaChoice(entry: e.id); viaTouched = true } label: {
+                                Label("\(label(e)): two tunnels", systemImage: viaChoice.entry == e.id && !viaChoice.native ? "checkmark" : "")
+                            }.disabled(why != nil)
+                                .help(why ?? "Two tunnels: \(e.name) sees this Mac's address, this server only its")
+                            if let hops, problem(e, native: true) == nil {
+                                Button { viaChoice = ViaChoice(entry: e.id, native: true); viaTouched = true } label: {
+                                    Label("\(label(e)), one tunnel", systemImage: viaChoice.entry == e.id && viaChoice.native ? "checkmark" : "")
+                                }.help("\(hops.name)'s multi-hop: its server there forwards to this one. Faster, but your network can tell which server you leave from")
+                            }
+                        }
+                    } label: {
+                        Text(chosen.map { label($0) + (viaChoice.native ? ", one tunnel" : "") } ?? "None, straight to the server")
+                    }.fixedSize().accessibilityLabel("Via")
+                    Spacer()
+                }
+                if let why = viaProblem {
+                    Text(why).font(.caption).foregroundStyle(Ink.failedText).fixedSize(horizontal: false, vertical: true)
+                } else if chosen != nil {
+                    Text(viaChoice.native ? "One tunnel: your network sees which server you leave from." : "Two tunnels: the first route sees this Mac's address, this one only the first's. If the first isn't connected, this one waits instead of going straight.")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+            }.padding(.horizontal, Layout.gutter).padding(.bottom, 10)
+        }
+    }
 
     // MARK: Content
 
@@ -469,10 +552,10 @@ struct PickerSheet: View {
                 var filter: Bool??
                 if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { filter = choice }
                 applying = true
-                model.setLocation(target, l, filter: filter) { applying = false; if $0 { dismiss() } }
+                model.setLocation(target, l, filter: filter, via: viaTouched ? viaChoice : nil) { applying = false; if $0 { dismiss() } }
                 return
             }
-        case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s) }
+        case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s, via: route == nil || !viaTouched ? nil : viaChoice) }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
         case nil: return
         }

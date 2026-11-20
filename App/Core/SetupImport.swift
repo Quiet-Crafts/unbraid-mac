@@ -21,7 +21,10 @@ nonisolated extension Setup {
     mutating func addImported(_ target: String, id newId: String, signedIn: Set<String>, _ source: (inout Route) -> Void) -> String {
         let usable = home.tailscale || home.wg != nil || routes.contains { $0.imported || signedIn.contains($0.loc.provider) }
         let id = route(target) != nil ? target : newId
-        var r = route(id).map { Route(id: $0.id, hue: $0.hue) } ?? Route(id: id, hue: nextHue)
+        // A route keeps its Via, as it is, when its server changes: one this kind of server can't use (not WireGuard, or
+        // a one-tunnel Via on an own server) holds the route back (`viaProblem`) until the user picks another or None,
+        // never making it straight by itself.
+        var r = route(id).map { Route(id: $0.id, hue: $0.hue, via: $0.via, viaNative: $0.viaNative) } ?? Route(id: id, hue: nextHue)
         source(&r)
         if let i = routes.firstIndex(where: { $0.id == id }) { routes[i] = r } else { routes.append(r) }
         if signedIn.isEmpty {

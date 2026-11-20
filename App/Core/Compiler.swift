@@ -477,7 +477,7 @@ nonisolated enum Compiler {
             switch link {
             case .wg(_, let peer, _, _):
                 try requireDisguise(r, link, s)
-                endpoints.append(try wg(p.tag(r.id), peer, r.name, maxMtu: r.imported ? 1280 : 1420))
+                endpoints.append(try wg(p.tag(r.id), peer, r.name, maxMtu: r.imported ? 1280 : 1420, detour: try viaDetour(p, r, peer)))
                 // The V2Ray hop is only ever the WireGuard endpoint's `detour`: no routing rule names it.
                 if let v = peer.vmess { outbounds.append(try vmess(p.tag(r.id), v, r.name)) }
             case .ovpn(_, let o):
@@ -768,8 +768,27 @@ nonisolated enum Compiler {
         return provider == "nord" ? nordDns : "9.9.9.9"
     }
 
+    /// The tunnel a Via route's WireGuard tunnel goes through: its entry's, always. A route whose Via can't be used, whose
+    /// entry has no tunnel here (blocked or missing), or that is disguised (V2Ray and Via are never combined) is refused:
+    /// it is never compiled to go straight to its server instead. Nil for a route without a Via (or one that goes by the
+    /// provider's own multi-hop, which is a single tunnel to another address).
+    private static func viaDetour(_ p: Plan, _ r: Route, _ peer: WgPeer) throws -> String? {
+        if let why = p.s.viaProblem(r) { throw Fail(why) }
+        guard let v = r.via else { return nil }
+        if r.viaNative {
+            // One tunnel to the exit's forwarding port at the entry's address: without that address it would be a plain
+            // tunnel to the exit itself.
+            guard peer.hopEntry != nil, peer.vmess == nil else { throw Fail("\(r.name): its multi-hop isn't set up") }
+            return nil
+        }
+        guard peer.vmess == nil else { throw Fail("\(r.name): Disguise doesn't work with Via yet. Turn Disguise off, or remove the Via") }
+        guard !p.i.blocked.contains(v), let tag = p.shared[v], case .wg(_, let entry, _, _)? = p.i.links[v] else { throw Fail("\(r.name): its Via isn't connected") }
+        guard entry.vmess == nil else { throw Fail("\(r.name): Disguise doesn't work with Via yet. Turn Disguise off, or remove the Via") }
+        return tag
+    }
+
     /// The engine's error for a bad key quotes it, so every key is checked here and never named.
-    private static func wg(_ tag: String, _ p: WgPeer, _ name: String, maxMtu: Int = 1280) throws -> J {
+    private static func wg(_ tag: String, _ p: WgPeer, _ name: String, maxMtu: Int = 1280, detour: String? = nil) throws -> J {
         guard validWgKey(p.privateKey), validWgKey(p.publicKey), p.presharedKey.map(validWgKey) ?? true else {
             throw Fail("Invalid WireGuard key for \(name)")
         }
@@ -786,6 +805,7 @@ nonisolated enum Compiler {
                            "private_key": .s(p.privateKey), "peers": [peer]]
         if p.junk > 0 { endpoint["junk"] = .i(min(p.junk, 16)) }
         if p.vmess != nil { endpoint["detour"] = .s(vmessTag(tag)) }
+        else if let detour { endpoint["detour"] = .s(detour) }
         return endpoint
     }
 
@@ -842,7 +862,8 @@ nonisolated enum Compiler {
     static func linkKey(_ r: Route, _ l: Link) -> String {
         switch l {
         // Everything that defines the tunnel: a newer preshared key, address or MTU is another tunnel, not the first one's.
-        case .wg(_, let p, _, _): wgKey(p, maxMtu: r.imported ? 1280 : 1420)
+        // A tunnel through another route is a tunnel of its own, never shared with one that goes straight there.
+        case .wg(_, let p, _, _): wgKey(p, maxMtu: r.imported ? 1280 : 1420) + (r.via.map { "|via=\($0)" } ?? "")
         // Same remotes but another protocol, CA or login is another tunnel: compare the whole profile.
         case .ovpn(_, let p): ["ovpn", sha(p.config), p.username, sha(p.password)].joined(separator: "|")
         case .ss(_, let p): ["ss", p.server, String(p.port), p.method, sha(p.password), p.plugin ?? "", sha(p.pluginOpts ?? "")].joined(separator: "|")
@@ -884,9 +905,19 @@ nonisolated enum Compiler {
         func identity(_ p: WgPeer) -> String { [wgHost(p), p.publicKey, sha(p.privateKey)].joined(separator: "|") }
         if let home = s.home.wg { seen[identity(home)] = "home" }
         var result: Set<String> = []
-        for r in s.activeRoutes {
+        let active = s.activeRoutes
+        for r in active {
             guard case .wg(_, let p, _, _) = links[r.id] else { continue }
-            let id = identity(p), key = wgKey(p, maxMtu: r.imported ? 1280 : 1420)
+            // The same key on the same server by another path (Via or not) clashes too.
+            let id = identity(p), key = wgKey(p, maxMtu: r.imported ? 1280 : 1420) + (r.via.map { "|via=\($0)" } ?? "")
+            // The same key to the same exit server, straight and by the provider's multi-hop (another address, the same
+            // server key): the server can't tell them apart, so they clash too. Two multi-hop paths to one exit (through
+            // two entries) likewise: the later one gives way.
+            if p.hopEntry != nil, active.enumerated().contains(where: { index, other in
+                guard other.id != r.id, case .wg(_, let o, _, _) = links[other.id] else { return false }
+                let before = active.firstIndex { $0.id == r.id }.map { index < $0 } ?? false
+                return o.publicKey == p.publicKey && o.privateKey == p.privateKey && o.endpoint != p.endpoint && (o.hopEntry == nil || before)
+            }) { result.insert(r.id); continue }
             if let old = seen[id] { if old != key { result.insert(r.id) } }
             else { seen[id] = key }
         }

@@ -548,6 +548,15 @@ nonisolated extension Lifecycle {
 }
 
 nonisolated extension Lifecycle {
+    /// Routes of the record an unattended start must refuse because the user gave them a Via (or another, or one that can't
+    /// be used) since: the record's route would run straight to its server, where the exit sees this Mac's address.
+    static func viaHeld(record: Setup, store: Setup) -> Set<String> {
+        Set(record.activeRoutes.compactMap { r in
+            guard let now = store.route(r.id), now.via != nil, now.via != r.via || now.viaNative != r.viaNative || store.viaProblem(now) != nil else { return nil }
+            return r.id
+        })
+    }
+
     /// What an unattended start should run while paused: what ran before the pause ([record], the routes with a server
     /// in it [linked]), with the apps the user blocks now blocked, an app unblocked since back on its own route when that ran
     /// before the pause (or Direct), otherwise on the default one, and the kill switch as it is now (a first Block turns it

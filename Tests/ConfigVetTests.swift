@@ -54,6 +54,41 @@ final class ConfigVetTests: XCTestCase {
         for bad in [-1, 17, 1000] as [Any] + ["5", true, 2.5] { XCTAssertFalse(try with(bad), "\(bad)") }
     }
 
+    /// Via: a WireGuard endpoint may go through another WireGuard endpoint that goes straight out, and through nothing else.
+    func testAViaIsOnlyAnEndpointGoingThroughAnotherWireGuardEndpoint() throws {
+        func vet(_ golden: String, _ change: (inout [[String: Any]]) -> Void) throws -> Bool {
+            var c = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(Fixture.text("golden/\(golden).json").utf8)) as? [String: Any])
+            var e = c["endpoints"] as? [[String: Any]] ?? []
+            change(&e)
+            c["endpoints"] = e
+            return (try? ConfigVet.check(String(decoding: try JSONSerialization.data(withJSONObject: c), as: UTF8.self))) != nil
+        }
+        func set(_ e: inout [[String: Any]], _ tag: String, _ f: (inout [String: Any]) -> Void) {
+            for i in e.indices where e[i]["tag"] as? String == tag { f(&e[i]) }
+        }
+        XCTAssertTrue(try vet("via") { e in XCTAssertEqual(e.first { $0["tag"] as? String == "r-us" }?["detour"] as? String, "r-it") })
+        // Not itself, not a loop, not a tunnel that has a detour of its own (so a tunnel is inside one other at most).
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-us") { $0["detour"] = "r-us" } })
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-it") { $0["detour"] = "r-us" } })
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-nl") { $0["detour"] = "r-us" } })
+        // Only to a tunnel that is there, and to a WireGuard one.
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-us") { $0["detour"] = "r-nowhere" } })
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-us") { $0["detour"] = "direct" } })
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-us") { $0["detour"] = 5 } })
+        // Behind another tunnel, a peer is a plain address.
+        XCTAssertFalse(try vet("via") { e in set(&e, "r-us") { $0["peers"] = [["address": "us.example.net", "port": 51820, "public_key": "x", "allowed_ips": ["0.0.0.0/0"]]] } })
+        // Another kind of endpoint is no way through, and takes none.
+        XCTAssertFalse(try vet("home-wireguard-and-exit") { e in
+            let ts = e.first { $0["type"] as? String == "tailscale" }?["tag"] as? String ?? "none"
+            set(&e, "home-wg") { $0["detour"] = ts }
+        })
+        // Disguise and Via are never combined: the disguised tunnel (inside V2Ray) is no entry.
+        XCTAssertFalse(try vet("ivpn-disguise") { e in set(&e, "r-nl") { $0["detour"] = "r-iv" } })
+        XCTAssertTrue(try vet("ivpn-disguise") { _ in })
+        // The provider's own multi-hop is a plain tunnel to another address.
+        XCTAssertTrue(try vet("native-multihop") { _ in })
+    }
+
     /// IVPN's V2Ray hop: accepted as a WireGuard endpoint's detour in the shape the compiler writes, and as nothing else.
     func testV2RayHopIsOnlyAWireGuardDetour() throws {
         let text = Fixture.text("golden/ivpn-disguise.json")

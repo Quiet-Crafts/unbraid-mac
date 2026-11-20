@@ -237,6 +237,7 @@ nonisolated enum Backup {
             try need([sv.wg != nil, sv.ovpn != nil, sv.ss != nil].filter { $0 }.count == 1, "an own server has no configuration")
             try check(sv.name, sv.wg, sv.ovpn, sv.ss, keyless: sv.keyless)
         }
+        let known = Set(s.routes.map(\.id))
         for r in s.routes {
             let n = [r.wg != nil, r.ovpn != nil, r.ss != nil, r.tsExit != nil].filter { $0 }.count
             try need(n <= 1, "a route has more than one exit")
@@ -252,12 +253,17 @@ nonisolated enum Backup {
             // names one server while describing another would come out somewhere else than it says.
             if r.keyless, let own { try need(r.wg == own.wg && r.ovpn == own.ovpn && r.ss == own.ss, "a route and its own server don't match") }
             if r.wg != nil || r.ovpn != nil || r.ss != nil { try check(r.name, r.wg, r.ovpn, r.ss, keyless: r.keyless) }
+            // A Via names a route that is there, goes straight to its server (so no loop and no chain of three), and is one
+            // this route can use: the same rules as in the app (`Setup.viaProblem`).
+            // A route whose first route was removed is saved as it is (one-tunnel included): it stays blocked until the user
+            // picks another Via. A one-tunnel flag with no Via at all is damage.
+            try need(!(r.viaNative && r.via == nil), "a route's Via is damaged")
+            try need(r.via == nil || r.via.map { !known.contains($0) } == true || s.viaProblem(r) == nil, "a route goes through a route that can't be used")
         }
         // Starred places become a route's place when picked.
         try need(s.favorites.allSatisfy(placeOk), "a favorite place is damaged")
         if let w = s.home.wg { try check(w.name, w, nil, nil, keyless: false) }
         // An app or a website may be on Block; a default route never is.
-        let known = Set(s.routes.map(\.id))
         func ok(_ id: String) -> Bool { id == DIRECT || id == BLOCK || known.contains(id) }
         func apps(_ m: [String: String]) -> Bool { m.allSatisfy { !$0.key.isEmpty && plain($0.key, max: 1024) && ok($0.value) } }
         func sites(_ m: [String: String]) -> Bool { m.count <= Sites.max && m.allSatisfy { Sites.isClean($0.key) && ok($0.value) } }
@@ -333,6 +339,8 @@ nonisolated enum Backup {
         for r in v.activeRoutes {
             if !LinkPicker.keyLeftOut(r, in: v), let l = LinkPicker.imported(r) { links[r.id] = l } else { blocked.insert(r.id) }
         }
+        // A route on a Via runs through its entry only: with none to run (a provider's, here) it is refused, as it is live.
+        for r in v.activeRoutes where r.via != nil && (r.viaNative || r.via.map { links[$0] == nil } == true) { links.removeValue(forKey: r.id); blocked.insert(r.id) }
         let apps = Dictionary(uniqueKeysWithValues: v.apps.keys.map { key in
             (key, [Compiler.pattern(forPath: key.hasPrefix("/") ? key : "/Applications/\(key).app", ignoringCase: true)])
         })
@@ -588,16 +596,26 @@ nonisolated enum Backup {
             } else { r.servers.append(s); serverIds.insert(s.id); sv[s.id] = s.id }
         }
         var routeIds = Set(r.routes.map(\.id) + current.routes.map(\.id)), rt: [String: String] = [:]
-        for x in current.routes {
+        // A Via of the backup that points at nothing in the backup keeps pointing at nothing: never at a route of this Mac
+        // that happens to have that id.
+        let inBackup = Set(r.routes.map(\.id))
+        for i in r.routes.indices { if let v = r.routes[i].via, !inBackup.contains(v) { r.routes[i].via = fresh("gone", routeIds) } }
+        // Entries first (a Via goes through a route that goes straight, so no chain): a route's Via follows its entry to the
+        // id that entry has here, and is compared with the backup's route only then. Appended in this Mac's own order.
+        var added: [(at: Int, route: Route)] = []
+        for (at, x) in current.routes.enumerated().sorted(by: { ($0.element.via == nil ? 0 : 1, $0.offset) < ($1.element.via == nil ? 0 : 1, $1.offset) }) {
             var c = x
             // Tied to a server this Mac no longer has: untied, as a backup's reader unties it.
             c.own = x.own.flatMap { sv[$0] }
+            // A Via whose route this Mac no longer has stays a Via to nothing (blocked), never one to a route of the backup's.
+            c.via = x.via.map { v in rt[v] ?? (current.route(v) == nil ? fresh("gone", routeIds) : v) }
             if let there = r.route(x.id) {
                 if filed(there) == filed(c) { rt[x.id] = x.id; continue }
                 c.id = fresh("r", routeIds)
             }
-            r.routes.append(c); routeIds.insert(c.id); rt[x.id] = c.id
+            added.append((at, c)); routeIds.insert(c.id); rt[x.id] = c.id
         }
+        r.routes.append(contentsOf: added.sorted { $0.at < $1.at }.map(\.route))
         // Together more than a backup holds: the next backup of it couldn't be restored, so nothing is kept and the
         // backup is restored on its own (the plan's setup is still that one).
         guard r.routes.count <= maxRoutes, r.servers.count <= maxServers else {

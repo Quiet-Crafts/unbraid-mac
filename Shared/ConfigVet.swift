@@ -163,16 +163,29 @@ nonisolated enum ConfigVet {
             guard let j = e.first(where: { $0.key.lowercased() == "junk" })?.value else { return true }
             return !isFlag(j) && (j as? Int).map { (0...16).contains($0) } == true
         }) else { throw refused }
-        // V2Ray is only the hop a WireGuard endpoint dials through (its `detour`), each hop for one endpoint and every
-        // endpoint's detour a hop: never an exit a rule, resolver or the final route can name. A hop is as the compiler
-        // writes it: a plain IPv4 server, VMess without encryption over TCP with the HTTP header, nothing else.
+        // A WireGuard endpoint's `detour` is a V2Ray hop (each hop for one endpoint, every hop used) or another WireGuard
+        // endpoint (Via: its tunnel runs inside that one). V2Ray is never an exit a rule, resolver or the final route can
+        // name. A hop is as the compiler writes it: a plain IPv4 server, VMess without encryption over TCP with the HTTP
+        // header, nothing else.
         let hops = outbounds.filter { type($0) == "vmess" }
         guard hops.allSatisfy(vmessHop), let hopTags = tags(hops) else { throw refused }
         let detours = endpoints.compactMap { $0["detour"] }
-        guard detours.allSatisfy({ $0 is String }), detours.count == hops.count, Set(detours.compactMap { $0 as? String }) == hopTags,
-              endpoints.allSatisfy({ $0["detour"] == nil || type($0) == "wireguard" }),
-              // Behind a hop, every peer is a plain address: a name would be looked up on the network's own resolver
-              // before anything goes through the hop.
+        guard detours.allSatisfy({ $0 is String }), endpoints.allSatisfy({ $0["detour"] == nil || type($0) == "wireguard" }),
+              let endpointTags = tags(endpoints) else { throw refused }
+        let wgTags = Set(endpoints.filter { type($0) == "wireguard" }.compactMap { $0["tag"] as? String })
+        let viaDetours = detours.compactMap { $0 as? String }.filter { !hopTags.contains($0) }
+        let hopDetours = detours.compactMap { $0 as? String }.filter { hopTags.contains($0) }
+        guard hopDetours.count == hops.count, Set(hopDetours) == hopTags,
+              // Through another WireGuard endpoint: one that exists, is not the endpoint itself, and goes straight out (no
+              // detour of its own), so a tunnel is inside one other tunnel at most and no loop can form.
+              endpoints.allSatisfy({ e in
+                  guard let d = e["detour"] as? String, viaDetours.contains(d) else { return true }
+                  guard d != e["tag"] as? String, wgTags.contains(d), let target = endpoints.first(where: { $0["tag"] as? String == d }) else { return false }
+                  return target["detour"] == nil
+              }),
+              endpointTags.isSuperset(of: Set(viaDetours)),
+              // Behind a hop or another tunnel, every peer is a plain address: a name would be looked up on the network's
+              // own resolver before anything goes through it.
               endpoints.allSatisfy({ e in
                   e["detour"] == nil || ((e["peers"] as? [Any])?.allSatisfy { p in ((p as? [String: Any]).flatMap(folded)?["address"] as? String).map(ipv4) == true } ?? false)
               }) else { throw refused }

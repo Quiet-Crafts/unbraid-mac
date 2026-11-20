@@ -79,7 +79,12 @@ nonisolated struct WgPeer: Codable, Hashable, Sendable {
     var vmess: Vmess? = nil
     /// How the provider's server takes a disguised tunnel, whether or not Disguise is on now.
     var disguise: Disguise? = nil
-    enum CodingKeys: String, CodingKey { case name, privateKey, address, publicKey, presharedKey, endpoint, allowedIps, dns, mtu, keepalive, vmess, disguise }
+    /// The port the provider's server takes multi-hop tunnels on (IVPN's `multihop_port`), and, once this tunnel goes to
+    /// that port through an entry server's address, that entry's address. Never part of a route's own config: the
+    /// picker never keeps, reuses or remembers a tunnel that has an entry.
+    var hopPort: Int? = nil
+    var hopEntry: String? = nil
+    enum CodingKeys: String, CodingKey { case name, privateKey, address, publicKey, presharedKey, endpoint, allowedIps, dns, mtu, keepalive, vmess, disguise, hopPort, hopEntry }
 }
 
 /// A provider's V2Ray server for a disguised WireGuard tunnel: its address, TCP port and the account-wide user id.
@@ -144,8 +149,15 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     /// Restored from a backup saved without keys: it holds no secret and never runs until its own server gets its config
     /// again (`Setup.refilled`); its traffic is refused meanwhile (`LinkPicker.Blocked.keyLeftOut`).
     var keyless = false
+    /// Another route this one's WireGuard tunnel goes through first ("Via"): the entry sees this Mac's address, this
+    /// route's server only the entry's. Two hops at most; nil = straight to its server. Never straight when the entry
+    /// isn't up (`Setup.viaProblem`, `LinkPicker`).
+    var via: String? = nil
+    /// With `via`: one tunnel the provider forwards from the entry's server to this one (IVPN's own multi-hop), instead
+    /// of two tunnels. The entry route then needs no tunnel of its own.
+    var viaNative = false
 
-    enum CodingKeys: String, CodingKey { case id, loc, wg, ovpn, ss, tsExit, tsName, hue, filter, own, checkInternet, keyless }
+    enum CodingKeys: String, CodingKey { case id, loc, wg, ovpn, ss, tsExit, tsName, hue, filter, own, checkInternet, keyless, via, viaNative }
 
     var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? tsName ?? tsExit ?? loc.country ?? "Fastest" }
     var code: String { wg != nil ? "WG" : ovpn != nil ? "OV" : ss != nil ? "SS" : tsExit != nil ? "TS" : loc.code }
@@ -180,6 +192,22 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     /// Who carries this route: the provider, or the kind of own server.
     var source: String {
         wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : tsExit != nil ? "Tailscale" : Providers.short(loc.provider)
+    }
+}
+
+/// A route's Via as the picker sets it: the entry route's id (nil = straight to the server), and whether it is one
+/// tunnel by the provider's own multi-hop.
+nonisolated struct ViaChoice: Equatable, Sendable {
+    var entry: String?
+    var native = false
+
+    /// [r]'s Via once this choice is used: the route's own, as it is, while the choice is the one it opened with (a Via
+    /// held for want of its entry, or a damaged one-tunnel Via, stays until the user picks another or None, so changing
+    /// only the place never makes the route straight); otherwise the choice, one tunnel only with an entry and where
+    /// [native] is possible.
+    func applied(to r: Route, native possible: Bool = true) -> (via: String?, native: Bool) {
+        if self == ViaChoice(entry: r.via, native: r.viaNative) { return (r.via, r.viaNative) }
+        return (entry, entry != nil && native && possible)
     }
 }
 
@@ -418,11 +446,14 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
 
     enum CodingKeys: String, CodingKey { case version, routes, defaultRoute, apps, sites, favorites, home, prefs, servers, opts, profiles, profile, pendingSwitch, profileSalt }
 
-    /// The newest saved format this build reads. 1: everything before websites (no number written). 2: websites.
-    static let format = 2
+    /// The newest saved format this build reads. 1: everything before websites (no number written). 2: websites. 4: a
+    /// route with a Via (the number the Android app writes for it; 3 is its own, for websites and Block).
+    static let format = 4
     /// The format a setup is written in: the lowest that holds what it has, so a setup without websites still opens in
-    /// a build from before them, and one with them is refused there by a build that knows to check.
+    /// a build from before them, and one with them is refused there by a build that knows to check. A Via is 4: an older
+    /// build would send that route straight to its server, so it refuses the file instead.
     var format: Int {
+        if routes.contains(where: { $0.via != nil }) { return 4 }
         let pending = [pendingSwitch?.switched, pendingSwitch?.previous, pendingSwitch?.before].compactMap { $0 }
         return sites.isEmpty && profiles.allSatisfy(\.sites.isEmpty) && pending.allSatisfy(\.sites.isEmpty) ? 1 : 2
     }
@@ -486,7 +517,43 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     /// compiler judges it: what it builds tunnels for.
     func activeRoutes(tailnet: String?) -> [Route] {
         let used = Set(apps.values).union(Sites.applied(self, tailnet: tailnet).values)
-        return routes.filter { $0.id == defaultRoute || used.contains($0.id) || testing.contains($0.id) }
+        let carrying = routes.filter { $0.id == defaultRoute || used.contains($0.id) || testing.contains($0.id) }
+        // A route's Via entry runs too, though nothing is assigned to it (unless the Via can't be used: then the route
+        // is refused and nothing runs for it). One tunnel through the provider's own multi-hop needs no entry tunnel.
+        let entries = Set(carrying.filter { !$0.viaNative && viaProblem($0) == nil }.compactMap(\.via))
+        return entries.isEmpty ? carrying : routes.filter { r in entries.contains(r.id) || carrying.contains { $0.id == r.id } }
+    }
+
+    /// Why `r`'s Via can't be used, or nil when it can (or it has none): the entry must be another route that goes
+    /// straight to its server and isn't a Tailscale exit, and `r` itself a WireGuard route. Checked before any provider is
+    /// asked anything, and again once the tunnels are picked.
+    func viaProblem(_ r: Route) -> String? {
+        // A one-tunnel flag with no first route is damage, never a route that goes straight.
+        if r.viaNative && r.via == nil { return "\(r.name)'s Via is damaged. Choose it again in its Via" }
+        guard let v = r.via else { return nil }
+        guard let e = route(v) else { return "\(r.name)'s first route was removed. Choose another in its Via" }
+        let provider = Providers.get(r.loc.provider)
+        if e.id == r.id || e.via != nil { return "\(r.name) can go through a route that goes straight to its server only" }
+        if e.tsExit != nil { return "\(r.name) can't go through a Tailscale exit node" }
+        if r.viaNative {
+            if r.imported || e.imported || e.loc.provider != r.loc.provider || provider?.nativeHop != true {
+                return "One-tunnel multi-hop needs two routes of the same provider that offers it"
+            }
+            // The two countries are checked on the servers picked (`LinkPicker`), not on the places saved.
+        }
+        if e.ss?.plugin != nil { return "\(r.name) can't go through a Shadowsocks server with a plugin" }
+        // The engine is only asked to run a tunnel inside another WireGuard tunnel here.
+        if e.ovpn != nil || e.ss != nil || e.loc.proto?.hasPrefix("openvpn") == true { return "\(r.name) can go through a WireGuard route only" }
+        if r.ovpn != nil || r.ss != nil || r.tsExit != nil || r.loc.proto?.hasPrefix("openvpn") == true { return "Via works for WireGuard routes only" }
+        // Its sign-up talks to the exit server itself, which would see this Mac's address.
+        if !r.imported, provider?.viaUnsafe == true { return "\(provider?.name ?? r.loc.provider) routes can't use Via: setting one up contacts its server directly" }
+        // A name would be looked up outside the entry, telling the local network where the tunnel goes; and the engine's
+        // check of a tunnel inside another takes plain IPv4 addresses only.
+        if let w = r.wg {
+            let host = w.endpoint.split(separator: ":", omittingEmptySubsequences: false).dropLast().joined(separator: ":").trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+            if !FilterServer.ipv4(host) { return "\(r.name) needs an IPv4 server address, not a name or an IPv6 address, to go through another route" }
+        }
+        return nil
     }
     /// The Tailscale exit node in use, if an active route goes out through one (Tailscale allows one at a time).
     var tsExit: String? { activeRoutes.lazy.compactMap(\.tsExit).first }
@@ -693,6 +760,7 @@ nonisolated extension WgPeer {
         endpoint = try c.decode(String.self, forKey: .endpoint)
         allowedIps = try c.decode([String].self, forKey: .allowedIps)
         dns = try c.saved(.dns, []); mtu = try c.saved(.mtu, 1420); keepalive = try c.saved(.keepalive, nil)
+        hopPort = try c.saved(.hopPort, nil); hopEntry = try c.saved(.hopEntry, nil)
     }
 }
 
@@ -714,9 +782,10 @@ nonisolated extension Route {
         loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); tsExit = try c.source(.tsExit)
         tsName = try c.saved(.tsName, nil); hue = try c.saved(.hue, 0); filter = try c.saved(.filter, nil); own = try c.saved(.own, nil)
         checkInternet = try c.saved(.checkInternet, nil); keyless = try c.saved(.keyless, false)
+        via = try c.saved(.via, nil); viaNative = try c.saved(.viaNative, false)
     }
 
-    /// The keys the synthesized encoding wrote, in the same cases, and `keyless` only when set: a setup without it is
+    /// The keys the synthesized encoding wrote, in the same cases, and `keyless`, `via` and `viaNative` only when set: a setup without them is
     /// written byte for byte as before, so its revisions don't change.
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
@@ -726,6 +795,8 @@ nonisolated extension Route {
         try c.encodeIfPresent(filter, forKey: .filter); try c.encodeIfPresent(own, forKey: .own)
         try c.encodeIfPresent(checkInternet, forKey: .checkInternet)
         if keyless { try c.encode(true, forKey: .keyless) }
+        try c.encodeIfPresent(via, forKey: .via)
+        if viaNative { try c.encode(true, forKey: .viaNative) }
     }
 }
 

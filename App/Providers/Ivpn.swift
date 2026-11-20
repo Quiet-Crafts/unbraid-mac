@@ -97,7 +97,9 @@ nonisolated struct Ivpn: Provider {
         var isp: String? = nil
         /// The host's V2Ray address, for the disguise; nil when it has none.
         var v2ray: String? = nil
-        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load, isp, v2ray }
+        /// The port this host takes multi-hop tunnels on (IVPN's other hosts forward to it); nil when it has none.
+        var multihopPort: Int? = nil
+        enum CodingKeys: String, CodingKey { case hostname, host, publicKey = "public_key", localIp = "local_ip", load, isp, v2ray, multihopPort = "multihop_port" }
     }
 
     struct Gateway: Decodable, Hashable {
@@ -429,10 +431,10 @@ nonisolated struct Ivpn: Provider {
     static func link(_ l: ServerList?, _ loc: Location, _ a: Account) throws -> Link {
         // No quantum-safe key (signed in before it existed): the route stays off, never a plain tunnel.
         guard let psk = a.psk else { throw KeyNotReady("Sign in to IVPN again to get its quantum-safe key: until then this route stays off.") }
-        var sv: Server, dns: String, disguise: Disguise?
+        var sv: Server, dns: String, disguise: Disguise?, hop: Int?
         if let pinned = loc.pinned {
             (sv, dns) = (pinned, Self.dns)
-            disguise = nil
+            disguise = nil; hop = nil
             // Found by host name anywhere in the list (its place may have changed). Not by address: another host may
             // have that one now. An empty list proves nothing.
             if let l, !l.wireguard.isEmpty {
@@ -441,22 +443,24 @@ nonisolated struct Ivpn: Provider {
                 // Still listed, with a key or resolver that isn't one: worth trying again later, not gone.
                 guard h.valid else { throw Fail("\(pinned.name) can't be reached right now") }
                 (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
-                disguise = Self.disguise(l, h)
+                disguise = Self.disguise(l, h); hop = h.multihopPort
                 sv.name = pinned.name
             }
         } else {
             guard let l, let (g, h) = l.match(loc).min(by: l.best) else { throw Fail("No IVPN server for \(loc.label)") }
             (sv, dns) = (server(g, h), String(h.localIp.prefix { $0 != "/" }))
-            disguise = Self.disguise(l, h)
+            disguise = Self.disguise(l, h); hop = h.multihopPort
         }
         guard Catalog.Entry.publicIPv4(sv.ip) else { throw Fail("\(sv.name) can't be reached right now") }
-        return .wg(sv, WgPeer(name: sv.name, privateKey: a.privateKey, address: ["\(a.ipAddress.prefix { $0 != "/" })/32"], publicKey: sv.publicKey, presharedKey: psk,
-                              endpoint: "\(sv.ip):\(port)", allowedIps: ["0.0.0.0/0"], dns: [dns], disguise: disguise), ports: [2049, 443, 53, 80, 123, 2050, 1194, 500, 4500].filter { l?.ports.contains($0) == true })
+        var peer = WgPeer(name: sv.name, privateKey: a.privateKey, address: ["\(a.ipAddress.prefix { $0 != "/" })/32"], publicKey: sv.publicKey, presharedKey: psk,
+                          endpoint: "\(sv.ip):\(port)", allowedIps: ["0.0.0.0/0"], dns: [dns], disguise: disguise)
+        peer.hopPort = hop.flatMap { (1...65535).contains($0) ? $0 : nil }
+        return .wg(sv, peer, ports: [2049, 443, 53, 80, 123, 2050, 1194, 500, 4500].filter { l?.ports.contains($0) == true })
     }
 
     private static func server(_ g: Gateway, _ h: Host) -> Server {
         // A percentage: anything else in the list (a huge or odd number) can't trap the conversion.
-        Server(name: h.hostname, host: h.hostname, ip: h.host, publicKey: h.publicKey, load: h.load.isFinite ? Int(min(max(h.load, 0), 100).rounded()) : 0, city: g.city)
+        Server(name: h.hostname, host: h.hostname, ip: h.host, publicKey: h.publicKey, load: h.load.isFinite ? Int(min(max(h.load, 0), 100).rounded()) : 0, city: g.city, country: g.countryCode.uppercased())
     }
 }
 
@@ -484,7 +488,8 @@ nonisolated extension Ivpn.Host {
         self.init(hostname: try c.decode(String.self, forKey: .hostname), host: try c.decode(String.self, forKey: .host),
                   publicKey: try c.decode(String.self, forKey: .publicKey), localIp: try c.decode(String.self, forKey: .localIp), load: c(.load, 0.0),
                   isp: (try? c.decodeIfPresent(String.self, forKey: .isp)) ?? nil,
-                  v2ray: (try? c.decodeIfPresent(String.self, forKey: .v2ray)) ?? nil)
+                  v2ray: (try? c.decodeIfPresent(String.self, forKey: .v2ray)) ?? nil,
+                  multihopPort: (try? c.decodeIfPresent(Int.self, forKey: .multihopPort)) ?? nil)
     }
 }
 

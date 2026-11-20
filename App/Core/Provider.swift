@@ -166,7 +166,8 @@ nonisolated enum AutoProtocol {
     /// The protocol a route connects with now: Automatic is WireGuard (nil) or OpenVPN TCP; any other choice as it is.
     static func of(_ r: Route) -> String? {
         guard !r.imported, r.loc.proto == key else { return r.loc.proto }
-        return isOnTcp(r.id) ? tcp : nil
+        // Through another route (Via) it stays on WireGuard: OpenVPN can't go through one.
+        return isOnTcp(r.id) && r.via == nil ? tcp : nil
     }
 
     /// A route's location as the provider is asked for it: its protocol resolved.
@@ -180,8 +181,9 @@ nonisolated enum AutoProtocol {
     /// back the WireGuard tunnel that stopped answering, nor the TCP one after the network changed.
     static func matches(_ r: Route, _ l: Link) -> Bool {
         guard !r.imported, r.loc.proto == key else { return true }
-        if case .ovpn = l { return isOnTcp(r.id) }
-        return !isOnTcp(r.id)
+        let tcpNow = isOnTcp(r.id) && r.via == nil
+        if case .ovpn = l { return tcpNow }
+        return !tcpNow
     }
 
     /// The protocol a provider route says it uses after its place: "OpenVPN", "OpenVPN TCP", and for an Automatic route
@@ -340,6 +342,10 @@ nonisolated protocol Provider: Sendable {
 }
 
 nonisolated extension Provider {
+    /// Setting up a tunnel contacts the server itself (not the provider's API), so it can't go through another route (Via).
+    var viaUnsafe: Bool { id == "pia" }
+    /// Offers its own multi-hop (`WgPeer.hopPort`), used for a Via between two of its routes when the user picks it.
+    var nativeHop: Bool { id == "ivpn" }
     var hasLoad: Bool { false }
     var proto: String { "WireGuard" }
     var protocols: [ProtocolChoice] { [] }

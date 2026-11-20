@@ -2951,6 +2951,10 @@ extension CompilerTests {
         try add("wireguard-junk", junk, links: LinkPicker.ported(junk, links(junk), step: [:]))
         let disguised = disguising()
         try add("ivpn-disguise", disguised.setup, links: LinkPicker.ported(disguised.setup, disguised.links, step: [:]))
+        let through = viaSetup()
+        try add("via", through, links: LinkPicker.ported(through, links(through), step: [:]))
+        let hopped = nativeHopSetup()
+        try add("native-multihop", hopped.setup, links: LinkPicker.ported(hopped.setup, hopped.links, step: [:]))
         try add("empty", Setup(routes: [], defaultRoute: DIRECT), links: [:])
         var internet = example; internet.apps["com.blocked"] = BLOCK; internet.prefs.killLevel = .internet
         try add("kill-internet-blocked", internet)
@@ -3486,5 +3490,151 @@ extension CompilerTests {
         XCTAssertNotNil(Sites.notApplied("dev.localhost", in: s))
         XCTAssertNotNil(Sites.limited("nas.local", in: s))
         XCTAssertNil(Sites.limited("printer.lan", in: s))
+    }
+}
+
+// MARK: Via and the provider's own multi-hop
+
+extension CompilerTests {
+    /// The example with the US route going through the IT route first.
+    fileprivate func viaSetup() -> Setup {
+        var s = example
+        s.routes[1].via = "it"
+        return s
+    }
+
+    /// An IVPN route in the Netherlands going to its exit by IVPN's multi-hop through an entry in Switzerland: the tunnel is
+    /// one WireGuard peer at the entry server's address, on the exit's forwarding port. The entry runs no tunnel.
+    fileprivate func nativeHopSetup() -> (setup: Setup, links: [String: Link]) {
+        var s = example
+        s.routes.append(Route(id: "iv", loc: Location(provider: "ivpn", countryCode: "NL", country: "Netherlands"), hue: 3, via: "ie", viaNative: true))
+        s.routes.append(Route(id: "ie", loc: Location(provider: "ivpn", countryCode: "CH", country: "Switzerland"), hue: 4))
+        s.apps["com.v"] = "iv"
+        var all = links(s)
+        var peer = Nord.peer(sv("iv"), key)
+        peer.presharedKey = key
+        // Its own server's key and this account's: not another route's, as it is with a provider.
+        (peer.publicKey, peer.privateKey) = (key, otherKey)
+        peer.hopPort = 2049; peer.hopEntry = "10.9.7.7"; peer.endpoint = "10.9.7.7:2049"
+        all["iv"] = .wg(sv("iv"), peer)
+        return (s, all)
+    }
+
+    func testViaGoesThroughTheEntryTunnel() throws {
+        let s = viaSetup()
+        let c = try compile(s, links: LinkPicker.ported(s, links(s), step: [:]))
+        let us = try XCTUnwrap(endpoints(c).first { $0["tag"] as? String == "r-us" })
+        XCTAssertEqual(us["detour"] as? String, "r-it")
+        XCTAssertEqual(us["mtu"] as? Int, 1200, "a tunnel inside another one has less room")
+        let entry = try XCTUnwrap(endpoints(c).first { $0["tag"] as? String == "r-it" })
+        XCTAssertNil(entry["detour"])
+        XCTAssertEqual(entry["mtu"] as? Int, 1280)
+        XCTAssertEqual(endpoints(c).filter { $0["detour"] != nil }.count, 1)
+    }
+
+    /// An entry no app uses still runs: the route goes through it.
+    func testAnEntryNobodyUsesStillGetsItsTunnel() throws {
+        var s = viaSetup()
+        s.apps["com.b"] = nil
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["nl", "us", "it"])
+        let c = try compile(s)
+        XCTAssertEqual(Set(endpoints(c).compactMap { $0["tag"] as? String }).isSuperset(of: ["r-us", "r-it"]), true)
+        XCTAssertEqual(endpoints(c).first { $0["tag"] as? String == "r-us" }?["detour"] as? String, "r-it")
+    }
+
+    /// An entry that shares its tunnel with another route is reached by the tunnel that exists.
+    func testAViaGoesThroughTheTunnelItsEntryShares() throws {
+        var s = viaSetup()
+        s.routes.append(Route(id: "it2", loc: s.routes[2].loc, hue: 5))
+        s.apps["com.c"] = "it2"
+        var all = links(s)
+        all["it2"] = all["it"]
+        let c = try compile(s, links: all)
+        XCTAssertEqual(endpoints(c).first { $0["tag"] as? String == "r-us" }?["detour"] as? String, "r-it")
+        XCTAssertNil(endpoints(c).first { $0["tag"] as? String == "r-it2" })
+    }
+
+    /// A tunnel through another route is a tunnel of its own: never the one a straight route to the same server has, and a
+    /// second use of one key beside it is a clash.
+    func testViaChangesTheTunnelIdentityAndClashes() throws {
+        var s = example
+        s.routes.append(Route(id: "us2", loc: s.routes[1].loc, hue: 3))
+        s.apps["com.c"] = "us2"
+        var all = links(s)
+        all["us2"] = all["us"]
+        XCTAssertEqual(try Compiler.shared(s, all)["us2"], "r-us", "the same server with the same login is one tunnel")
+        XCTAssertEqual(Compiler.clashes(s, all), [])
+        s.routes[3].via = "it"
+        XCTAssertEqual(Compiler.clashes(s, all), ["us2"], "one key can't be a tunnel straight and one through another route")
+        s.routes[1].via = "it"
+        XCTAssertEqual(try Compiler.shared(s, all)["us2"], "r-us", "the same path is one tunnel")
+        s.routes[1].via = nil; s.routes[3].via = nil
+        XCTAssertNotEqual(Compiler.linkKey(s.routes[1], all["us"]!), Compiler.linkKey(Route(id: "x", loc: s.routes[1].loc, via: "it"), all["us"]!))
+    }
+
+    /// Via and Disguise are never combined: the route is refused, not compiled without one of them.
+    func testDisguiseAndViaAreRefusedTogether() throws {
+        var (s, all) = disguising()
+        s.routes[s.routes.firstIndex { $0.id == "iv" }!].via = "it"
+        XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: s, links: LinkPicker.ported(s, all, step: [:]), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+        // The entry disguised is as bad.
+        var (t, more) = disguising()
+        t.routes[1].via = "iv"
+        XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: t, links: LinkPicker.ported(t, more, step: [:]), apps: patterns(t), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+        _ = all; _ = more
+    }
+
+    /// A Via route whose entry has no tunnel is never compiled to go straight: the compiler refuses it, unless it is
+    /// blocked, and then its traffic is refused.
+    func testAViaRouteNeverGoesStraight() throws {
+        let s = viaSetup()
+        let all = links(s)
+        func input(links: [String: Link], blocked: Set<String>) -> Compiler.Input {
+            Compiler.Input(setup: s, links: LinkPicker.ported(s, links, step: [:]), blocked: blocked, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)
+        }
+        // The entry blocked, the route not: refused outright.
+        XCTAssertThrowsError(try Compiler.compile(input(links: all.filter { $0.key != "it" }, blocked: ["it"])))
+        XCTAssertThrowsError(try Compiler.compile(input(links: all.filter { $0.key != "it" }, blocked: [])))
+        // Both blocked: nothing for either is compiled, and their apps are rejected.
+        let text = try Compiler.compile(input(links: all.filter { !["it", "us"].contains($0.key) }, blocked: ["it", "us"]))
+        XCTAssertNoThrow(try ConfigVet.check(text))
+        let c = try parse(text)
+        XCTAssertNil(endpoints(c).first { $0["tag"] as? String == "r-us" })
+        // A route whose Via can't be used (it goes through a route that goes through another) is refused too.
+        var chain = s
+        chain.routes[2].via = "nl"
+        XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: chain, links: links(chain), apps: patterns(chain), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+    }
+
+    /// IVPN's own multi-hop is one tunnel: no detour, the peer at the entry server's address, nothing for the entry.
+    func testTheProvidersMultiHopIsOneTunnel() throws {
+        let (s, all) = nativeHopSetup()
+        let c = try compile(s, links: LinkPicker.ported(s, all, step: [:]))
+        let iv = try XCTUnwrap(endpoints(c).first { $0["tag"] as? String == "r-iv" })
+        XCTAssertNil(iv["detour"])
+        XCTAssertEqual(iv["mtu"] as? Int, 1280)
+        let peer = try XCTUnwrap((iv["peers"] as? [O])?.first)
+        XCTAssertEqual(peer["address"] as? String, "10.9.7.7")
+        XCTAssertEqual(peer["port"] as? Int, 2049)
+        XCTAssertEqual(peer["pre_shared_key"] as? String, key)
+        XCTAssertNil(endpoints(c).first { $0["tag"] as? String == "r-ie" }, "the entry route needs no tunnel of its own")
+        XCTAssertEqual(s.activeRoutes.map(\.id), ["nl", "us", "it", "iv"])
+        // Without the entry's address it would be a plain tunnel to the exit itself: refused.
+        var plain = all
+        if case .wg(let server, var p, _, _) = all["iv"]! { p.hopEntry = nil; plain["iv"] = .wg(server, p) }
+        XCTAssertThrowsError(try Compiler.compile(Compiler.Input(setup: s, links: plain, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil)))
+    }
+
+    /// The same exit straight and by multi-hop, or by two entries, is one key in two places: the later gives way.
+    func testMultiHopAndAnotherPathToTheSameExitClash() throws {
+        var (s, all) = nativeHopSetup()
+        s.routes.append(Route(id: "iv2", loc: Location(provider: "ivpn", countryCode: "NL", country: "Netherlands"), hue: 5))
+        s.apps["com.w"] = "iv2"
+        guard case .wg(let server, var straight, _, _) = all["iv"]! else { return XCTFail() }
+        straight.hopEntry = nil; straight.endpoint = "\(server.ip):51820"
+        all["iv2"] = .wg(server, straight)
+        XCTAssertEqual(Compiler.clashes(s, all), ["iv"])
+        all["iv2"] = nil
+        XCTAssertEqual(Compiler.clashes(s, all), [])
     }
 }
