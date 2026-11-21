@@ -55,6 +55,9 @@ providers. It needs Android 13 or later.
   Tailscale exit node.
 - Connection checks watch each provider tunnel and, after repeated failures, try another port or server. Your own
   servers are checked too, and a route that stops answering says so.
+- Send a WireGuard route *Via* another of your routes, or use IVPN's own multi-hop, so no single server sees both
+  your address and where you go. For networks that block VPNs: IVPN *Disguise*, *Junk packets* for WireGuard
+  providers, OpenVPN TCP for AirVPN and NordVPN, and *Automatic* for AirVPN. IVPN connections use a quantum-safe key.
 - A DNS filter of your choice for VPN routes and Direct traffic, plus the provider's own ad and tracker blocking
   where it has one.
 - Saved profiles that can switch by themselves on the networks you remember, a menu bar panel with the front app's
@@ -110,8 +113,8 @@ connect as soon as an app is assigned to them, even if that app is idle.
 
 The app needs macOS 26 or later, on a Mac with Apple silicon or an Intel processor. It doesn't update itself: to
 update, quit unbraid, drag the new version from the DMG over the old one and open it. Your setup stays. macOS may ask
-you to allow the updated network extension again. If you say yes to *Check for updates* (asked once, and in
-Settings › About), unbraid looks about once a day for a newer version and tells you when one is out.
+you to allow the updated network extension again. *Check for updates* is on unless you turn it off (Settings › About):
+unbraid looks about once a day for a newer version and tells you in the window and the menu bar when one is out.
 
 ## Questions
 
@@ -156,8 +159,10 @@ Ethernet themselves can skip the VPN, and while a VPN reconnects any app may use
 apps only go out the way you chose for them, so while a VPN reconnects its apps wait instead of using your normal
 connection. *Internet and home network*: the same, and blocked apps can't reach devices on your home network either.
 Blocking an app turns it on. *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
-restarts. At every level, apps you set to Direct use your normal connection, and nothing is covered while unbraid is
-disconnected. unbraid's own requests (signing in to your provider, server lists, and the update check if you turn it
+restarts. A start without the app open runs only a saved copy of your latest setup; if you changed something since,
+it runs a stand-in that keeps blocked apps and websites blocked and sends everything else Direct, until unbraid opens
+and connects your current setup. At every level, apps you set to Direct use your normal connection, and nothing is covered while unbraid is
+disconnected. unbraid's own requests (signing in to your provider, server lists, and the update check while it is
 on) also use your normal connection, not the VPN, so your network can see which provider you use.
 
 ### Does it get around my provider's device limit?
@@ -229,8 +234,8 @@ you can assign routes, and it never leaves the Mac. Statistics are off until you
 they count data per route and app, and for the websites you gave a route of their own, and record nothing else about
 where you browse. A backup is a file you save yourself, locked with your passphrase; it never holds your provider
 sign-ins. The
-update check is off until you say yes; when on, it asks unbraid.app for the newest version number and sends nothing
-else, so the site sees only your IP address, like any visit. unbraid's own requests to your providers and to
+update check is on unless you turn it off; while on, it asks unbraid.app for the newest version number and sends
+only the app's version with it, so the site sees that and your IP address, like any visit. unbraid's own requests to your providers and to
 unbraid.app use your normal connection, not the VPN. The privacy policy, with every service the app talks to, is at
 [unbraid.app/privacy](https://unbraid.app/privacy).
 
