@@ -586,8 +586,9 @@ private struct SettingsToolbarItem: ToolbarContent {
     }
 }
 
-/// The one-time update question, above every page once the terms are accepted, until it is answered: a banner rather
-/// than a dialog, so it never holds up Connect, and it steps aside while anything else asks something.
+/// The one-time notice that update checks are on (by default from 1.3.7), above every page once the terms are accepted,
+/// with OK and a one-click Turn Off: a banner rather than a dialog, so it never holds up Connect, and it steps aside
+/// while anything else asks something.
 private struct UpdateAsk: View {
     /// Another question, sheet or the tour is up: the question waits and comes back after it.
     let hold: Bool
@@ -597,11 +598,11 @@ private struct UpdateAsk: View {
     var body: some View {
         if updates.askPending && model.store.disclosed && model.store.termsAccepted && !hold {
             VStack(alignment: .leading, spacing: 8) {
-                Label { Text("Check for updates?").fontWeight(.semibold) } icon: { Image(systemName: "arrow.down.circle") }
-                Text(UpdateText.question).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
+                Label { Text("unbraid now checks for updates").fontWeight(.semibold) } icon: { Image(systemName: "arrow.down.circle") }
+                Text(UpdateText.notice).foregroundStyle(Ink.dim).fixedSize(horizontal: false, vertical: true)
                 HStack {
-                    Button("Check for Updates") { updates.answer(true) }
-                    Button("Don't Check") { updates.answer(false) }
+                    Button("OK") { updates.answer(true) }
+                    Button("Turn Off") { updates.setEnabled(false) }
                 }.contentButton().controlSize(.small).fixedSize(horizontal: true, vertical: false)
             }
             .font(.system(size: 12)).frame(maxWidth: .infinity, alignment: .leading)

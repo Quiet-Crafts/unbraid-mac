@@ -1,6 +1,7 @@
 import Foundation
 
-/// The optional update check. When the user turns it on, unbraid asks unbraid.app for one small file holding the newest
+/// The update check, on by default from 1.3.7 (new versions often carry security fixes) and off whenever the user turns it
+/// off. While on and once the terms are accepted, unbraid asks unbraid.app for one small file holding the newest
 /// Mac version number, at most once a day (an hour later after a check that got no answer), and only tells the user:
 /// it downloads and installs nothing. The request is a plain GET with a generic user agent and no cookies, caches,
 /// identifiers or setup data, over the Mac's normal connection like unbraid's other own requests. The answer is
@@ -59,9 +60,9 @@ nonisolated enum UpdateCheck {
 
     /// What the check remembers between launches. Not secret: no answer is kept beyond the version number it named.
     struct State: Codable, Equatable, Sendable {
-        /// Checks run only while on; off until the user says yes.
+        /// Checks run only while on (`onByDefault` turns them on once per install).
         var enabled = false
-        /// The user answered the one-time question (or changed the setting), so it is never asked again.
+        /// The user saw the notice that checks are on (or changed the setting), so it isn't shown again.
         var asked = false
         var lastAttempt: Date?
         /// The last attempt got no valid answer: the next one comes an hour later instead of a day.
@@ -70,6 +71,39 @@ nonisolated enum UpdateCheck {
         var latest: String?
         /// The notice was closed for this version: it comes back only for a newer one.
         var dismissed: String?
+        /// Checks were turned on by default for this install (`onByDefault`): once, so turning them off stays off.
+        var turnedOn = false
+
+        init(enabled: Bool = false, asked: Bool = false, lastAttempt: Date? = nil, failed: Bool = false, latest: String? = nil,
+             dismissed: String? = nil, turnedOn: Bool = false) {
+            (self.enabled, self.asked, self.lastAttempt, self.failed) = (enabled, asked, lastAttempt, failed)
+            (self.latest, self.dismissed, self.turnedOn) = (latest, dismissed, turnedOn)
+        }
+
+        /// A file from an earlier version has no `turnedOn`, which takes its default, so a new field never makes an older
+        /// file unreadable. `enabled`, `asked` and `failed`, which every version has written, must be there: a file
+        /// without them is damaged, not a choice to read as "off" and then turn on.
+        init(from d: Decoder) throws {
+            let c = try d.container(keyedBy: CodingKeys.self)
+            enabled = try c.decode(Bool.self, forKey: .enabled)
+            asked = try c.decode(Bool.self, forKey: .asked)
+            lastAttempt = try c.decodeIfPresent(Date.self, forKey: .lastAttempt)
+            failed = try c.decode(Bool.self, forKey: .failed)
+            latest = try c.decodeIfPresent(String.self, forKey: .latest)
+            dismissed = try c.decodeIfPresent(String.self, forKey: .dismissed)
+            turnedOn = try c.decodeIfPresent(Bool.self, forKey: .turnedOn) ?? false
+        }
+    }
+
+    /// Checks on by default, once per install, for a new install and an earlier one alike, also one that chose not to
+    /// check before: the window then says so once, with a one-click Turn Off. An install whose checks were already on
+    /// and acknowledged keeps its state; once turned on, turning them off stays off.
+    static func onByDefault(_ s: State) -> State {
+        guard !s.turnedOn else { return s }
+        var s = s
+        if !(s.enabled && s.asked) { s.enabled = true; s.asked = false }
+        s.turnedOn = true
+        return s
     }
 
     /// Whether an automatic check is due: on, and a day after the last attempt (an hour after one that failed). A last
@@ -109,13 +143,31 @@ nonisolated enum UpdateCheck {
             && c.path == "/download/" && c.query == nil
     }
 
+    /// The saved state, checks on by default (`onByDefault`). A saved state that can't be read stays off and is never
+    /// turned on: what the user chose there is unknown.
     static func load(_ defaults: UserDefaults) -> State {
-        defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(State.self, from: $0) } ?? State()
+        let saved = defaults.data(forKey: key).flatMap { try? JSONDecoder().decode(State.self, from: $0) }
+        // Turned on by default already (its own key, which no earlier version writes, so going back to one and returning
+        // can't undo a Turn Off): the saved state is the user's, and one that can't be read stays off.
+        if defaults.bool(forKey: onByDefaultKey) {
+            var s = saved ?? State(asked: true)
+            s.turnedOn = true
+            return s
+        }
+        // The first launch of 1.3.7 or later. Nothing saved at all is a new install; something saved that isn't a
+        // readable state (damaged, or another type) is not, and stays off.
+        guard defaults.object(forKey: key) != nil else { return onByDefault(State()) }
+        guard let saved else { return State(asked: true, turnedOn: true) }
+        return onByDefault(saved)
     }
     static func save(_ s: State, _ defaults: UserDefaults) {
         if let data = try? JSONEncoder().encode(s) { defaults.set(data, forKey: key) }
     }
     private static let key = "updateCheck"
+    /// Set once checks were turned on by default for this install (`load`), in a key of its own.
+    static let onByDefaultKey = "updateCheckOnByDefault"
+    /// The terms are accepted (`Store.termsAccepted`, the same defaults): no automatic check runs before.
+    static let termsKey = "termsAccepted"
 
     /// Its own session: no cookies, caches or stored credentials, redirects refused (to another host or not), short
     /// timeouts, and headers that say only "unbraid" and its version ("unbraid/1.2.0"), so the site can tell how many
@@ -196,12 +248,17 @@ final class Updates {
         self.now = now
         self.fetch = fetch
         state = UpdateCheck.load(defaults)
+        // Saved at once, so checks turned on by default stay a one-time step even if nothing else changes.
+        if defaults.data(forKey: "updateCheck").flatMap({ try? JSONDecoder().decode(UpdateCheck.State.self, from: $0) }) != state {
+            UpdateCheck.save(state, defaults)
+        }
+        defaults.set(true, forKey: UpdateCheck.onByDefaultKey)
     }
 
     var newer: UpdateCheck.Version? { UpdateCheck.newer(state, installed: installed) }
     var showNotice: Bool { UpdateCheck.showNotice(state, installed: installed) }
-    /// The one-time question is still owed.
-    var askPending: Bool { !state.asked }
+    /// The notice that checks are on is still owed (shown in the window until OK or Turn Off).
+    var askPending: Bool { !state.asked && state.enabled }
 
     /// Checks when due, starting a little after launch (not while the app is still opening) and then looking hourly.
     func start(after delay: Duration = .seconds(30)) {
@@ -216,7 +273,8 @@ final class Updates {
         }
     }
 
-    /// The answer to the one-time question: either way it is not asked again. Yes checks right away.
+    /// The answer to the one-time notice that checks are on (OK is yes, Turn Off is no): either way it is not shown again,
+    /// and no is never undone by a later version. Yes checks right away when checks were off.
     func answer(_ on: Bool) {
         let was = state.enabled
         change { $0.enabled = on; $0.asked = true }
@@ -247,6 +305,8 @@ final class Updates {
         // A running attempt clears `current` itself before it ends, so this never waits on a finished one.
         while let running = current { await running.value }
         guard force || UpdateCheck.due(state, now: now()) else { return }
+        // Nothing automatic leaves the Mac before the terms are accepted; a check the user asks for is theirs.
+        guard user || defaults.bool(forKey: UpdateCheck.termsKey) else { return }
         if user { lastManual = nil }
         attempt += 1
         let id = attempt
@@ -276,8 +336,13 @@ final class Updates {
     }
 
     #if DEBUG
-    /// Back to a fresh install's state, for testing the one-time question.
-    func resetForTesting() { state = UpdateCheck.State(); lastManual = nil; defaults.removeObject(forKey: "updateCheck") }
+    /// Back to a fresh install's state, for testing the notice that checks are on.
+    func resetForTesting() {
+        // As a first launch leaves it: turned on by default, the step recorded, the notice owed.
+        state = UpdateCheck.onByDefault(UpdateCheck.State()); lastManual = nil
+        UpdateCheck.save(state, defaults)
+        defaults.set(true, forKey: UpdateCheck.onByDefaultKey)
+    }
     /// A given state, for the test copy's pictures.
     func setForTesting(_ s: UpdateCheck.State) { state = s; lastManual = nil }
     #endif

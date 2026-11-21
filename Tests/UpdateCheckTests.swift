@@ -144,13 +144,67 @@ final class UpdateCheckTests: XCTestCase {
 
     func testStateSurvivesARelaunchAndDamagedStateFallsBackToOff() throws {
         let d = try XCTUnwrap(UserDefaults(suiteName: "UpdateCheckTests.\(UUID().uuidString)"))
-        let s = UpdateCheck.State(enabled: true, asked: true, lastAttempt: Date(timeIntervalSince1970: 5), failed: true, latest: "1.2", dismissed: "1.1")
+        let s = UpdateCheck.State(enabled: true, asked: true, lastAttempt: Date(timeIntervalSince1970: 5), failed: true, latest: "1.2", dismissed: "1.1", turnedOn: true)
         UpdateCheck.save(s, d)
         XCTAssertEqual(UpdateCheck.load(d), s)
         d.set(Data("garbage".utf8), forKey: "updateCheck")
-        XCTAssertEqual(UpdateCheck.load(d), UpdateCheck.State())
+        XCTAssertEqual(UpdateCheck.load(d), UpdateCheck.State(asked: true, turnedOn: true), "unreadable: off, never turned on by default")
         d.set("a string", forKey: "updateCheck")
-        XCTAssertEqual(UpdateCheck.load(d), UpdateCheck.State())
+        XCTAssertEqual(UpdateCheck.load(d), UpdateCheck.State(asked: true, turnedOn: true))
+    }
+
+    /// From 1.3.7 checks are on by default, once per install: a new install, and an earlier one also when it chose not
+    /// to check. The window then says so once. An earlier install that had them on keeps everything it knew.
+    func testUpdateChecksAreOnByDefaultForNewAndEarlierInstalls() throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "UpdateCheckTests.\(UUID().uuidString)"))
+        let fresh = UpdateCheck.load(d)
+        XCTAssertTrue(fresh.enabled, "a new install checks")
+        XCTAssertFalse(fresh.asked, "and the window says so once")
+        // An earlier version's file (no turnedOn field) that chose "Don't Check".
+        d.set(Data(#"{"enabled":false,"asked":true,"failed":false}"#.utf8), forKey: "updateCheck")
+        let declined = UpdateCheck.load(d)
+        XCTAssertTrue(declined.enabled, "an earlier Don't Check is turned on once")
+        XCTAssertFalse(declined.asked, "and told")
+        // An earlier version's file with checks on: kept as it was, nothing to tell.
+        d.set(Data(#"{"enabled":true,"asked":true,"failed":true,"latest":"1.2","dismissed":"1.1","lastAttempt":5}"#.utf8), forKey: "updateCheck")
+        let on = UpdateCheck.load(d)
+        XCTAssertTrue(on.enabled)
+        XCTAssertTrue(on.asked)
+        XCTAssertEqual(on.latest, "1.2")
+        XCTAssertEqual(on.dismissed, "1.1")
+        XCTAssertTrue(on.failed)
+        XCTAssertEqual(on.lastAttempt, Date(timeIntervalSinceReferenceDate: 5), "an earlier file keeps all it held")
+    }
+
+    /// Turned off on 1.3.7, then an earlier version (which knows nothing of the default) rewrites the state, then 1.3.7
+    /// again: still off. The one-time step lives in a key no earlier version writes.
+    func testTurnOffSurvivesGoingBackToAnEarlierVersionAndReturning() throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "UpdateCheckTests.\(UUID().uuidString)"))
+        d.set(true, forKey: "updateCheckOnByDefault")
+        d.set(Data(#"{"enabled":false,"asked":true,"failed":false,"lastAttempt":5}"#.utf8), forKey: "updateCheck")
+        XCTAssertFalse(UpdateCheck.load(d).enabled)
+        XCTAssertTrue(UpdateCheck.load(d).asked, "and not told again")
+    }
+
+    /// A saved state missing the fields every version writes is damaged, not a choice: it stays off, before and after the
+    /// one-time step.
+    func testDamagedStateWithoutItsFieldsStaysOff() throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "UpdateCheckTests.\(UUID().uuidString)"))
+        d.set(Data("{}".utf8), forKey: "updateCheck")
+        XCTAssertFalse(UpdateCheck.load(d).enabled)
+        d.set(Data(#"{"enabled":false,"asked":true}"#.utf8), forKey: "updateCheck")
+        XCTAssertFalse(UpdateCheck.load(d).enabled, "a field every version writes is missing: damaged")
+        d.set(true, forKey: "updateCheckOnByDefault")
+        XCTAssertFalse(UpdateCheck.load(d).enabled)
+    }
+
+    /// A saved state that can't be read is never turned on: what the user chose there is unknown.
+    func testUnreadableUpdateStateStaysOffAndIsNotAnnounced() throws {
+        let d = try XCTUnwrap(UserDefaults(suiteName: "UpdateCheckTests.\(UUID().uuidString)"))
+        d.set(Data("garbage".utf8), forKey: "updateCheck")
+        let s = UpdateCheck.load(d)
+        XCTAssertFalse(s.enabled)
+        XCTAssertTrue(s.asked, "no notice that checks are on, because they are not")
     }
 }
 
@@ -169,6 +223,10 @@ final class UpdatesTests: XCTestCase {
     override func setUp() async throws {
         defaults = UserDefaults(suiteName: "UpdatesTests.\(UUID().uuidString)")
         fake.answer.withLock { $0 = Data(#"{"versionName": "1.2.0"}"#.utf8) }
+        // These tests start from an install whose checks are off (turned off after 1.3.7 turned them on), with the terms
+        // accepted, so each one turns checks on itself.
+        defaults.set(Data(#"{"enabled":false,"asked":true,"failed":false,"turnedOn":true}"#.utf8), forKey: "updateCheck")
+        defaults.set(true, forKey: "termsAccepted")
     }
 
     private func updates(delay: Duration = .zero) -> Updates {
@@ -180,20 +238,40 @@ final class UpdatesTests: XCTestCase {
         })
     }
 
-    func testOneTimeQuestionIsAskedExactlyOnce() async {
+    func testNoticeThatChecksAreOnShowsOnceAndTurnOffStaysOff() async {
+        defaults.removeObject(forKey: "updateCheck")
+        defaults.removeObject(forKey: "updateCheckOnByDefault")
         let fresh = updates()
-        XCTAssertTrue(fresh.askPending, "a fresh install or an update from a version without the check is asked")
-        XCTAssertFalse(fresh.state.enabled, "off until the user says yes")
-        fresh.answer(false)
+        XCTAssertTrue(fresh.askPending, "a fresh install, or an update from before 1.3.7, is told checks are on")
+        XCTAssertTrue(fresh.state.enabled, "on by default")
+        XCTAssertTrue(updates().askPending, "a relaunch before OK or Turn Off still owes the notice")
+        XCTAssertTrue(updates().state.enabled, "and checks stay on")
+        fresh.answer(true)
         XCTAssertFalse(fresh.askPending)
-        XCTAssertFalse(updates().askPending, "answered, never asked again after a relaunch")
-        XCTAssertEqual(fake.calls.withLock { $0 }, 0, "no means nothing is checked")
+        XCTAssertTrue(fresh.state.enabled, "OK keeps them on")
+        XCTAssertFalse(updates().askPending, "told once, not again after a relaunch")
 
         defaults.removeObject(forKey: "updateCheck")
+        defaults.removeObject(forKey: "updateCheckOnByDefault")
         let other = updates()
         XCTAssertTrue(other.askPending)
-        other.setEnabled(true)
-        XCTAssertFalse(updates().askPending, "the Settings switch counts as an answer")
+        other.setEnabled(false)
+        XCTAssertFalse(other.askPending, "Turn Off answers the notice")
+        let relaunched = updates()
+        XCTAssertFalse(relaunched.state.enabled, "turned off stays off after a relaunch: on by default happens once")
+        XCTAssertFalse(relaunched.askPending)
+    }
+
+    /// Nothing automatic leaves the Mac before the terms are accepted; Check Now is the user's own request.
+    func testNoAutomaticCheckBeforeTheTermsAreAccepted() async {
+        defaults.set(Data(#"{"enabled":true,"asked":true,"failed":false}"#.utf8), forKey: "updateCheck")
+        defaults.set(false, forKey: "termsAccepted")
+        let u = updates()
+        await u.check(user: false)
+        XCTAssertEqual(fake.calls.withLock { $0 }, 0, "terms not accepted: no request")
+        defaults.set(true, forKey: "termsAccepted")
+        await u.check(user: false)
+        XCTAssertEqual(fake.calls.withLock { $0 }, 1, "after the terms, the daily check runs")
     }
 
     func testYesChecksRightAwayAndThenOnceADay() async {

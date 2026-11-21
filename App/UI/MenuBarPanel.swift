@@ -5,6 +5,7 @@ import SwiftUI
 /// connection control. No diagram: numbers and names answer faster.
 struct MenuBarPanel: View {
     private let model = AppModel.shared
+    private let updates = Updates.shared
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var front = FrontApp.shared
     /// The app in front when the panel opened. Held while it is open, so a click always edits the app the person meant.
@@ -40,6 +41,10 @@ struct MenuBarPanel: View {
             }
             Divider().padding(.top, 12)
             VStack(alignment: .leading, spacing: 2) {
+                // A newer release, while checks are on: one click to the download page (the app's own address only).
+                if updates.state.enabled, let newer = updates.newer {
+                    MenuRow(title: "unbraid \(newer) is out: Download…", symbol: "arrow.down.circle") { UpdateText.openReleasePage() }
+                }
                 MenuRow(title: "Open unbraid", key: "⌘O", shortcut: "o") { AppDelegate.openMain() }
                 MenuRow(title: "Settings…", key: "⌘,", shortcut: ",") { AppDelegate.openSettingsWindow() }
                 MenuRow(title: "Quit unbraid", key: "⌘Q", shortcut: "q") { NSApp.terminate(nil) }
@@ -204,17 +209,24 @@ private struct FrontRoute: View {
 /// A plain menu-style row with its shortcut, as in a native menu.
 private struct MenuRow: View {
     let title: String
-    let key: String
-    let shortcut: KeyEquivalent
+    var key = ""
+    var shortcut: KeyEquivalent?
+    var symbol: String?
     let action: () -> Void
     @State private var hover = false
     var body: some View {
-        Button(action: action) {
-            HStack { Text(title); Spacer(); Text(key).foregroundStyle(Ink.dim) }
-                .padding(.horizontal, 6).frame(height: 24).contentShape(.rect)
-                .background(hover ? Ink.accentText.opacity(0.16) : .clear, in: .rect(cornerRadius: 6))
+        let button = Button(action: action) {
+            HStack {
+                if let symbol { Image(systemName: symbol).foregroundStyle(Ink.accentText) }
+                Text(title)
+                Spacer()
+                Text(key).foregroundStyle(Ink.dim)
+            }
+            .padding(.horizontal, 6).frame(height: 24).contentShape(.rect)
+            .background(hover ? Ink.accentText.opacity(0.16) : .clear, in: .rect(cornerRadius: 6))
         }
-        .buttonStyle(.plain).keyboardShortcut(shortcut, modifiers: .command).onHover { hover = $0 }
+        .buttonStyle(.plain).onHover { hover = $0 }
+        if let shortcut { button.keyboardShortcut(shortcut, modifiers: .command) } else { button }
     }
 }
 

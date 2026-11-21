@@ -479,7 +479,7 @@ private final class Meter: NSObject {
     }
 
     /// The update question answered with no, as the pictures start; and the check on with a newer release found.
-    private static let updatesAnswered = UpdateCheck.State(asked: true)
+    private static let updatesAnswered = UpdateCheck.State(enabled: true, asked: true, turnedOn: true)
     /// The release after this one (the next minor version), so the notice shows whatever version is being built.
     private static var updatesNewer: UpdateCheck.State {
         let v = Updates.shared.installed?.parts ?? [1, 0]
@@ -492,7 +492,7 @@ private final class Meter: NSObject {
         Updates.shared.setForTesting(Self.updatesNewer); await meter.frames(60)
         if !Updates.shared.showNotice { report("[Perf] no update notice"); shotsMissing += 1 }
         await shoot(window, "\(dir)/\(prefix)update-notice\(suffix).png")
-        Updates.shared.setForTesting(UpdateCheck.State()); await meter.frames(90)
+        Updates.shared.setForTesting(UpdateCheck.onByDefault(UpdateCheck.State())); await meter.frames(90)
         await shoot(window, "\(dir)/\(prefix)update-ask\(suffix).png")
         Updates.shared.setForTesting(Self.updatesAnswered); await meter.frames(60)
     }
@@ -506,7 +506,7 @@ private final class Meter: NSObject {
                      ("home", "route:home"), ("direct", "route:\(DIRECT)"),
                      ("blocked", "route:\(BLOCK)"), ("traffic", "traffic"), ("activity", "activity"), ("speed", "speed")]
         let bands: [(String, () -> Void, () -> Void)] = [
-            ("update-ask", { Updates.shared.setForTesting(UpdateCheck.State()) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
+            ("update-ask", { Updates.shared.setForTesting(UpdateCheck.onByDefault(UpdateCheck.State())) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
             ("update-notice", { Updates.shared.setForTesting(Self.updatesNewer) }, { Updates.shared.setForTesting(Self.updatesAnswered) }),
             ("support-card", { SupportCardTesting.shared.force = true }, { SupportCardTesting.shared.force = false }),
         ]
