@@ -17,6 +17,7 @@ a libbox build.
 | Go standard library and runtime (Go 1.26.11) | Part of the engine | BSD-3-Clause |
 | [sagernet/gomobile](https://github.com/sagernet/gomobile) | The engine's Objective-C bindings (generated code and its runtime) | BSD-3-Clause |
 | Go modules linked into the engine | Protocols, crypto and networking in sing-box | Each module's own licence (GPL-3.0, LGPL-3.0, MPL-2.0, Apache-2.0, BSD, MIT, ISC, Unlicense, CC0), listed with its full text in `notices.txt` |
+| [CIRCL](https://github.com/cloudflare/circl) 1.6.1 (Kyber-1024 only, built by `tools/build-kyber.sh` from `tools/kyber`) | IVPN's quantum-safe key exchange, in the app | BSD-3-Clause |
 | [uTLS](https://github.com/metacubex/utls) | TLS fingerprints | BSD-3-Clause, with parts under LGPL-3.0 (with a static-linking exception) and MIT |
 | [lzokay](https://github.com/jackoalan/lzokay) | The LZO code in go-lzo derives from it | MIT |
 | [Big Shoulders Display](https://github.com/xotypeco/big_shoulders) | Font of the wordmark and headline numbers | SIL Open Font License 1.1 |
