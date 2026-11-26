@@ -577,6 +577,36 @@ final class BackupTests: XCTestCase {
         XCTAssertTrue(BackupTexts.restoreNotes(plan, accounts: [:], tunnelUp: false).contains("The DNS filter is turned off."))
     }
 
+    /// An OpenVPN server kept at the same address but with other trust (its certificate, a pinned fingerprint, the name or
+    /// usage it must show) is another server: the preview says so, without showing any of it.
+    func testRestorePreviewWarnsWhenOpenVpnTrustChanges() throws {
+        let here = full()
+        let say = "\"Office\": the server it trusts changes."
+        func changed(_ edit: (String) -> String) -> [String] {
+            let server = edit(here.servers[1].ovpn?.config ?? ""), route = edit(here.routes[2].ovpn?.config ?? "")
+            return Backup.weakens(here, here.with { $0.servers[1].ovpn?.config = server; $0.routes[2].ovpn?.config = route })
+        }
+        // The name it must present, a pinned fingerprint, the usage it must declare.
+        XCTAssertEqual(changed { $0.replacingOccurrences(of: "verify-x509-name \"vpn.example.net\" name", with: "verify-x509-name \"evil.example\" name") }, [say])
+        XCTAssertEqual(changed { $0.replacingOccurrences(of: "remote-cert-tls server", with: "remote-cert-tls client") }, [say])
+        // The certificate it trusts: another authority.
+        let other = "-----BEGIN CERTIFICATE-----\nMIIBszCCAVmgAwIBAgIUXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX\n-----END CERTIFICATE-----"
+        let swapped = changed { $0.replacingOccurrences(of: "<ca>", with: "<ca>\n\(other)") }
+        XCTAssertEqual(swapped, [say])
+        XCTAssertFalse(swapped.joined().contains("MIID"))
+        // The name is matched byte for byte: a space is a different name. The control-channel key counts, its spacing not.
+        XCTAssertEqual(changed { $0.replacingOccurrences(of: "verify-x509-name \"vpn.example.net\" name", with: "verify-x509-name \"vpn.example. net\" name") }, [say])
+        XCTAssertNotEqual(Backup.openVpnTrust(["server_name": "Office VPN"]), Backup.openVpnTrust(["server_name": "OfficeVPN"]))
+        XCTAssertEqual(changed { $0.replacingOccurrences(of: "key-direction 1", with: "key-direction 0") }, [say])
+        XCTAssertEqual(changed { $0.replacingOccurrences(of: "<tls-auth>\n", with: "<tls-auth>\n-----BEGIN OpenVPN Static key V1-----\n00\n-----END OpenVPN Static key V1-----\n") }, [say])
+        XCTAssertEqual(Backup.openVpnTrust(["control_wrap": ["type": "tls_auth", "key": "AB CD"]]), Backup.openVpnTrust(["control_wrap": ["type": "tls_auth", "key": "ABCD\n"]]))
+        XCTAssertNotEqual(Backup.openVpnTrust(["control_wrap": ["type": "tls_auth", "key": "ABCD"]]), Backup.openVpnTrust([:]))
+        // Nothing about trust changes: nothing said; a server not an OpenVPN one isn't affected.
+        XCTAssertEqual(changed { $0 + "\n" }, [])
+        XCTAssertEqual(Backup.openVpnTrust(["certificate": "-----BEGIN CERTIFICATE-----\nAB CD\n-----END CERTIFICATE-----"]),
+                       Backup.openVpnTrust(["certificate": "-----BEGIN CERTIFICATE-----\nABCD\n\n-----END CERTIFICATE-----\n"]))
+    }
+
     /// Every protective setting the user can change, one at a time: a restore that weakens it says so.
     func testEveryProtectiveFieldThatGoesIsSaid() throws {
         var here = Setup()

@@ -425,6 +425,8 @@ nonisolated enum Backup {
                 let new = n.remotes.first { !c.remotes.contains($0) }.flatMap { r in r.lastIndex(of: ":").map { String(r[..<$0]) } } ?? h
                 said.append("\(who) connects to another server at \(shown(new)).")
             }
+            // The certificate or name an OpenVPN server must show: the same address with other trust is another server.
+            if let t = n.trust, let o = c.trust, t != o { said.append("\(who): the server it trusts changes.") }
             if n.dns != c.dns { said.append(n.dns.isEmpty ? "\(who) no longer sets its own DNS servers." : "\(who) uses other DNS servers: \(n.dns.joined(separator: ", ")).") }
             for line in said where !out.contains(line) { out.append(line) }
         }
@@ -437,7 +439,7 @@ nonisolated enum Backup {
 
     /// One exit the user set up: what it is (`key`: a server's or route's id), its name, where it connects (host and port,
     /// and a WireGuard server's public key) and the DNS servers it sets.
-    private struct Exit { var key: String, name: String, host: String?, port: String?, peer: String?, dns: [String]; var remotes: [String] = [] }
+    private struct Exit { var key: String, name: String, host: String?, port: String?, peer: String?, dns: [String]; var remotes: [String] = []; var trust: [String: Set<String>]? }
 
     /// Every own server, every route through one (it runs its own copy of the config) and the Home WireGuard tunnel.
     private static func exits(_ s: Setup) -> [Exit] {
@@ -447,18 +449,38 @@ nonisolated enum Backup {
                 (host, port) = (String(e[..<colon]).trimmingCharacters(in: CharacterSet(charactersIn: "[]")), String(e[e.index(after: colon)...]))
             } else if let ss { (host, port) = (ss.server, String(ss.port)) }
             // OpenVPN: every server the engine may pick, with the port and protocol each gets, as the import builds them.
-            var remotes: [String] = []
+            var remotes: [String] = [], trust: [String: Set<String>]?
             if let o = ovpn, let e = try? Manual.ovpnEndpoint("check", o).string,
                let j = try? JSONSerialization.jsonObject(with: Data(e.utf8)) as? [String: Any] {
                 let list = (j["servers"] as? [[String: Any]]) ?? [j]
                 remotes = list.compactMap { r in (r["server"] as? String).map { "\($0):\(r["server_port"] as? Int ?? 0)/\(r["network"] as? String ?? "")" } }
+                trust = (j["tls"] as? [String: Any]).map(openVpnTrust)
                 if let first = list.first { (host, port) = (first["server"] as? String, (first["server_port"] as? Int).map(String.init)) }
             }
-            return Exit(key: key, name: name, host: host, port: port, peer: wg?.publicKey, dns: wg?.dns ?? [], remotes: remotes)
+            return Exit(key: key, name: name, host: host, port: port, peer: wg?.publicKey, dns: wg?.dns ?? [], remotes: remotes, trust: trust)
         }
         return s.servers.map { exit("s:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
             + s.routes.filter { $0.imported && $0.tsExit == nil }.map { exit("r:" + $0.id, $0.name, $0.wg, $0.ovpn, $0.ss) }
             + (s.home.wg.map { [exit(homeKey, "", $0, nil, nil)] } ?? [])
+    }
+
+    /// What decides whether an OpenVPN server is accepted, from the compiled endpoint's `tls` settings: the certificates
+    /// it trusts, any pinned fingerprints, the name and usage it must show, and the key (and kind) that wraps the control
+    /// channel. Values are only compared, never shown. Spacing counts everywhere except inside certificate and key text.
+    static func openVpnTrust(_ tls: [String: Any]) -> [String: Set<String>] {
+        func bare(_ s: String) -> String { String(s.filter { !$0.isWhitespace }) }
+        var out: [String: Set<String>] = [:]
+        for k in ["certificate", "peer_fingerprint", "server_name", "server_name_type", "remote_certificate_ku",
+                  "remote_certificate_eku", "remote_certificate_tls", "ns_certificate_type", "certificate_profile"] {
+            let values = (tls[k] as? [String]) ?? (tls[k] as? String).map { [$0] } ?? []
+            // A certificate list is compared block by block; anything else value by value.
+            let set = Set(k == "certificate" ? values.flatMap { $0.components(separatedBy: "-----END CERTIFICATE-----") }.map(bare).filter { !$0.isEmpty } : values)
+            if !set.isEmpty { out[k] = set }
+        }
+        if let w = tls["control_wrap"] as? [String: Any] {
+            out["control_wrap"] = Set(w.compactMap { k, v in (v as? String).map { "\(k)=" + (k == "key" ? bare($0) : $0) } })
+        }
+        return out
     }
 
     /// The losses, in the sheet's few sentences: every one the comparison finds has one.
