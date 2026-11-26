@@ -2277,6 +2277,12 @@ final class Connection {
                 try await Task { try await self.apply(input, json, g, persist: current, since: request, takeover: takeover) }.value
                 commit(input, json, accounts, interim: interim)
                 guard g == generation else { return .restored }
+                // A partial sign-out that landed while the previous rules went back in (it bumps no generation): ended as
+                // the sign-out ends it, never left running or sealed with that account.
+                if Lifecycle.revokes(running: input.setup, linked: Set(input.links.keys), applied: accounts, accounts: store.accounts) {
+                    await teardown(error: Self.signedOut, revoke: true, g)
+                    return .off
+                }
                 state.phase = .on
                 state.servers = input.links.mapValues(\.server)
                 syncAutoTcp()
@@ -2308,7 +2314,9 @@ final class Connection {
         let blocking = Compiler.denyAllInput(input), already = committed?.blocking == true
         let json = try Compiler.denyAll(blocking), searched = search(blocking)
         guard g == generation else { return .off }
-        let blockerProfile = Lifecycle.blockerProfile(running: tunnel.profile.map(Self.shape), wanted: Self.shape(profile(blocking)))
+        // Wanted: the profile of the setup the deny-all is built from, not of the deny-all itself (its stand-in Blocks
+        // would always end the home network's bypass, a restart for every deny-all).
+        let blockerProfile = Lifecycle.blockerProfile(running: tunnel.profile.map(Self.shape), wanted: Self.shape(profile(input)))
             .map { TunnelControl.Profile(killSwitch: $0.killSwitch, lan: $0.lan, onDemand: $0.onDemand) }
         // Named before it can run, for a takeover after a relaunch: that must never stop it for the accounts of the record it
         // stands in for (it holds none, and stopping it would let the apps it blocks out).
@@ -2340,7 +2348,7 @@ final class Connection {
         let input = makeInput(store.setup, [:], probe: nil)
         let fresh = deny && !store.setupStandIn
             ? (try? Compiler.denyAll(input)).map { (json: $0, search: search(Compiler.denyAllInput(input))) } : nil
-        let profiles = tunnel.profile.map { (running: Self.shape($0), wanted: Self.shape(profile(Compiler.denyAllInput(input)))) }
+        let profiles = tunnel.profile.map { (running: Self.shape($0), wanted: Self.shape(profile(input))) }
         guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh, profile: profiles) else { return nil }
         do { return try await block(input, message(error, "Change not applied"), eraseRequest, g) }
         catch is CancellationError { return nil }

@@ -412,6 +412,54 @@ final class ProtectedTests: XCTestCase {
         XCTAssertNil(Lifecycle.blockerProfile(running: nil, wanted: shape(true)))
     }
 
+    /// The deny-all runs under the stricter of the two profiles: the kill switch on when either has it, the home network
+    /// bypassing the tunnel only when both let it. Local-network access turned off never leaves it bypassing.
+    func testBlockerTakesTheStricterOfBothProfiles() {
+        XCTAssertEqual(Lifecycle.blockerProfile(running: shape(false, lan: true), wanted: shape(false)), shape(false))
+        XCTAssertEqual(Lifecycle.blockerProfile(running: shape(false, lan: true, onDemand: true), wanted: shape(true)), shape(true))
+        XCTAssertEqual(Lifecycle.blockerProfile(running: shape(true), wanted: shape(false, lan: true)), shape(true))
+        XCTAssertEqual(Lifecycle.blockerProfile(running: shape(false, lan: true, onDemand: true), wanted: shape(false, lan: true)), shape(false, lan: true, onDemand: true))
+    }
+
+    /// A deny-all that runs is put in again when its profile must get stricter, even with the same rules: a first Block of
+    /// an app it already blocks turns the kill switch on, local-network access turned off stops the bypass.
+    func testABlockerWhoseProfileMustGetStricterIsPutInAgain() {
+        let same = (json: "{}", search: "s")
+        XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: same, fresh: same, profile: (shape(false), shape(true))))
+        XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: same, fresh: same, profile: (shape(false, lan: true), shape(false))))
+        for profile in [(shape(true), shape(true)), (shape(true), shape(false)), (shape(false, lan: true), shape(false, lan: true))] {
+            XCTAssertFalse(Lifecycle.reblock(blocking: true, held: false, running: same, fresh: same, profile: profile))
+        }
+        XCTAssertFalse(Lifecycle.reblock(blocking: true, held: true, running: same, fresh: same, profile: (shape(false), shape(true))))
+        XCTAssertFalse(Lifecycle.reblock(blocking: false, held: false, running: same, fresh: same, profile: (shape(false), shape(true))))
+    }
+
+    /// A takeover that failed and would keep what runs goes through a failed change's recovery instead, from the record
+    /// of what runs: the deny-all first when the setup restricts someone (an edit or restore not applied before a
+    /// relaunch), the previous rules only if it can't run; a deny-all that runs, rebuilt from the setup when its rules
+    /// are older. Kept as it is otherwise: a current deny-all, nobody restricted, stand-ins, leave, revoke or stop.
+    func testAFailedTakeoverIsRecoveredFromAsAFailedChange() {
+        for disrupted in [false, true] {
+            XCTAssertEqual(Lifecycle.takeoverRecovery(.retry(disrupted: disrupted), restricts: true, blocking: false, stale: false, held: false), [.denyAll, .previous])
+        }
+        for restricts in [false, true] {
+            XCTAssertEqual(Lifecycle.takeoverRecovery(.retry(disrupted: false), restricts: restricts, blocking: true, stale: true, held: false), [.denyAll])
+            XCTAssertNil(Lifecycle.takeoverRecovery(.retry(disrupted: false), restricts: restricts, blocking: true, stale: false, held: false))
+            XCTAssertNil(Lifecycle.takeoverRecovery(.retry(disrupted: false), restricts: restricts, blocking: restricts, stale: true, held: true))
+        }
+        XCTAssertNil(Lifecycle.takeoverRecovery(.retry(disrupted: false), restricts: false, blocking: false, stale: true, held: false))
+        for failure in [Lifecycle.TakeoverFailure.leave, .stop, .revoke(.unknown)] {
+            XCTAssertNil(Lifecycle.takeoverRecovery(failure, restricts: true, blocking: false, stale: false, held: false))
+            XCTAssertNil(Lifecycle.takeoverRecovery(failure, restricts: false, blocking: true, stale: true, held: false))
+        }
+        // Older: the deny-all of the setup as it is now has other rules, or its profile must get stricter.
+        let shape = Lifecycle.Shape(killSwitch: false, lan: true, onDemand: false)
+        XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: ("old", ""), fresh: ("new", ""), profile: (shape, shape)))
+        XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: ("same", ""), fresh: ("same", ""),
+                                        profile: (shape, Lifecycle.Shape(killSwitch: false, lan: false, onDemand: false))))
+        XCTAssertFalse(Lifecycle.reblock(blocking: true, held: false, running: ("same", ""), fresh: ("same", ""), profile: (shape, shape)))
+    }
+
     /// Blocks added and removed during the pause reach the protected setup; nothing else of the edited one does.
     func testOnlyBlocksChange() throws {
         var store = record

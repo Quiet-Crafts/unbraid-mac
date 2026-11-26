@@ -762,6 +762,22 @@ final class CompilerTests: XCTestCase {
         for (old, wanted) in [(s, moved), (s, missing), (s, blocked), (s, site), (direct, s), (directSite, s), (directSite, child), (direct, vpnSite)] {
             XCTAssertTrue(LinkPicker.restricts(from: old, to: wanted))
         }
+        // Local-network access turned off (the rules that ran send every app's local traffic direct), or the kill switch
+        // raised (off to Internet, Internet to Home: blocked apps lose the home network there).
+        var lanOff = s, internet = s, home = s
+        lanOff.prefs.lan = false
+        internet.prefs.killLevel = .internet
+        home.prefs.killLevel = .home
+        var off = s
+        off.prefs.killLevel = .off
+        for (old, wanted) in [(s, lanOff), (off, internet), (internet, home), (off, home)] {
+            XCTAssertTrue(LinkPicker.restricts(from: old, to: wanted), "\(old.prefs) -> \(wanted.prefs)")
+        }
+        // Any change to the home networks (a home tunnel or tailnet subnet added takes its addresses from blocked apps).
+        var subnet = s, tailnet = s
+        subnet.home.subnets = ["192.168.77.0/24"]
+        tailnet.home.tailscale.toggle()
+        for (old, wanted) in [(s, subnet), (subnet, s), (s, tailnet)] { XCTAssertTrue(LinkPicker.restricts(from: old, to: wanted)) }
         XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: false), [.denyAll, .previous])
         // What ran lets the app out direct; the deny-all put in its place refuses it, and the other Direct app still goes direct.
         let running = try Compiler.compile(input(s))
@@ -804,6 +820,15 @@ final class CompilerTests: XCTestCase {
         XCTAssertTrue(LinkPicker.needsInterim(from: site, to: s))
         for (old, wanted) in [(blocked, s), (site, s), (s, favourite), (s, vpnMove), (s, vpnDefault), (siteUs, siteIt), (directVpnSite, direct), (blocked, direct)] {
             XCTAssertFalse(LinkPicker.restricts(from: old, to: wanted))
+        }
+        // Local-network access turned on, or the kill switch lowered, restricts nobody.
+        var lanOff = s, off = s, internet = s, home = s
+        lanOff.prefs.lan = false
+        off.prefs.killLevel = .off
+        internet.prefs.killLevel = .internet
+        home.prefs.killLevel = .home
+        for (old, wanted) in [(lanOff, s), (home, internet), (internet, off), (home, off), (home, home)] {
+            XCTAssertFalse(LinkPicker.restricts(from: old, to: wanted), "\(old.prefs) -> \(wanted.prefs)")
         }
         XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: false, testChange: false), [.previous, .denyAll])
         XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: true), [.previous, .denyAll])

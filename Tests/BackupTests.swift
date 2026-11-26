@@ -193,7 +193,8 @@ final class BackupTests: XCTestCase {
         var vpn = backup
         vpn.apps["org.example.a"] = "m1"
         vpn.apps["org.example.z"] = BLOCK
-        vpn.servers[0].wg?.privateKey = String(repeating: "D", count: 42) + "E="
+        // Another peer: restored without keys, that server's route waits for its config (`keyLeftOut`).
+        vpn.servers[0].wg?.endpoint = "203.0.113.9:51820"
         vpn.routes[1].wg = vpn.servers[0].wg
         for keys in [true, false] {
             let b = try read(backup, keys: keys)
@@ -204,6 +205,7 @@ final class BackupTests: XCTestCase {
                 }
                 let restored = Backup.plan(onto: vpn, from: b, keepPrevious: keepPrevious, now: .now, judge: false).setup
                 XCTAssertFalse(LinkPicker.restricts(from: vpn, to: restored), "keys \(keys) keep \(keepPrevious)")
+                XCTAssertEqual(restored.route("w1")?.keyless, !keys)
                 for app in Set(vpn.apps.keys).union(restored.apps.keys) {
                     if restored.routeOf(app) != DIRECT { XCTAssertNotEqual(vpn.routeOf(app), DIRECT, app) }
                     if restored.routeOf(app) == BLOCK { XCTAssertEqual(vpn.routeOf(app), BLOCK, app) }

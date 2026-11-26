@@ -64,18 +64,23 @@ nonisolated enum Lifecycle {
     struct Shape: Equatable, Sendable { var killSwitch: Bool, lan: Bool, onDemand: Bool }
 
     /// The profile the deny-all that takes over from a failed change runs under; nil (no profile read) leaves it to its
-    /// own setup's. The running one, except that the kill switch [wanted] by its setup is turned on: a first blocked app
-    /// turns it on, and until it is on the blocked app could still reach the home network or bind to the physical
-    /// interface.
+    /// own setup's. The stricter of the running one and the one its setup [wanted]: the kill switch on when either has it
+    /// (a first blocked app turns it on; until then the app could still reach the home network or bind to the physical
+    /// interface), the home network bypassing the tunnel only when both let it (local-network access turned off).
+    /// Connect on Demand the running one's, the wanted one's when the kill switch is turned on, as before.
     static func blockerProfile(running: Shape?, wanted: Shape) -> Shape? {
         guard let running else { return nil }
-        return !running.killSwitch && wanted.killSwitch ? wanted : running
+        let killSwitch = running.killSwitch || wanted.killSwitch
+        return Shape(killSwitch: killSwitch, lan: running.lan && wanted.lan, onDemand: killSwitch != running.killSwitch ? wanted.onDemand : running.onDemand)
     }
 
     /// What a takeover that failed and would keep what runs ([failure] `.retry`) does instead: the recovery of a failed
-    /// change (`recovery`, `Connection.recover`) from the record of what runs, or nil to keep it.
+    /// change (`recovery`, `Connection.recover`) from the record of what runs, or nil to keep it. When the setup
+    /// [restricts] someone compared with that record, the deny-all first; when a deny-all runs ([blocking]) whose rules
+    /// or profile are older than the setup's ([stale], `reblock`), rebuilt from the setup. Never on stand-ins ([held]).
     static func takeoverRecovery(_ failure: TakeoverFailure, restricts: Bool, blocking: Bool, stale: Bool, held: Bool) -> [Recovery]? {
-        nil
+        guard case .retry = failure, !held, blocking ? stale : restricts else { return nil }
+        return recovery(blocking: blocking, restricts: restricts, testChange: false)
     }
 
     /// On or connecting can be a pause still being applied. Once it settles, resume only that same timed pause.
@@ -473,7 +478,7 @@ nonisolated extension Lifecycle {
     static func reblock(blocking: Bool, held: Bool, running: (json: String, search: String), fresh: (json: String, search: String)?,
                         profile: (running: Shape, wanted: Shape)? = nil) -> Bool {
         guard blocking, !held, let fresh else { return false }
-        return fresh != running
+        return fresh != running || profile.map { blockerProfile(running: $0.running, wanted: $0.wanted) != $0.running } == true
     }
 
     enum Recovery: Equatable, Sendable { case denyAll, previous }

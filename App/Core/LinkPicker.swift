@@ -110,9 +110,10 @@ nonisolated enum LinkPicker {
 
     /// The change takes away something the rules running for [old] still allow: an app or the default leaving Direct
     /// (for a VPN route, a Block, or a route that can't run), a new Block, or a website rule that sent it Direct
-    /// removed, or a route given to a website that had no rule or went Direct. The rules that ran would let that traffic
-    /// out without the VPN (`Lifecycle.recovery`). Websites by their own rules only, erring toward restricting. A move
-    /// between VPN routes, a Block removed or a favourite restricts nobody.
+    /// removed, or a route given to a website that had no rule or went Direct, local-network access turned off, the kill
+    /// switch raised, or any change to the home networks (erring toward restricting). The rules that ran would let that traffic out without the VPN (`Lifecycle.recovery`). Websites
+    /// by their own rules only, erring toward restricting. A move between VPN routes, a Block removed, local-network
+    /// access turned on, the kill switch lowered or a favourite restricts nobody.
     static func restricts(from old: Setup, to new: Setup) -> Bool {
         func restricted(_ before: String, _ after: String) -> Bool {
             (before == DIRECT && after != DIRECT) || (before != BLOCK && after == BLOCK)
@@ -122,7 +123,12 @@ nonisolated enum LinkPicker {
             guard let n else { return o == DIRECT }
             return n != DIRECT && (n == BLOCK || o == nil || o == DIRECT)
         }
-        return restricted(old.defaultRoute, new.defaultRoute)
+        // Local-network access turned off (the rules that ran send every app's local traffic direct, `Compiler`), or the
+        // kill switch raised: Internet keeps traffic in while the tunnel is down, Home takes blocked apps off the home network.
+        let level = KillLevel.allCases
+        return old.prefs.lan && !new.prefs.lan || old.home != new.home
+            || level.firstIndex(of: new.prefs.killLevel)! > level.firstIndex(of: old.prefs.killLevel)!
+            || restricted(old.defaultRoute, new.defaultRoute)
             || Set(old.apps.keys).union(new.apps.keys).contains { restricted(old.routeOf($0), new.routeOf($0)) }
             || Set(old.sites.keys).union(new.sites.keys).contains { site(old.sites[$0], new.sites[$0]) }
     }
