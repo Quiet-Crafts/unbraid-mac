@@ -1197,8 +1197,9 @@ final class Connection {
             let setup = Sites.withDomain(kept, of: store.setup)
             let domain = Sites.tailnet(of: setup)
             let ids = Set(setup.activeRoutes(tailnet: domain).map(\.id))
+            // Apps only remembered count as in `makeInput`: the copy run unattended refuses what the running one refuses.
             let input = Compiler.Input(setup: setup, links: record.links.filter { ids.contains($0.key) && !blocked.contains($0.key) }, blocked: blocked.intersection(ids), apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(setup)),
-                                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
+                                       remembered: AppCatalog.shared.remembered(Array(setup.apps.keys)), selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath),
                                        tsSuffix: setup.tailscale ? Compiler.trustedStoredSuffix(setup.home) : nil, siteDomain: .given(domain), probe: nil, ownerless: .refusedWhileSplit)
             return (SealKey(setup: setup, apps: input.apps, search: Compiler.searchDomain(input), siteDomain: domain, held: input.blocked), input)
         }

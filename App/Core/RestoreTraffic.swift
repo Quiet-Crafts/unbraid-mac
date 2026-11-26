@@ -115,7 +115,7 @@ nonisolated enum RestoreTraffic {
             else if r.viaNative, case .wg(let sv, var p, let ports, let entries)? = links[r.id] { p.hopEntry = "192.0.2.1"; links[r.id] = .wg(sv, p, ports: ports, entries: entries) }
         }
         let input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
-                                   tsSuffix: s.tailscale ? Compiler.trustedStoredSuffix(s.home) : nil)
+                                   tsSuffix: s.tailscale ? Compiler.trustedStoredSuffix(s.home) : nil, ownerless: .refusedWhileSplit)
         guard let text = try? Compiler.compile(input), let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let route = o["route"] as? [String: Any], let rules = route["rules"] as? [[String: Any]], let final = route["final"] as? String,
               let dns = o["dns"] as? [String: Any] else { return nil }

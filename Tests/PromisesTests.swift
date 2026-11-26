@@ -305,22 +305,25 @@ final class PromisesTests: XCTestCase {
                 XCTAssertTrue(Self.isPrivate(site, tailnet: i.websiteDomain), "P1 unapplied \(site), \(c.label)")
             }
 
-            // P3 Programs nobody owns: refused under refusedWhileSplit whenever an app is blocked or (Direct default) any
-            // app is on a VPN, under refusedWhileBlocking whenever an app is blocked; otherwise the default route. Apps
-            // only remembered (not on this Mac) don't count.
+            // P3 Programs nobody owns: refused under refusedWhileSplit whenever an app is blocked, (Direct default) any
+            // app is on a VPN, or (VPN default) any app leaves another way (Direct or another tunnel); under
+            // refusedWhileBlocking whenever an app is blocked; otherwise the default route. Apps only remembered (not on
+            // this Mac) don't count.
             let live = s.apps.filter { !i.remembered.contains($0.key) && i.apps[$0.key] != nil }
             let blocking = live.values.contains { $0 == BLOCK || ($0 != s.defaultRoute && i.blocked.contains($0)) }
             let appsOnExits = live.values.contains { $0 != DIRECT && $0 != BLOCK && $0 != s.defaultRoute }
+            let offDefault = s.defaultRoute != DIRECT && live.values.contains { $0 != BLOCK && w.tag($0) != w.tag(s.defaultRoute) }
             let refuse = switch i.ownerless {
             case .followsDefault: false
             case .refusedWhileBlocking: blocking
-            case .refusedWhileSplit: blocking || s.defaultRoute == DIRECT && appsOnExits
+            case .refusedWhileSplit: blocking || s.defaultRoute == DIRECT && appsOnExits || offDefault
             }
             let nobody = Walked.reach(w.walk, nil, name: nil)
             if refuse || i.blocked.contains(s.defaultRoute) {
                 XCTAssertEqual(nobody, "reject", "P3 \(c.label)")
                 if !i.blocked.contains(s.defaultRoute) { count("ownerless:refused:\(i.ownerless)") }
                 if i.ownerless == .refusedWhileSplit, !blocking { count("ownerless:split-only") }
+                if i.ownerless == .refusedWhileSplit, !blocking, offDefault, !i.blocked.contains(s.defaultRoute) { count("ownerless:vpn-default-split") }
             } else {
                 XCTAssertTrue(exits(nobody, w.tag(s.defaultRoute)), "P3 \(c.label): \(nobody)"); count("ownerless:default")
             }
@@ -373,7 +376,7 @@ final class PromisesTests: XCTestCase {
         // generated setup may be refused (each is valid by construction).
         for k in ["default:direct", "default:vpn", "default:tx", "default:blocked", "tunnel:shared", "sites:applied", "app:block",
                   "app:direct", "app:vpn", "app:tx", "app:route-without-tunnel", "site:followed", "ownerless:refused:refusedWhileBlocking",
-                  "ownerless:refused:refusedWhileSplit", "ownerless:split-only", "ownerless:default", "disguise:on", "domain:given"] {
+                  "ownerless:refused:refusedWhileSplit", "ownerless:split-only", "ownerless:vpn-default-split", "ownerless:default", "disguise:on", "domain:given"] {
             XCTAssertGreaterThanOrEqual(seen[k, default: 0], 5, "coverage: \(k) came up in \(seen[k, default: 0]) setups")
         }
         XCTAssertEqual(refusals, [], "compiles refused")

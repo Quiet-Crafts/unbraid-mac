@@ -2090,15 +2090,18 @@ final class CompilerTests: XCTestCase {
         XCTAssertLessThan(at, try XCTUnwrap(rs.firstIndex { paths($0) != nil && action($0) == "resolve" }))
         // Blocked apps are refused earlier still, by their own rule.
         XCTAssertLessThan(try XCTUnwrap(rs.firstIndex { paths($0) == [pat("com.z")] && action($0) == "reject" }), at)
-        // Nothing blocked: a VPN default carries ownerless traffic; a Direct default must refuse it.
+        // Nothing blocked: with apps kept off the VPN default (here on Direct and other exits) it is refused before the
+        // default's way out; a Direct default with apps on a VPN refuses it as above.
         s.apps["com.z"] = nil
-        XCTAssertTrue(ownerless(try compile(s)).isEmpty)
+        XCTAssertEqual(ownerless(try compile(s)).count, 1)
         var split = s
         split.defaultRoute = DIRECT
         XCTAssertEqual(ownerless(try compile(split)).count, 1)
         XCTAssertEqual(ownerless(try parse(try raw(split, ownerless: .refusedWhileSplit))).count, 1)
-        // A VPN default already keeps them on a VPN.
-        XCTAssertTrue(ownerless(try parse(try raw(s, ownerless: .refusedWhileSplit))).isEmpty)
+        // A VPN default with every app on it carries them.
+        var onDefault = s
+        onDefault.apps = ["com.a": "nl"]
+        XCTAssertTrue(ownerless(try parse(try raw(onDefault, ownerless: .refusedWhileSplit))).isEmpty)
         // And never while following the default.
         s.apps["com.z"] = BLOCK
         XCTAssertTrue(ownerless(try parse(try raw(s, ownerless: .followsDefault))).isEmpty)
@@ -2107,6 +2110,78 @@ final class CompilerTests: XCTestCase {
         paused.prefs.killLevel = .internet
         c = try compile(paused, links: [:])
         XCTAssertEqual(ownerless(c).count, 1)
+    }
+
+    /// With a VPN default, a connection with no program to match may belong to an app kept off it (Direct, filtered
+    /// Direct, another exit): refused right before the default's way out, after everything that decides by destination
+    /// or program. Ping still follows the default.
+    func testOwnerlessConnectionsAreRefusedBeforeAVpnDefaultWhileAnAppIsKeptOffIt() throws {
+        func refusals(_ c: O) -> [Int] { rules(c).indices.filter { rules(c)[$0]["type"] as? String == "logical" && action(rules(c)[$0]) == "reject" } }
+        func defaultResolve(_ c: O) -> Int? {
+            rules(c).firstIndex { action($0) == "resolve" && $0["server"] as? String == "dns-r-nl" && paths($0) == nil && names($0) == nil && $0["inbound"] == nil }
+        }
+        func refusedBeforeDefault(_ s: Setup, remembered: Set<String> = [], ownerless: Compiler.Ownerless = .refusedWhileSplit, links: [String: Link]? = nil) throws -> Bool {
+            let c = try parse(try raw(s, links: links, remembered: remembered, ownerless: ownerless))
+            guard let at = refusals(c).last, let resolve = defaultResolve(c) else { return false }
+            return at == resolve - 1
+        }
+        var s = example
+        s.home = Home()
+        s.prefs.lan = true
+        s.apps = ["com.x": DIRECT]
+        let c = try compile(s)
+        XCTAssertEqual(refusals(c).count, 1)
+        let at = try XCTUnwrap(refusals(c).first), rs = rules(c)
+        XCTAssertEqual(at, try XCTUnwrap(defaultResolve(c)) - 1)
+        let parts = try XCTUnwrap(rs[at]["rules"] as? [O])
+        XCTAssertEqual(strings(parts[0]["network"]), ["tcp", "udp"])
+        XCTAssertEqual(strings(parts[1]["process_path_regex"]), ["."])
+        XCTAssertEqual(parts[1]["invert"] as? Bool, true)
+        // After DNS, unbraid itself, the LAN and the Direct app's own rule.
+        XCTAssertLessThan(try XCTUnwrap(rs.firstIndex { $0["protocol"] as? String == "dns" }), at)
+        XCTAssertLessThan(try XCTUnwrap(rs.firstIndex { paths($0) == [Compiler.pattern(forPath: selfApp)] }), at)
+        XCTAssertLessThan(try XCTUnwrap(rs.firstIndex { outbound($0) == "direct" && $0["ip_cidr"] != nil }), at)
+        XCTAssertLessThan(try XCTUnwrap(rs.firstIndex { paths($0) == [pat("com.x")] && outbound($0) == "direct" }), at)
+        // Ping follows the default.
+        XCTAssertFalse(rs.contains { $0["network"] as? String == "icmp" })
+        // Filtered Direct, and an app on another exit.
+        var filtered = s
+        filtered.prefs.filter = Filter(id: "quad9", directApps: true)
+        XCTAssertTrue(try refusedBeforeDefault(filtered))
+        var exit = s
+        exit.apps = ["com.a": "us"]
+        XCTAssertTrue(try refusedBeforeDefault(exit))
+        // Every app here on the default, one on a route sharing the default's tunnel, or the one elsewhere only remembered:
+        // the default carries them, and only under the split policy.
+        var same = s
+        same.apps = ["com.a": "nl"]
+        XCTAssertTrue(refusals(try compile(same)).isEmpty)
+        var shared = s
+        shared.routes.append(Route(id: "nl2", loc: nl().loc))
+        shared.apps = ["com.a": "nl2"]
+        let link = Link.wg(sv("nl"), Nord.peer(sv("nl"), key))
+        XCTAssertTrue(refusals(try parse(try raw(shared, links: ["nl": link, "nl2": link]))).isEmpty)
+        XCTAssertTrue(refusals(try parse(try raw(s, remembered: ["com.x"]))).isEmpty)
+        XCTAssertTrue(refusals(try parse(try raw(s, ownerless: .refusedWhileBlocking))).isEmpty)
+        XCTAssertTrue(refusals(try parse(try raw(s, ownerless: .followsDefault))).isEmpty)
+        // A website's rule comes first: an ownerless connection to a Direct or routed website keeps the website's way.
+        var sites = s
+        sites.sites = ["bank.example": DIRECT, "work.example": "us"]
+        let w = try compile(sites), wat = try XCTUnwrap(refusals(w).first)
+        XCTAssertLessThan(try XCTUnwrap(rules(w).firstIndex { names($0) == ["bank.example"] && outbound($0) == "direct" }), wat)
+        XCTAssertLessThan(try XCTUnwrap(rules(w).firstIndex { names($0) == ["work.example"] && outbound($0) == "r-us" }), wat)
+        // A blocked app keeps the one early refusal it had.
+        var blocked = s
+        blocked.apps["com.z"] = BLOCK
+        let b = try compile(blocked)
+        XCTAssertEqual(refusals(b).count, 1)
+        XCTAssertLessThan(try XCTUnwrap(refusals(b).first), try XCTUnwrap(rules(b).firstIndex { paths($0) != nil && action($0) == "resolve" }))
+        // A Tailscale exit default waiting for its sign-in: the refusal comes before the default's sign-in exception.
+        var ts = s
+        ts.home = Home(tailscale: true)
+        ts.routes.append(Route(id: "ts", tsExit: "nas", hue: 4)); ts.defaultRoute = "ts"
+        let t = try compile(ts, login: true), tat = try XCTUnwrap(refusals(t).last)
+        XCTAssertGreaterThan(try XCTUnwrap(rules(t).firstIndex { strings($0["domain_suffix"]).contains("tailscale.com") && paths($0) == nil }), tat)
     }
 
     func testABlockedAppRefusesPingToo() throws {
@@ -3297,6 +3372,39 @@ extension CompilerTests {
             XCTAssertFalse(endpointTags(c).contains("r-it"))
             XCTAssertFalse(rules(c).contains { names($0)?.contains("printer.lan") == true })
         }
+    }
+
+    // The VPN-default refusal: routes on one Tailscale exit, remembered apps and IPv6.
+    func testTwoRoutesOnOneTailscaleExitDontRefuseOwnerlessConnections() throws {
+        var s = example
+        s.home = Home(tailscale: true)
+        s.routes.append(Route(id: "ts1", tsExit: "100.64.0.9", hue: 4))
+        s.routes.append(Route(id: "ts2", tsExit: "100.64.0.9", hue: 5))
+        s.defaultRoute = "ts1"
+        s.apps = ["com.a": "ts2"]
+        XCTAssertFalse(rules(try compile(s)).contains { $0["type"] as? String == "logical" && action($0) == "reject" })
+    }
+
+    func testAnAppOnlyRememberedOnDirectDoesntRefuseOwnerlessConnections() throws {
+        var s = example
+        s.home = Home()
+        s.apps = ["com.absent": DIRECT, "com.live": "nl"]
+        let c = try parse(try raw(s, remembered: ["com.absent"]))
+        XCTAssertFalse(rules(c).contains { $0["type"] as? String == "logical" && action($0) == "reject" })
+    }
+
+    func testTheVpnDefaultRefusalCoversTcpAndUdpOfBothIpVersionsNotPing() throws {
+        var s = example
+        s.home = Home()
+        s.apps = ["com.direct": DIRECT]
+        let rs = rules(try compile(s))
+        let refusal = try XCTUnwrap(rs.first { $0["type"] as? String == "logical" && action($0) == "reject" })
+        let parts = try XCTUnwrap(refusal["rules"] as? [O])
+        XCTAssertNil(refusal["ip_version"])
+        XCTAssertTrue(parts.allSatisfy { $0["ip_version"] == nil })
+        XCTAssertEqual(strings(parts[0]["network"]), ["tcp", "udp"])
+        XCTAssertEqual(strings(parts[1]["process_path_regex"]), ["."])
+        XCTAssertEqual(parts[1]["invert"] as? Bool, true)
     }
 }
 

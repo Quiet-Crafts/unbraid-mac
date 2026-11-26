@@ -271,6 +271,35 @@ final class BackupWeakensTests: XCTestCase {
         XCTAssertEqual(RestoreTraffic.connect(w, process: RestoreTraffic.samplePath(wa["com.example.waiting"]![0]), name: "x.example")?.exit, .rejected)
     }
 
+    /// The preview compiles with the app's own rule for connections without a program: walked (TCP), one is refused where
+    /// the app's config refuses it, and the config holds the same refusal for UDP.
+    func testTheWalkRefusesOwnerlessConnectionsAsTheAppsConfigDoes() throws {
+        func refusal(_ c: RestoreTraffic.Config) -> Bool {
+            c.rules.contains { r in
+                r["type"] as? String == "logical" && r["action"] as? String == "reject" && ((r["rules"] as? [[String: Any]])?.first?["network"] as? [String]) == ["tcp", "udp"]
+            }
+        }
+        var s = base()
+        s.defaultRoute = "nl"
+        s.apps = ["com.example.direct": DIRECT]
+        let apps = RestoreTraffic.patterns(s.apps.keys)
+        let vpn = try XCTUnwrap(RestoreTraffic.compile(s, apps: apps))
+        XCTAssertEqual(RestoreTraffic.connect(vpn, process: nil, name: nil)?.exit, .rejected)
+        XCTAssertTrue(refusal(vpn))
+        // A Direct default with an app on a VPN refuses them too.
+        s.defaultRoute = DIRECT
+        s.apps = ["com.example.direct": "m1"]
+        let split = try XCTUnwrap(RestoreTraffic.compile(s, apps: apps))
+        XCTAssertEqual(RestoreTraffic.connect(split, process: nil, name: nil)?.exit, .rejected)
+        XCTAssertTrue(refusal(split))
+        // Every app on the VPN default: carried by it.
+        s.defaultRoute = "nl"
+        s.apps = ["com.example.direct": "nl"]
+        let carried = try XCTUnwrap(RestoreTraffic.compile(s, apps: apps))
+        XCTAssertEqual(RestoreTraffic.connect(carried, process: nil, name: nil)?.exit, .tunnel("r-nl"))
+        XCTAssertFalse(refusal(carried))
+    }
+
     /// Random setups: what the walk finds for each app and website is what the setup says it chose (for these, no
     /// nesting and no rule the walk doesn't know).
     func testTheWalkFollowsEveryChoice() throws {

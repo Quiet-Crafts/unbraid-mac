@@ -65,7 +65,9 @@ nonisolated enum Compiler {
     /// - followsDefault: as before, the default route (Direct, or the default VPN).
     /// - refusedWhileBlocking (default): refused while any app is blocked, so a blocked app can't get out that way.
     /// - refusedWhileSplit: also refused with Direct as the default and apps on a VPN, so a VPN app's last packets can't
-    ///   leave from the Mac's own address.
+    ///   leave from the Mac's own address; and with a VPN as the default while an app here leaves another way (Direct,
+    ///   filtered Direct or another tunnel), so its packets can't take the default's tunnel. That refusal comes right
+    ///   before the default's way out (its sign-in pages and lookups included): websites and app rules decide first.
     /// LAN, home, tailnet and unbraid's own traffic are decided before, and ping has its own rule.
     enum Ownerless: Sendable { case followsDefault, refusedWhileBlocking, refusedWhileSplit }
 
@@ -221,6 +223,9 @@ nonisolated enum Compiler {
         /// Whether an app installed here is blocked, and whether one is on an exit of its own (see `Input.remembered`).
         let blocking: Bool
         let appsOnExits: Bool
+        /// An app here leaves by another way than the default route: Direct, filtered Direct or another tunnel (a route
+        /// sharing the default's tunnel leaves the same way). Blocked apps are `blocking`'s.
+        let appsOffDefault: Bool
         /// Ranges reached through a home tunnel: the tailnet's advertised subnets and the home WireGuard's.
         let home: [String]
         /// Every tunnel the app can test → the DNS of a route on it.
@@ -285,6 +290,8 @@ nonisolated enum Compiler {
             let blockedPatterns = tiers.filter { $0.id == BLOCK || i.blocked.contains($0.id) }.flatMap(\.patterns)
             blocking = liveRoutes.contains(BLOCK) || !liveRoutes.isDisjoint(with: i.blocked) || blockedPatterns.contains { b in live.contains { Compiler.contains(b, $0) } }
             appsOnExits = liveRoutes.contains { $0 != DIRECT && $0 != Compiler.filteredDirect && $0 != BLOCK }
+            let tunnels = shared, defaultTag = Self.tag(s.defaultRoute, s, tunnels)
+            appsOffDefault = liveRoutes.contains { $0 != BLOCK && Self.tag($0, s, tunnels) != defaultTag }
             home = (s.home.tailscale ? homeSubnets(s) : []) + (s.home.wg.map(homeCidrs) ?? [])
             defaultDns = s.defaultRoute == DIRECT && s.prefs.effectiveFilter.server != nil && s.prefs.effectiveFilter.direct && !deny ? "dns-filter" : s.defaultRoute == DIRECT || active.isEmpty || i.blocked.contains(s.defaultRoute) ? "local" : Self.dns(s.defaultRoute, s, shared, i.links)
             // The websites whose rules apply (`Sites.applied`): a block always, a route or Direct unless its name is on the
@@ -419,10 +426,9 @@ nonisolated enum Compiler {
         case .refusedWhileBlocking: p.blocking
         case .refusedWhileSplit: p.blocking || s.defaultRoute == DIRECT && p.appsOnExits
         }
-        if refuseOwnerless {
-            rules.append(["type": "logical", "mode": "and", "action": "reject",
-                          "rules": [["network": ["tcp", "udp"]], ["process_path_regex": ["."], "invert": true]]])
-        }
+        let ownerlessRefusal: J = ["type": "logical", "mode": "and", "action": "reject",
+                                   "rules": [["network": ["tcp", "udp"]], ["process_path_regex": ["."], "invert": true]]]
+        if refuseOwnerless { rules.append(ownerlessRefusal) }
 
         // A route's way out: its tailnet sign-in pages direct (before its exit's DNS, which an exit node not yet signed in
         // can't answer), names resolved on its exit, the destination rules again, then the exit. The default route takes
@@ -456,7 +462,12 @@ nonisolated enum Compiler {
             // Refused before anything is looked up for it: a fake address resolved here would ask the local resolver.
             rules += network
             rules.append(["action": "reject", "no_drop": true])
-        } else { wayOut(s.defaultRoute, nil, dns: p.defaultDns) }
+        } else {
+            // A VPN default while an app here leaves another way: a connection with no program may be that app's, so it
+            // doesn't take the default's tunnel (see `Ownerless`). Ping keeps following the default.
+            if p.i.ownerless == .refusedWhileSplit, !refuseOwnerless, s.defaultRoute != DIRECT, p.appsOffDefault { rules.append(ownerlessRefusal) }
+            wayOut(s.defaultRoute, nil, dns: p.defaultDns)
+        }
 
         // Exits are IPv4: IPv6 is captured by the tunnel and refused here, so it fails fast and never leaks beside it.
         rules.append(["ip_version": 6, "action": "reject"])
