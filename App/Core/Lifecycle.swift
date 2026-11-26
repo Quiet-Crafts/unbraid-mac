@@ -531,6 +531,12 @@ nonisolated extension Lifecycle {
     /// tunnel would let every VPN app out.
     static let restricting: [Recovery] = [.denyAll, .previous]
 
+    /// A cold start that failed: whether the deny-all of the setup goes in place (`Connection.block`) instead of the
+    /// tunnel stopping. A start that fails is ended.
+    static func blocksUnconfirmedStart(reached: Bool, status: Status, foreign: Bool, current: Bool, held: Bool) -> Bool {
+        false
+    }
+
     /// A sign-out's erase still pending while a tunnel runs (a quit interrupted it): stop that tunnel and erase, leave it
     /// (another user's), or keep it running and ask again. Stopped only on the extension's word that it runs this user's
     /// engine ([engine], nil when it didn't answer): its ownership check gives up after seconds, and another user's tunnel
