@@ -62,6 +62,86 @@ final class RetryTests: XCTestCase {
         XCTAssertFalse(r.allows(1, now: t0 + .seconds(86_400)))
         XCTAssertTrue(r.allows(3, now: t0))
     }
+
+    func testWhileBlockingAFailedSetupIsNeverGivenUp() {
+        var r = Retry<Int>()
+        var now = t0
+        var waits: [Duration] = []
+        for _ in 0..<(Retry<Int>.limit * 4) {
+            guard let w = r.failed(1, disrupted: true, blocking: true, now: now) else { return XCTFail("never given up while blocking") }
+            XCTAssertFalse(r.refuses(1))
+            XCTAssertFalse(r.allows(1, now: now + w - .milliseconds(1)))
+            XCTAssertTrue(r.allows(1, now: now + w))
+            waits.append(w)
+            now = now + w
+        }
+        XCTAssertEqual(waits.first, .seconds(10))
+        XCTAssertEqual(waits.max(), Retry<Int>.delays.last, "the wait grows to the longest and stays there")
+        XCTAssertEqual(waits, waits.sorted())
+        // Blocking ended without the setup going in: the ordinary budget, already spent, gives up on the next disruption.
+        XCTAssertNil(r.failed(1, disrupted: true, now: now))
+    }
+
+    func testABlockedSetupGivenUpBeforeIsTriedAgain() {
+        var r = Retry<Int>()
+        for _ in 0..<Retry<Int>.limit { _ = r.failed(1, disrupted: true, now: t0) }
+        XCTAssertTrue(r.refuses(1))
+        XCTAssertNotNil(r.failed(1, disrupted: true, blocking: true, now: t0))
+        XCTAssertFalse(r.refuses(1))
+    }
+
+    func testANetworkChangeMakesABlockedSetupDueAtOnce() {
+        var r = Retry<Int>()
+        let w = r.failed(1, disrupted: true, blocking: true, now: t0)!
+        XCTAssertFalse(r.allows(1, now: t0))
+        XCTAssertFalse(r.networkChanged(2, blocking: true, since: t0 + .seconds(1)), "only the inputs that failed")
+        XCTAssertFalse(r.allows(1, now: t0))
+        XCTAssertTrue(r.networkChanged(1, blocking: true, since: t0 + .seconds(1)))
+        XCTAssertTrue(r.allows(1, now: t0))
+        // Its wait still grows: a network change is one more try, not a fresh start.
+        XCTAssertGreaterThan(r.failed(1, disrupted: true, blocking: true, now: t0)!, w)
+    }
+
+    func testANetworkChangeLeavesOrdinaryWaitsAndRefusalsAlone() {
+        var r = Retry<Int>()
+        _ = r.failed(1, disrupted: true, now: t0)
+        XCTAssertFalse(r.networkChanged(1, blocking: false, since: t0 + .seconds(1)), "not blocking: the wait stands")
+        XCTAssertFalse(r.allows(1, now: t0))
+        r.refuse(1)
+        XCTAssertFalse(r.networkChanged(1, blocking: true, since: t0 + .seconds(1)), "refused: waits for other inputs")
+        XCTAssertFalse(r.allows(1, now: t0 + .seconds(86_400)))
+        var fresh = Retry<Int>()
+        XCTAssertFalse(fresh.networkChanged(1, blocking: true, since: t0 + .seconds(1)), "nothing failed")
+    }
+
+    func testANetworkChangeAlreadyTriedIsNotTriedTwice() {
+        var r = Retry<Int>()
+        _ = r.failed(1, disrupted: true, blocking: true, now: t0)
+        // The network changed at t0 + 5 s, and a route reload of that change tried the setup again at t0 + 6 s.
+        let w = r.failed(1, disrupted: true, blocking: true, now: t0 + .seconds(6))!
+        XCTAssertFalse(r.networkChanged(1, blocking: true, since: t0 + .seconds(5)), "one attempt per network change")
+        XCTAssertFalse(r.allows(1, now: t0 + .seconds(6)))
+        XCTAssertTrue(r.allows(1, now: t0 + .seconds(6) + w))
+        XCTAssertTrue(r.networkChanged(1, blocking: true, since: t0 + .seconds(7)), "the next network change still wakes it")
+    }
+
+    func testAReloadWithinARunningDenyAllDoesNothing() {
+        XCTAssertNil(Lifecycle.withinRunning(health: true, retrying: false, pending: true, due: false, blocking: true))
+        XCTAssertNil(Lifecycle.withinRunning(health: false, retrying: true, pending: true, due: false, blocking: true))
+        XCTAssertEqual(Lifecycle.withinRunning(health: false, retrying: true, pending: true, due: true, blocking: true), false, "a due setup is tried")
+        XCTAssertEqual(Lifecycle.withinRunning(health: true, retrying: false, pending: true, due: false, blocking: false), true, "not blocking: moved within")
+        XCTAssertEqual(Lifecycle.withinRunning(health: false, retrying: true, pending: false, due: false, blocking: false), false)
+    }
+
+    func testWhileBlockingAPickHeldBackForAccountsWaitsForNewInputs() {
+        let refused: [String: LinkPicker.Blocked] = ["a": .refused("Provider", "Session expired")]
+        XCTAssertTrue(Lifecycle.waitsForInputs(refused, blocking: true))
+        XCTAssertTrue(Lifecycle.waitsForInputs(["a": .signedOut("Provider"), "b": .refused("Other", "Device limit")], blocking: true))
+        XCTAssertFalse(Lifecycle.waitsForInputs(["a": .signedOut("Provider"), "b": .unreachable("down")], blocking: true), "one may come back")
+        XCTAssertFalse(Lifecycle.waitsForInputs(["a": .waiting], blocking: true))
+        XCTAssertFalse(Lifecycle.waitsForInputs(refused, blocking: false), "not blocking: unchanged")
+        XCTAssertFalse(Lifecycle.waitsForInputs([:], blocking: true))
+    }
 }
 
 final class RevokeTests: XCTestCase {

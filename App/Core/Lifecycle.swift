@@ -11,7 +11,7 @@ nonisolated struct Refused: LocalizedError {
 /// passing reason (the engine didn't answer, a provider was offline, a reload timed out) is tried again after a wait
 /// that grows with each failure. One that failed after the tunnel had already changed (rolled back, a moment without
 /// it) is given up after `limit` such failures, so a configuration the engine can't run doesn't interrupt the
-/// connection every few minutes for good.
+/// connection every few minutes for good; never while a deny-all stands in for it, which would block VPN apps for good.
 nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
     static var delays: [Duration] { [.seconds(10), .seconds(30), .seconds(60), .seconds(120), .seconds(300), .seconds(600)] }
     static var limit: Int { 3 }
@@ -21,6 +21,7 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
     private var failures = 0
     private var disruptions = 0
     private var due: ContinuousClock.Instant?
+    private var failedAt: ContinuousClock.Instant?
 
     /// Retried only once the inputs differ.
     mutating func refuse(_ k: Key) {
@@ -33,12 +34,14 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
     }
 
     /// A passing failure of [k]: the wait before trying it again, or nil when it is refused from now on. [blocking]: a
-    /// deny-all stands in for the setup (`Connection.recover`).
+    /// deny-all stands in for the setup (`Connection.recover`): tried again for as long as it does, the wait growing to
+    /// the longest of `delays`.
     mutating func failed(_ k: Key, disrupted: Bool, blocking: Bool = false, now: ContinuousClock.Instant) -> Duration? {
         if k != key { self = Retry(); key = k }
         else if refused { refused = false; failures = 0; due = nil }
+        failedAt = now
         if disrupted { disruptions += 1 }
-        if disruptions >= Self.limit { refuse(k); return nil }
+        if disruptions >= Self.limit && !blocking { refuse(k); return nil }
         let wait = Self.delays[min(failures, Self.delays.count - 1)]
         failures += 1
         due = now + wait
@@ -53,8 +56,15 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
 
     func refuses(_ k: Key) -> Bool { refused && k == key }
 
-    /// The network changed at [since] while [k] waits to be tried again: true when it is due now instead.
-    mutating func networkChanged(_ k: Key, blocking: Bool, since: ContinuousClock.Instant) -> Bool { false }
+    /// The network changed at [since] while [k] waits to be tried again: true when it is due now instead. Only while a
+    /// deny-all stands in for it ([blocking]): a new network may be the one its providers answer on. Not when it already
+    /// failed since (one try per network change), nor when refused: that waits for other inputs. The wait after the next
+    /// failure keeps growing.
+    mutating func networkChanged(_ k: Key, blocking: Bool, since: ContinuousClock.Instant) -> Bool {
+        guard blocking, k == key, !refused, failedAt.map({ $0 < since }) ?? true else { return false }
+        due = nil
+        return true
+    }
 
     mutating func clear() { self = Retry() }
 }
@@ -141,14 +151,21 @@ nonisolated enum Lifecycle {
 
     /// Ordinary route retries cannot bypass an interim edit's backoff or refusal.
     /// A reload that moves or retries routes within the running setup instead of trying the edit (a fallback): true;
-    /// false when the edit itself is tried; nil when there is nothing to do. [blocking]: a deny-all runs.
+    /// false when the edit itself is tried; nil when there is nothing to do: a deny-all runs ([blocking]), which has no
+    /// route to move or retry, and installed again as an ordinary setup it would stop counting as one.
     static func withinRunning(health: Bool, retrying: Bool, pending: Bool, due: Bool, blocking: Bool) -> Bool? {
-        (health || retrying) && pending && !due
+        let within = (health || retrying) && pending && !due
+        return within && blocking ? nil : within
     }
 
-    /// A failed pick whose every route was held back for [blocked] reasons waits for new inputs, as a refusal does.
-    /// [blocking]: a deny-all runs.
-    static func waitsForInputs(_ blocked: [String: LinkPicker.Blocked], blocking: Bool) -> Bool { false }
+    /// A failed pick whose every route was held back for [blocked] reasons waits for new inputs, as a refusal does, while
+    /// a deny-all runs ([blocking]): a login the provider refused, a missing sign-in, a removed pin or a left-out key
+    /// gets the same answer until something changes, so the provider isn't asked again with it.
+    static func waitsForInputs(_ blocked: [String: LinkPicker.Blocked], blocking: Bool) -> Bool {
+        blocking && !blocked.isEmpty && blocked.values.allSatisfy {
+            switch $0 { case .signedOut, .refused, .removed, .keyLeftOut: return true; default: return false }
+        }
+    }
 
     static func mayRetryCommitted(interim: Bool, allowed: Bool) -> Bool {
         !interim || allowed
