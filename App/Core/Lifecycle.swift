@@ -167,6 +167,12 @@ nonisolated enum Lifecycle {
         }
     }
 
+    /// Whether a failed change is retried as one a deny-all stands in for (`Retry.failed`, `Retry.networkChanged`,
+    /// `waitsForInputs`): [blocking] the deny-all runs.
+    static func retriesAsBlocking(blocking: Bool, interim: Bool, standIn: RunState.StandIn) -> Bool {
+        blocking
+    }
+
     static func mayRetryCommitted(interim: Bool, allowed: Bool) -> Bool {
         !interim || allowed
     }
