@@ -11,10 +11,10 @@ a libbox build.
 |---|---|---|
 | [sing-box](https://github.com/SagerNet/sing-box) 1.14.4, with the patches in `tools/` | The VPN engine (Libbox), in the tunnel extension | GPL-3.0-or-later |
 | [sing-openvpn](https://github.com/SagerNet/sing-openvpn), with the patch in `tools/` | OpenVPN inside the engine | GPL-3.0-or-later |
-| [sing-tun](https://github.com/SagerNet/sing-tun), with the patch in `tools/` | The engine's packet handling between apps and tunnels | GPL-3.0-or-later |
+| [sing-tun](https://github.com/SagerNet/sing-tun), with the patches in `tools/` | The engine's packet handling between apps and tunnels | GPL-3.0-or-later |
 | [wireguard-go](https://github.com/sagernet/wireguard-go) (SagerNet fork) | WireGuard inside the engine | MIT, Copyright WireGuard LLC |
 | [Tailscale](https://github.com/sagernet/tailscale) (SagerNet fork) | Tailscale and Headscale inside the engine | BSD-3-Clause |
-| [gVisor](https://github.com/sagernet/gvisor) (SagerNet fork) | The engine's network stack | Apache-2.0 |
+| [gVisor](https://github.com/sagernet/gvisor) (SagerNet fork), with the patches in `tools/` | The engine's network stack | Apache-2.0 |
 | Go standard library and runtime (Go 1.26.11) | Part of the engine | BSD-3-Clause |
 | [sagernet/gomobile](https://github.com/sagernet/gomobile) | The engine's Objective-C bindings (generated code and its runtime) | BSD-3-Clause |
 | Go modules linked into the engine | Protocols, crypto and networking in sing-box | Each module's own licence (GPL-3.0, LGPL-3.0, MPL-2.0, Apache-2.0, BSD, MIT, ISC, Unlicense, CC0), listed with its full text in `notices.txt` |
