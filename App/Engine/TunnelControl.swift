@@ -478,8 +478,15 @@ final class TunnelControl: NSObject, OSSystemExtensionRequestDelegate {
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 45) { answer.finish(.failure(Fail("The tunnel did not answer"))) }
         }
         guard let reply else { throw Fail("The tunnel did not acknowledge the change") }
-        guard reply == Data([0]) || reply == Data([1]) else { throw Fail(String(decoding: reply, as: UTF8.self)) }
+        guard reply == Data([0]) || reply == Data([1]) else { throw Self.refusal(reply) }
         return reply
+    }
+
+    /// The extension's error answer to a message: `Foreign` when it says another user's engine runs
+    /// (`Lifecycle.foreignRefusal`).
+    static func refusal(_ reply: Data) -> Error {
+        let text = String(decoding: reply, as: UTF8.self)
+        return Lifecycle.foreignRefusal(text) ? Foreign() : Fail(text)
     }
 
     /// Whether the VPN profile has Connect on Demand on, read again from the system (another process, System Settings

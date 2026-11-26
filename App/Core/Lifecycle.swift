@@ -514,8 +514,9 @@ nonisolated extension Lifecycle {
     /// and search domain, nil when it couldn't be built) needs no server and no account. Put in place when it differs from
     /// the one [running], never from stand-ins for a setup the keychain won't open yet ([held]). [profile]: the running
     /// profile and the one the fresh deny-all's setup wants (`blockerProfile`), nil when not read.
+    /// [down]: what ran may no longer run.
     static func reblock(blocking: Bool, held: Bool, running: (json: String, search: String), fresh: (json: String, search: String)?,
-                        profile: (running: Shape, wanted: Shape)? = nil) -> Bool {
+                        profile: (running: Shape, wanted: Shape)? = nil, down: Bool = false) -> Bool {
         guard blocking, !held, let fresh else { return false }
         return fresh != running || profile.map { blockerProfile(running: $0.running, wanted: $0.wanted) != $0.running } == true
     }
@@ -544,6 +545,16 @@ nonisolated extension Lifecycle {
     static func holdsAfterFailedRecovery(blocking: Bool, status: Status, erasing: Bool) -> Bool {
         false
     }
+
+    /// Whether the extension's error answer to a message ([text]) says another user's engine runs.
+    static func foreignRefusal(_ text: String) -> Bool { false }
+
+    /// A configuration built the same as the one committed ([same]) counts as running ([held]: the tunnel may hold traffic).
+    static func runsAlready(same: Bool, held: Bool) -> Bool { same }
+
+    /// A failed change that is refused ([refusal]: refused, a refused sign-in, a pick held back for account reasons) waits
+    /// for new inputs ([held]: the tunnel may hold traffic).
+    static func waitsForNewInputs(refusal: Bool, held: Bool) -> Bool { refusal }
 
     /// A cold start that failed: whether the deny-all of the setup goes in place (`Connection.block`) instead of the
     /// tunnel stopping. Only once macOS brought this start up and the extension then didn't confirm what runs ([reached]:
