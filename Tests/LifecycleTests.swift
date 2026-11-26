@@ -82,6 +82,39 @@ final class RetryTests: XCTestCase {
         XCTAssertNil(r.failed(1, disrupted: true, now: now))
     }
 
+    /// A retry while blocking first puts local rules in place of the deny-all (a website on a VPN route takes the interim
+    /// path), then its final configuration fails again and again: still blocking for the retry, so never given up, until
+    /// the setup's final configuration runs.
+    func testAnInterimInPlaceOfADenyAllKeepsTheBlockingRetry() {
+        var run = RunState()
+        let setup = Setup()
+        run.deniedAll()
+        run.committed(revision: RunState.revision(setup), setup: setup, fresh: true, interim: true)
+        XCTAssertTrue(Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: run.standIn))
+        var r = Retry<Int>()
+        for _ in 0..<(Retry<Int>.limit * 2) {
+            XCTAssertNotNil(r.failed(1, disrupted: true, blocking: Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: run.standIn), now: t0))
+        }
+        XCTAssertTrue(Lifecycle.waitsForInputs(["r": .signedOut("p")], blocking: Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: run.standIn)))
+        // The setup's final configuration ran: the stand-in is over.
+        run.committed(revision: RunState.revision(setup), setup: setup, fresh: true)
+        XCTAssertFalse(Lifecycle.retriesAsBlocking(blocking: false, interim: false, standIn: run.standIn))
+    }
+
+    /// Not after a deny-all: an interim or a final configuration is retried as before, and a deny-all running always blocks.
+    func testOnlyADenyAllOrItsInterimRetriesAsBlocking() {
+        for interim in [false, true] {
+            for standIn in [RunState.StandIn.none, .denyAll, .pause, .fallback, .foreign] {
+                XCTAssertTrue(Lifecycle.retriesAsBlocking(blocking: true, interim: interim, standIn: standIn))
+            }
+        }
+        for standIn in [RunState.StandIn.none, .pause, .fallback, .foreign] {
+            XCTAssertFalse(Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: standIn))
+        }
+        // A final configuration of an older revision went in (it records nothing): no longer blocking.
+        XCTAssertFalse(Lifecycle.retriesAsBlocking(blocking: false, interim: false, standIn: .denyAll))
+    }
+
     func testABlockedSetupGivenUpBeforeIsTriedAgain() {
         var r = Retry<Int>()
         for _ in 0..<Retry<Int>.limit { _ = r.failed(1, disrupted: true, now: t0) }
@@ -1406,6 +1439,42 @@ final class OutsideStopTests: XCTestCase {
         XCTAssertFalse(o.observe(phase: .on, applied: false, status: .stopped))
         o.settle(2, current: 2)
         XCTAssertTrue(o.observe(phase: .on, applied: false, status: .stopped))
+    }
+
+    /// macOS started this user's tunnel for a cold Connect (connected), then the extension didn't confirm the setup (no
+    /// answer, or another configuration runs): the deny-all goes in place, as for a failed change, and the setup is tried
+    /// again; never stopped with VPN apps let out direct. Reached is the start's own `OutsideStop.up`, cleared by a stop
+    /// from outside.
+    func testAStartMacOSBroughtUpButCouldNotConfirmBlocks() {
+        var o = OutsideStop()
+        o.operation()
+        o.restartUp(5)
+        XCTAssertTrue(Lifecycle.blocksUnconfirmedStart(reached: o.up == 5, status: .connected, foreign: false, current: true, held: false))
+        XCTAssertTrue(o.observe(phase: .connecting, applied: false, status: .stopped, current: 5))
+        XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: o.up == 5, status: .connected, foreign: false, current: true, held: false),
+                       "a stop from outside since it came up stands")
+    }
+
+    /// A start that failed before macOS brought it up (staging, the stop, the start itself) is ended as before.
+    func testAStartThatFailedBeforeItCameUpIsEnded() {
+        for status in [S.connected, .connecting, .stopping, .stopped] {
+            XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: false, status: status, foreign: false, current: true, held: false))
+        }
+    }
+
+    /// Another user's engine runs: nothing of this user's to block, left to the failure's own handling.
+    func testAForeignTunnelIsNotBlocked() {
+        XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: true, status: .connected, foreign: true, current: true, held: false))
+    }
+
+    /// A stop is never undone: macOS or System Settings stopping it (the status), a Disconnect, Pause, sign-out or erase
+    /// since (not current), and never a deny-all built from a stand-in setup.
+    func testAStopIsNeverUndone() {
+        for status in [S.connecting, .stopping, .stopped] {
+            XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: true, status: status, foreign: false, current: true, held: false))
+        }
+        XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: true, status: .connected, foreign: false, current: false, held: false))
+        XCTAssertFalse(Lifecycle.blocksUnconfirmedStart(reached: true, status: .connected, foreign: false, current: true, held: true))
     }
 }
 

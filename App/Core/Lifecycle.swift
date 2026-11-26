@@ -168,9 +168,11 @@ nonisolated enum Lifecycle {
     }
 
     /// Whether a failed change is retried as one a deny-all stands in for (`Retry.failed`, `Retry.networkChanged`,
-    /// `waitsForInputs`): [blocking] the deny-all runs.
+    /// `waitsForInputs`): [blocking] the deny-all runs, or local rules a retry put in place of it while providers are
+    /// asked ([interim], with the deny-all still the last stand-in recorded, [standIn]: an interim records nothing). Until
+    /// a final configuration of the setup runs (it ends the stand-in), the retry keeps the deny-all's: never given up.
     static func retriesAsBlocking(blocking: Bool, interim: Bool, standIn: RunState.StandIn) -> Bool {
-        blocking
+        blocking || interim && standIn == .denyAll
     }
 
     static func mayRetryCommitted(interim: Bool, allowed: Bool) -> Bool {
@@ -538,9 +540,13 @@ nonisolated extension Lifecycle {
     static let restricting: [Recovery] = [.denyAll, .previous]
 
     /// A cold start that failed: whether the deny-all of the setup goes in place (`Connection.block`) instead of the
-    /// tunnel stopping. A start that fails is ended.
+    /// tunnel stopping. Only once macOS brought this start up and the extension then didn't confirm what runs ([reached]:
+    /// the start's own `OutsideStop.up`, which a stop from outside clears), the tunnel still connected ([status]), not
+    /// another user's engine ([foreign]), no Disconnect, Pause, sign-out or erase since ([current]), and never from a
+    /// stand-in setup ([held]): a failed change then, not a stop, so VPN apps stay blocked rather than go out direct, and
+    /// the setup is tried again. Anything else is ended as before; the deny-all itself failing too ends it as well.
     static func blocksUnconfirmedStart(reached: Bool, status: Status, foreign: Bool, current: Bool, held: Bool) -> Bool {
-        false
+        reached && status == .connected && !foreign && current && !held
     }
 
     /// A sign-out's erase still pending while a tunnel runs (a quit interrupted it): stop that tunnel and erase, leave it

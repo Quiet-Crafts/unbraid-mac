@@ -636,7 +636,29 @@ final class Connection {
                             guard g == generation else { return }
                             await teardown(error: "Could not restore pause: \(message(error, failure))", g)
                         }
-                    } else { await teardown(error: failure, g) }
+                    } else if Lifecycle.blocksUnconfirmedStart(reached: outside.up == g, status: Self.status(tunnel.refreshStatus()),
+                                                               foreign: TunnelControl.foreign(error), current: g == generation && !store.extensionWipePending,
+                                                               held: store.setupStandIn) {
+                        // macOS started this user's tunnel, but what runs wasn't confirmed: VPN apps are blocked as after a
+                        // failed change (never said to run the setup), and the setup is tried again.
+                        let wanted = revision()
+                        do {
+                            guard try await block(makeInput(store.setup, [:], probe: nil), failure, eraseRequest, g) == .blocking, g == generation else { return }
+                            state.since = .now
+                            stopAdopting()
+                            startWatching()
+                            // Charged to the setup the deny-all was built from; one edited meanwhile is tried at once.
+                            failed(wanted, error, disrupted: true, quiet: false)
+                            if revision() != wanted { wakeAfter(.zero) }
+                        } catch {
+                            guard g == generation else { return }
+                            // The deny-all couldn't be confirmed either: ended as before. Another user's engine is theirs.
+                            await teardown(error: failure, stop: !TunnelControl.foreign(error), g)
+                        }
+                    } else {
+                        // Another user's engine found by the confirmation is theirs, whatever a later ownership check says.
+                        await teardown(error: failure, stop: !TunnelControl.foreign(error), g)
+                    }
                 }
             }
             // Already On: this Connect cancelled any change being applied, so look again, apart from this call (a reload
