@@ -8,9 +8,9 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 WORK=${WORK:-$HOME/Development/unbraid-mac-deps}
 # Absolute: the build changes folders, and the check below looks for "$WORK/" in the binary.
 case "$WORK" in /*) ;; *) echo "WORK must be an absolute path"; exit 1 ;; esac
-# The patched sing-openvpn is built from a fixed path: Go records a replaced module's directory in the binary, so one under
-# $WORK or $HOME would name the builder and make the hash depend on where the build ran. Taken whole by this build alone,
-# before anything else, and removed when it ends.
+# The patched sing-openvpn (and sing-tun and gVisor, when tools/ holds patches for them) is built from a fixed path: Go
+# records a replaced module's directory in the binary, so one under $WORK or $HOME would name the builder and make the
+# hash depend on where the build ran. Taken whole by this build alone, before anything else, and removed when it ends.
 OVPN_ROOT=/tmp/unbraid-libbox OVPN=/tmp/unbraid-libbox/sing-openvpn
 mkdir -m 700 "$OVPN_ROOT" 2>/dev/null || { echo "$OVPN_ROOT exists: another build is running (or one was killed: remove it)"; exit 1; }
 trap 'rm -rf "$OVPN_ROOT"' EXIT
@@ -33,11 +33,15 @@ check_module_layout
 # Pinned (tools/build-cli.sh and the tests read this line): v1.14.4
 PIN=c005f35300ce76427dc285481ec5695f5b179cd2
 [ "$(git rev-parse HEAD)" = "$PIN" ] || { echo "sing-box checkout is not v1.14.4"; exit 1; }
-# What the engine is built from (the commit and each patch's hash), read again before it is recorded: a patch edited
-# while this runs must not be recorded as the one the engine came from.
+# The patches are read once, into this build's own folder: that copy is both what is applied and what is recorded, so
+# a patch edited while this runs can't be recorded as one the engine came from.
+PATCHES="$OVPN_ROOT/patches"
+mkdir -m 700 "$PATCHES"
+for p in "$ROOT"/tools/sing-box-*.patch "$ROOT"/tools/sing-openvpn-*.patch; do cp "$p" "$PATCHES/"; done
+for p in "$ROOT"/tools/sing-tun-*.patch "$ROOT"/tools/gvisor-*.patch; do if [ -f "$p" ]; then cp "$p" "$PATCHES/"; fi; done
 mkdir -p "$ROOT/Frameworks"
-FROM=$("$ROOT/tools/engine-manifest.sh" --provenance)
-git apply "$ROOT"/tools/sing-box-*.patch
+FROM=$("$ROOT/tools/engine-manifest.sh" --provenance "$PATCHES")
+git apply "$PATCHES"/sing-box-*.patch
 check_module_layout
 # ZERO_AR_DATE: libtool would stamp the archive's symbol table with the time of the build.
 export GOTOOLCHAIN=go1.26.11 GOFLAGS=-mod=readonly GOWORK=off GOSUMDB=sum.golang.org \
@@ -52,8 +56,22 @@ go mod download github.com/sagernet/sing-openvpn
 go mod verify
 cp -R "$(go list -m -f '{{.Dir}}' github.com/sagernet/sing-openvpn)" "$OVPN"
 chmod -R u+w "$OVPN"
-(cd "$OVPN" && git init -q && git apply "$ROOT"/tools/sing-openvpn-*.patch)
+(cd "$OVPN" && git init -q && git apply "$PATCHES"/sing-openvpn-*.patch)
 go mod edit -replace github.com/sagernet/sing-openvpn="$OVPN"
+# sing-tun and gVisor the same way, only when tools/ holds patches for them (sing-tun-*.patch, gvisor-*.patch): each
+# applied in name order and checked to have landed before the next one changes the same file. A module without patches
+# is built as sing-box pins it, with no replacement, so the engine is the same as one built before this step existed.
+for m in sing-tun gvisor; do
+  P=("$PATCHES"/"$m"-*.patch)
+  [ -f "${P[0]}" ] || continue
+  go mod download github.com/sagernet/"$m"
+  go mod verify
+  cp -R "$(go list -m -f '{{.Dir}}' github.com/sagernet/"$m")" "$OVPN_ROOT/$m"
+  chmod -R u+w "$OVPN_ROOT/$m"
+  (cd "$OVPN_ROOT/$m" && git init -q && for p in "${P[@]}"; do git apply "$p" && git apply --reverse --check "$p" || exit 1; done) \
+    || { echo "the $m patches don't apply"; exit 1; }
+  go mod edit -replace github.com/sagernet/"$m"="$OVPN_ROOT/$m"
+done
 go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13 github.com/sagernet/gomobile/cmd/gobind@v0.1.13
 [ "$(command -v gomobile)" = "$GOBIN/gomobile" ] && [ "$(command -v gobind)" = "$GOBIN/gobind" ] \
   || { echo "gomobile or gobind is not the one just installed"; exit 1; }
@@ -79,8 +97,8 @@ for a in $ARCHS; do
   SLICES+=("$T/$a.norm.a")
 done
 lipo -create "${SLICES[@]}" -output "$B"
-# The one path the engine may name is the fixed one above.
-strings -a "$B" | sed 's#/tmp/unbraid-libbox/sing-openvpn##g' > "$T/strings"
+# The only paths the engine may name are the fixed ones above.
+strings -a "$B" | sed -E 's#/tmp/unbraid-libbox/(sing-openvpn|sing-tun|gvisor)##g' > "$T/strings"
 # gomobile and go build work in temporary folders (gomobile-work-*, go-build*): a shared /tmp is no exemption.
 LEAKS=("$HOME" "$WORK/" "$WORK_REAL/" /Users/ /var/folders/ gomobile-work go-build)
 case "${TMPDIR:-/tmp}" in /tmp|/tmp/|/private/tmp|/private/tmp/) ;; *) LEAKS+=("$TMPDIR") ;; esac
@@ -91,7 +109,7 @@ done
 mkdir -p "$ROOT/Frameworks" && rm -rf "$ROOT/Frameworks/Libbox.xcframework"
 mv Libbox.xcframework "$ROOT/Frameworks/"
 # The Xcode build checks the whole framework and the patches it came from: commit Libbox.sha256 with the change that
-# needs the new engine.
+# needs the new engine. It records the copy that was applied; tools/ changed since then fails that check.
 [ "$("$ROOT/tools/engine-manifest.sh" --provenance)" = "$FROM" ] || { echo "the patches changed during the build: build again"; exit 1; }
-"$ROOT/tools/engine-manifest.sh" --write
+"$ROOT/tools/engine-manifest.sh" --write "$PATCHES"
 "$ROOT/tools/notices.sh"

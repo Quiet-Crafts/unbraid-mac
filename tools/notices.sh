@@ -22,10 +22,11 @@ deps() {
   } | grep . | sort -u
 }
 PKGS=$(mktemp); MOD=$(mktemp -d); trap 'rm -f "$PKGS"; rm -rf "$MOD"' EXIT
-# Read through a copy of go.mod without the patched sing-openvpn tools/build-libbox.sh builds in its place: that folder
-# is gone once the build ends. The module, its imports and its licence are the same unpatched; the checkout isn't written.
+# Read through a copy of go.mod without the patched sing-openvpn, sing-tun and gVisor tools/build-libbox.sh builds in
+# their place: those folders are gone once the build ends. The modules, their imports and their licences are the same
+# unpatched; the checkout isn't written.
 cp "$SB/go.mod" "$SB/go.sum" "$MOD/"
-go mod edit -dropreplace github.com/sagernet/sing-openvpn "$MOD/go.mod"
+for m in sing-openvpn sing-tun gvisor; do go mod edit -dropreplace github.com/sagernet/"$m" "$MOD/go.mod"; done
 deps '{{.Dir}}' > "$PKGS" # folders of the packages actually linked
 {
   echo "=== unbraid"

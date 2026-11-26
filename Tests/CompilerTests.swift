@@ -3250,6 +3250,46 @@ extension CompilerTests {
         XCTAssertFalse(ProviderFixtures.matchesStamp(bin, source: pin, patches: patches))
     }
 
+    /// Every patch in tools/ is part of what the engine is recorded as built from: the framework's provenance
+    /// (tools/engine-manifest.sh, recorded in Frameworks/Libbox.sha256 and checked by the Xcode build) and the patch set the
+    /// CLI's stamp must match. A sing-tun or gVisor patch counts like sing-box's own: left out of either, an engine built
+    /// without it would pass as this checkout's.
+    func testEveryEnginePatchIsInTheEngineProvenance() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
+        let tools = root.appending(path: "tools")
+        let all = try FileManager.default.contentsOfDirectory(atPath: tools.path).filter { $0.hasSuffix(".patch") }.sorted()
+        XCTAssertTrue(all.contains { $0.hasPrefix("sing-box-") }, "\(all)")
+        XCTAssertEqual(ProviderFixtures.enginePatches()?.map(\.name).sorted(), all)
+        func provenance(_ root: URL) throws -> [String] {
+            let process = Process(), out = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [root.appending(path: "tools/engine-manifest.sh").path, "--provenance"]
+            process.standardOutput = out
+            try process.run()
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            XCTAssertEqual(process.terminationStatus, 0)
+            return String(decoding: data, as: UTF8.self).split(separator: "\n").compactMap { line in
+                let f = line.split(separator: " ")
+                return f.count == 3 && f[0] == "patch" ? String(f[1]) : nil
+            }
+        }
+        XCTAssertEqual(try provenance(root).sorted(), all)
+        // The same script on a copy of tools/ that also holds a sing-tun and a gVisor patch lists them too.
+        let copy = FileManager.default.temporaryDirectory.appending(path: "unbraid-provenance-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: copy) }
+        try FileManager.default.createDirectory(at: copy.appending(path: "Frameworks"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: copy.appending(path: "tools"), withIntermediateDirectories: true)
+        for n in all + ["build-libbox.sh", "engine-manifest.sh"] {
+            try FileManager.default.copyItem(at: tools.appending(path: n), to: copy.appending(path: "tools/\(n)"))
+        }
+        let added = ["gvisor-zz-provenance.patch", "sing-tun-zz-provenance.patch"]
+        for n in added { try Data(n.utf8).write(to: copy.appending(path: "tools/\(n)")) }
+        let listed = try provenance(copy)
+        XCTAssertEqual(listed.sorted(), (all + added).sorted())
+        XCTAssertEqual(Set(listed).count, listed.count, "each patch once")
+    }
+
     func testTagCheckFindsWhatTheEngineWouldMiss() throws {
         var c = try parse(try raw(example))
         XCTAssertEqual(tagProblems(c), [])

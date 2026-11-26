@@ -149,12 +149,13 @@ enum ProviderFixtures {
         return pins.count == 1 ? String(pins[0]) : nil
     }
 
-    /// tools/sing-box-*.patch and tools/sing-openvpn-*.patch of this checkout: the patches the engine is built with
-    /// (sing-box's own, and its OpenVPN module's).
+    /// tools/sing-box-*.patch, sing-openvpn-*.patch, sing-tun-*.patch and gvisor-*.patch of this checkout: the patches the
+    /// engine is built with (sing-box's own, and its OpenVPN, sing-tun and gVisor modules'; the last two may have none).
     static func enginePatches() -> [(name: String, data: Data)]? {
         let tools = URL(fileURLWithPath: #filePath).deletingLastPathComponent().deletingLastPathComponent().appending(path: "tools")
         guard let names = try? FileManager.default.contentsOfDirectory(atPath: tools.path) else { return nil }
-        let patches = names.filter { ($0.hasPrefix("sing-box-") || $0.hasPrefix("sing-openvpn-")) && $0.hasSuffix(".patch") }
+        let prefixes = ["sing-box-", "sing-openvpn-", "sing-tun-", "gvisor-"]
+        let patches = names.filter { n in prefixes.contains(where: { n.hasPrefix($0) }) && n.hasSuffix(".patch") }
         let read = patches.compactMap { n in (try? Data(contentsOf: tools.appending(path: n))).map { (name: n, data: $0) } }
         return read.count == patches.count && read.contains(where: { $0.name.hasPrefix("sing-box-") })
             && read.contains(where: { $0.name.hasPrefix("sing-openvpn-") }) ? read : nil

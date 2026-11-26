@@ -14,6 +14,7 @@ trap 'rm -rf "$TMP"' EXIT
 # The patches are read once: the copies are both what is applied and what the stamp names.
 mkdir "$TMP/patches"
 for p in "$ROOT"/tools/sing-box-*.patch "$ROOT"/tools/sing-openvpn-*.patch; do cp "$p" "$TMP/patches/"; done
+for p in "$ROOT"/tools/sing-tun-*.patch "$ROOT"/tools/gvisor-*.patch; do if [ -f "$p" ]; then cp "$p" "$TMP/patches/"; fi; done
 PATCHES=("$TMP"/patches/sing-box-*.patch)
 [ -f "${PATCHES[0]}" ] || { echo "no tools/sing-box-*.patch"; exit 1; }
 OVPN_PATCHES=("$TMP"/patches/sing-openvpn-*.patch)
@@ -37,7 +38,7 @@ OVPN_PATCHES=("$TMP"/patches/sing-openvpn-*.patch)
 # The SDK gomobile links the framework against (xcrun --sdk macosx), not whatever cgo would pick by default. go.sum is
 # only read (-mod=readonly), and no go.work outside the source takes part. As in tools/build-libbox.sh, sing-openvpn at
 # the version sing-box pins (go.sum checks the download) is copied, patched and built in its place, all in the
-# temporary folder (the edited go.mod is the temporary source's).
+# temporary folder (the edited go.mod is the temporary source's); so are sing-tun and gVisor when they have patches.
 (
   cd "$TMP/src"
   SDK=$(xcrun --sdk macosx --show-sdk-path)
@@ -51,5 +52,28 @@ OVPN_PATCHES=("$TMP"/patches/sing-openvpn-*.patch)
   (cd "$TMP/sing-openvpn" && git init -q && git apply "${OVPN_PATCHES[@]}") || { echo "the sing-openvpn patches don't apply"; exit 1; }
   # Relative, so the binary (whose build info names the replacement) doesn't depend on the temporary folder's name.
   go mod edit -replace github.com/sagernet/sing-openvpn=../sing-openvpn
-  go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags with_gvisor,with_wireguard,with_utls,with_tailscale,ts_omit_logtail,ts_omit_cachenetmap,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_openvpn,grpcnotrace,badlinkname,tfogo_checklinkname0 ./experimental/libbox ./cmd/sing-box
+  scan() {
+    go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags with_gvisor,with_wireguard,with_utls,with_tailscale,ts_omit_logtail,ts_omit_cachenetmap,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_openvpn,grpcnotrace,badlinkname,tfogo_checklinkname0 ./experimental/libbox ./cmd/sing-box
+  }
+  # govulncheck matches advisories by module version, and a module replaced by a local folder has none: so with sing-tun
+  # or gVisor patches, the pinned versions are scanned first, unpatched, then the patched source below.
+  MODULE_PATCHES=("$TMP"/patches/sing-tun-*.patch "$TMP"/patches/gvisor-*.patch)
+  if [ -f "${MODULE_PATCHES[0]}" ] || [ -f "${MODULE_PATCHES[${#MODULE_PATCHES[@]}-1]}" ]; then
+    echo "== sing-tun and gVisor as sing-box pins them"
+    scan
+    echo "== with the sing-tun and gVisor patches"
+  fi
+  for m in sing-tun gvisor; do
+    P=("$TMP"/patches/"$m"-*.patch)
+    [ -f "${P[0]}" ] || continue
+    go mod download github.com/sagernet/"$m"
+    go mod verify
+    M=$(go list -m -f '{{.Dir}}' github.com/sagernet/"$m")
+    [ -n "$M" ] && [ -d "$M" ] || { echo "no $m module"; exit 1; }
+    cp -R "$M" "$TMP/$m" && chmod -R u+w "$TMP/$m"
+    (cd "$TMP/$m" && git init -q && for p in "${P[@]}"; do git apply "$p" && git apply --reverse --check "$p" || exit 1; done) \
+      || { echo "the $m patches don't apply"; exit 1; }
+    go mod edit -replace github.com/sagernet/"$m"=../"$m"
+  done
+  scan
 )

@@ -1,6 +1,6 @@
 #!/bin/bash
 # The complete source of a release (GPL-3.0 §6), published next to its DMG as one archive: unbraid at the release
-# commit; the engine's source, sing-box v1.14.4 with unbraid's patches applied and its patched OpenVPN module; every Go
+# commit; the engine's source, sing-box v1.14.4 with unbraid's patches applied and its patched modules; every Go
 # module the engine and its bindings are built from, as a module proxy folder; the gomobile tools that generate the
 # bindings; and BUILDING.txt, which names the toolchain and gives the commands. Usage: tools/source-archive.sh <commit>
 # <out.tar.gz>. The pins, patches and build recipe are the commit's own; sing-box's git objects come from $WORK/sing-box,
@@ -49,6 +49,9 @@ BIND_CMD=$(sed -n '/^gomobile bind /,/\.\/experimental\/libbox$/p' "$U/tools/bui
   || { echo "can't read the pin, Go, gomobile, tags or bind command from tools/build-libbox.sh"; exit 1; }
 PATCHES=("$U"/tools/sing-box-*.patch) OVPN_PATCHES=("$U"/tools/sing-openvpn-*.patch)
 [ -f "${PATCHES[0]}" ] && [ -f "${OVPN_PATCHES[0]}" ] || { echo "no engine patches in tools/"; exit 1; }
+# sing-tun and gVisor are patched only when the commit has patches for them.
+MODULES=()
+for m in sing-tun gvisor; do P=("$U"/tools/"$m"-*.patch); if [ -f "${P[0]}" ]; then MODULES+=("$m"); fi; done
 
 # sing-box at the pinned commit with the patches, through a private index and object store (the checkout's are read).
 (
@@ -79,6 +82,22 @@ cp -R "$("$GOCMD" list -m -f '{{.Dir}}' github.com/sagernet/sing-openvpn)" "$D/s
 chmod -R u+w "$D/sing-openvpn"
 (cd "$D/sing-openvpn" && git init -q && git apply "${OVPN_PATCHES[@]}" && rm -rf .git)
 "$GOCMD" mod edit -replace github.com/sagernet/sing-openvpn=../sing-openvpn
+# sing-tun and gVisor with their patches the same way, each in name order and checked to have landed before the next.
+for m in ${MODULES[@]+"${MODULES[@]}"}; do
+  P=("$U"/tools/"$m"-*.patch)
+  "$GOCMD" mod download github.com/sagernet/"$m"
+  cp -R "$("$GOCMD" list -m -f '{{.Dir}}' github.com/sagernet/"$m")" "$D/$m"
+  chmod -R u+w "$D/$m"
+  (cd "$D/$m" && git init -q && for p in "${P[@]}"; do git apply "$p" && git apply --reverse --check "$p" || exit 1; done && rm -rf .git) \
+    || { echo "the $m patches don't apply"; exit 1; }
+  "$GOCMD" mod edit -replace github.com/sagernet/"$m"=../"$m"
+done
+MODULE_NOTE=
+for m in ${MODULES[@]+"${MODULES[@]}"}; do
+  MODULE_NOTE="$MODULE_NOTE
+$(printf '%-16s' "$m/")sing-box's $m module at the version sing-box pins, with unbraid/tools/$m-*.patch applied; sing-box's
+                go.mod replaces the module with ../$m."
+done
 # The gomobile and gobind tools' source.
 dir=$("$GOCMD" mod download -json github.com/sagernet/gomobile@"$GOMOBILE" | sed -n 's/^[[:space:]]*"Dir": "\(.*\)",$/\1/p')
 [ -d "$dir" ] || { echo "no gomobile $GOMOBILE"; exit 1; }
@@ -112,7 +131,7 @@ unbraid/        The app, its tunnel extension and widgets (GPL-3.0-or-later), at
                 scripts (tools/) and the engine patches (tools/*.patch).$LOCAL_NOTE
 sing-box/       sing-box v1.14.4 with unbraid/tools/sing-box-*.patch applied. Its go.mod replaces the OpenVPN module with
                 ../sing-openvpn.
-sing-openvpn/   sing-box's OpenVPN module at the version sing-box pins, with unbraid/tools/sing-openvpn-*.patch applied.
+sing-openvpn/   sing-box's OpenVPN module at the version sing-box pins, with unbraid/tools/sing-openvpn-*.patch applied.$MODULE_NOTE
 goproxy/        Every other Go module the engine, its bindings (gomobile $BIND) and the gomobile tools are built from, as
                 a Go module proxy folder: the module zips, checked against the go.sum files when they are used.
 gomobile-$GOMOBILE/ The gomobile and gobind tools that generate the engine's Objective-C bindings.
