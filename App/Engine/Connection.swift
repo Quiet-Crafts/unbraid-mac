@@ -217,6 +217,7 @@ final class Connection {
             guard self.networkChanges.take(now: .now) else { return self.armNetworkWake() }
             // Taken: a later change must not cancel the reloads this wake is about to start (one may have stopped the tunnel).
             self.networkWake = nil
+            let changed = ContinuousClock.now
             self.healthReset += 1
             // An Automatic route that went over OpenVPN TCP tries WireGuard again: what was blocked on the last network may not be here.
             let resetPorts = !self.portStep.isEmpty || !AutoProtocol.routes.isEmpty
@@ -233,8 +234,9 @@ final class Connection {
             let routes = Set(self.routeRetry.dates.keys)
             if !routes.isEmpty { await self.reload(retrying: routes) }
             // Still blocking after a failed change: a new network is when its providers may answer again. Tried once now
-            // (`Retry.networkChanged`); a reconcile stops short after a Pause, Disconnect, sign-out, erase or outside stop.
-            guard self.state.phase == .on, self.retry.networkChanged(self.revision(), blocking: self.committed?.blocking == true) else { return }
+            // (`Retry.networkChanged`), unless the reloads above just tried it; a reconcile stops short after a Pause,
+            // Disconnect, sign-out, erase or outside stop.
+            guard self.state.phase == .on, self.retry.networkChanged(self.revision(), blocking: self.committed?.blocking == true, since: changed) else { return }
             await self.reconcile()
         }
     }
@@ -1350,9 +1352,9 @@ final class Connection {
                 // Only routes still on the server found dead: an earlier move may have replaced it already.
                 let moving = dead.filter { id, key in old.input.setup.route(id).flatMap { r in old.input.links[id].map { LinkPicker.serverKey(r, $0) } } == key }
                 if health { guard !moving.isEmpty || healthAction else { return nil } } else { guard (pending && due) || !retrying.isEmpty else { return nil } }
+                guard let fallback = Lifecycle.withinRunning(health: health, retrying: !retrying.isEmpty, pending: pending, due: due, blocking: old.blocking) else { return nil }
                 reloadRequest += 1
                 let request = reloadRequest
-                let fallback = (health || !retrying.isEmpty) && pending && !due
                 let token = reloadFlight.begin(wanted, fallback: fallback ? old.revision : nil)
                 flight = token
                 // A health move the user didn't ask for, or a route retry within the running setup: its failure is logged,
@@ -1563,7 +1565,7 @@ final class Connection {
         if testChange { testingFailures += 1; return Log.error("speed test", detail: text) }
         guard !quiet || committed?.blocking == true else { return Log.error("health", detail: text) }
         guard charged else { state.error = text; return }
-        if error is Refused || error is AuthError { retry.refuse(wanted); recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
+        if error is Refused || error is AuthError || Lifecycle.waitsForInputs((error as? BlockedPick)?.blocked ?? [:], blocking: committed?.blocking == true) { retry.refuse(wanted); recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
         else if let wait = retry.failed(wanted, disrupted: disrupted, blocking: committed?.blocking == true, now: .now) { wakeAfter(wait) }
         else { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) }; text += " Not tried again until the setup changes." }
         state.error = text

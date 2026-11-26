@@ -53,8 +53,8 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
 
     func refuses(_ k: Key) -> Bool { refused && k == key }
 
-    /// The network changed while [k] waits to be tried again: true when it is due now instead.
-    mutating func networkChanged(_ k: Key, blocking: Bool) -> Bool { false }
+    /// The network changed at [since] while [k] waits to be tried again: true when it is due now instead.
+    mutating func networkChanged(_ k: Key, blocking: Bool, since: ContinuousClock.Instant) -> Bool { false }
 
     mutating func clear() { self = Retry() }
 }
@@ -140,6 +140,16 @@ nonisolated enum Lifecycle {
     }
 
     /// Ordinary route retries cannot bypass an interim edit's backoff or refusal.
+    /// A reload that moves or retries routes within the running setup instead of trying the edit (a fallback): true;
+    /// false when the edit itself is tried; nil when there is nothing to do. [blocking]: a deny-all runs.
+    static func withinRunning(health: Bool, retrying: Bool, pending: Bool, due: Bool, blocking: Bool) -> Bool? {
+        (health || retrying) && pending && !due
+    }
+
+    /// A failed pick whose every route was held back for [blocked] reasons waits for new inputs, as a refusal does.
+    /// [blocking]: a deny-all runs.
+    static func waitsForInputs(_ blocked: [String: LinkPicker.Blocked], blocking: Bool) -> Bool { false }
+
     static func mayRetryCommitted(interim: Bool, allowed: Bool) -> Bool {
         !interim || allowed
     }
