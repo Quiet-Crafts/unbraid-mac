@@ -59,6 +59,14 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
 nonisolated enum Lifecycle {
     enum QuitPause: Equatable { case wait, resume, done }
 
+    /// Whether the deny-all that takes over from a failed change runs under the profile of its own setup instead of the
+    /// running one. Only when that setup has the kill switch on and the running profile has it off: a first blocked app
+    /// turns the kill switch on, and until it is on the blocked app could still reach the home network or bind to the
+    /// physical interface. Every other case keeps the running profile, so no other failure path gains a restart.
+    static func blockerTakesWantedProfile(runningKillSwitch: Bool?, wantedKillSwitch: Bool) -> Bool {
+        false
+    }
+
     /// On or connecting can be a pause still being applied. Once it settles, resume only that same timed pause.
     static func quitPause(phase: Snapshot.Phase, timed: Bool, current: Int, expected: Int) -> QuitPause {
         guard timed, current == expected else { return .done }

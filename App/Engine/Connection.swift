@@ -2307,10 +2307,12 @@ final class Connection {
         let blocking = Compiler.denyAllInput(input), already = committed?.blocking == true
         let json = try Compiler.denyAll(blocking), searched = search(blocking)
         guard g == generation else { return .off }
+        let running = tunnel.profile, wanted = profile(blocking)
+        let blockerProfile = Lifecycle.blockerTakesWantedProfile(runningKillSwitch: running?.killSwitch, wantedKillSwitch: wanted.killSwitch) ? wanted : running
         // Named before it can run, for a takeover after a relaunch: that must never stop it for the accounts of the record it
         // stands in for (it holds none, and stopping it would let the apps it blocks out).
         try await Task {
-            try await self.apply(blocking, json, g, persist: false, profile: self.tunnel.profile, since: request, search: searched) { Running.blocker($0) }
+            try await self.apply(blocking, json, g, persist: false, profile: blockerProfile, since: request, search: searched) { Running.blocker($0) }
         }.value
         // No route and no account: nothing to revoke, and the store's setup differs, so it is tried again.
         commit(blocking, json, [:], blocking: true, search: searched)
