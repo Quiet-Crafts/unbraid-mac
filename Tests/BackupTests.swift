@@ -177,6 +177,43 @@ final class BackupTests: XCTestCase {
         XCTAssertNil(p.blocked["w1"]); XCTAssertNotNil(p.links["w1"]); XCTAssertEqual(p.blocked["x1"], .keyLeftOut)
     }
 
+    /// A restore that can't be applied is recovered from as any failed change (`Lifecycle.recovery`). One that takes an
+    /// app, the default or a website off Direct, or adds a Block, restricts someone: the deny-all comes first, so the
+    /// rules from before the restore never let that app out. One that restricts nobody (routes moved between VPNs, a
+    /// server's keys replaced or left out, a Block dropped) puts the rules from before the restore back first: every app
+    /// they don't send Direct stays off Direct, and every app the backup blocks was blocked already.
+    func testAFailedRestoreBringsBackTheOldRulesOnlyWhenTheyLetNobodyOut() throws {
+        let backup = full()
+        // Each lets one thing out that the backup restricts: the default, an app on a VPN, a blocked app, a website.
+        var openDefault = backup, openApp = backup, unblocked = backup, openSite = backup
+        openDefault.defaultRoute = DIRECT
+        openApp.apps["org.example.c"] = DIRECT
+        unblocked.apps["org.example.d"] = nil
+        openSite.sites["example.com"] = DIRECT
+        var vpn = backup
+        vpn.apps["org.example.a"] = "m1"
+        vpn.apps["org.example.z"] = BLOCK
+        vpn.servers[0].wg?.privateKey = String(repeating: "D", count: 42) + "E="
+        vpn.routes[1].wg = vpn.servers[0].wg
+        for keys in [true, false] {
+            let b = try read(backup, keys: keys)
+            for keepPrevious in [false, true] {
+                for (i, open) in [openDefault, openApp, unblocked, openSite].enumerated() {
+                    let restricting = Backup.plan(onto: open, from: b, keepPrevious: keepPrevious, now: .now, judge: false).setup
+                    XCTAssertTrue(LinkPicker.restricts(from: open, to: restricting), "case \(i) keys \(keys) keep \(keepPrevious)")
+                }
+                let restored = Backup.plan(onto: vpn, from: b, keepPrevious: keepPrevious, now: .now, judge: false).setup
+                XCTAssertFalse(LinkPicker.restricts(from: vpn, to: restored), "keys \(keys) keep \(keepPrevious)")
+                for app in Set(vpn.apps.keys).union(restored.apps.keys) {
+                    if restored.routeOf(app) != DIRECT { XCTAssertNotEqual(vpn.routeOf(app), DIRECT, app) }
+                    if restored.routeOf(app) == BLOCK { XCTAssertEqual(vpn.routeOf(app), BLOCK, app) }
+                }
+            }
+        }
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: false).first, .denyAll)
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: false, testChange: false), [.previous, .denyAll])
+    }
+
     func testRestoringWithoutKeysOnTheSameMacKeepsItsKeys() throws {
         let here = full()
         let b = try read(here, keys: false)
