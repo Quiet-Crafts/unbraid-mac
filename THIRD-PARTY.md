@@ -11,6 +11,7 @@ a libbox build.
 |---|---|---|
 | [sing-box](https://github.com/SagerNet/sing-box) 1.14.4, with the patches in `tools/` | The VPN engine (Libbox), in the tunnel extension | GPL-3.0-or-later |
 | [sing-openvpn](https://github.com/SagerNet/sing-openvpn), with the patch in `tools/` | OpenVPN inside the engine | GPL-3.0-or-later |
+| [sing-tun](https://github.com/SagerNet/sing-tun), with the patch in `tools/` | The engine's packet handling between apps and tunnels | GPL-3.0-or-later |
 | [wireguard-go](https://github.com/sagernet/wireguard-go) (SagerNet fork) | WireGuard inside the engine | MIT, Copyright WireGuard LLC |
 | [Tailscale](https://github.com/sagernet/tailscale) (SagerNet fork) | Tailscale and Headscale inside the engine | BSD-3-Clause |
 | [gVisor](https://github.com/sagernet/gvisor) (SagerNet fork) | The engine's network stack | Apache-2.0 |

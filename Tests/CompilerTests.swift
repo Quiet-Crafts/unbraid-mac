@@ -3260,6 +3260,8 @@ extension CompilerTests {
         let all = try FileManager.default.contentsOfDirectory(atPath: tools.path).filter { $0.hasSuffix(".patch") }.sorted()
         XCTAssertTrue(all.contains { $0.hasPrefix("sing-box-") }, "\(all)")
         XCTAssertEqual(ProviderFixtures.enginePatches()?.map(\.name).sorted(), all)
+        // sing-tun is patched: TCP fallback source ports start from a random place after an engine restart.
+        XCTAssertTrue(all.contains("sing-tun-zz-tcp-restart-ports.patch"), "\(all)")
         func provenance(_ root: URL) throws -> [String] {
             let process = Process(), out = Pipe()
             process.executableURL = URL(fileURLWithPath: "/bin/bash")

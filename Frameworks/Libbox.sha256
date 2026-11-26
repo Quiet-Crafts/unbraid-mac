@@ -1,4 +1,4 @@
-8289c45ec13271ae4b4d8d517f2294c41d9d238ec6e423b5e6f491fa5a7529de  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
+29231dd6b4a3146d5971401e42b963a50346bf5b6b74a96e6a3253501990a619  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
 54808197c77fea31eb2c22504c5f2b8c817d8eef1c06dd40affb23d2619a76cf  Libbox.xcframework/Info.plist
 link Versions/Current/Headers  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Headers
 link Versions/Current/Libbox  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Libbox
@@ -26,3 +26,4 @@ patch sing-box-stun-dns.patch 80e95903e6458c56a8463ce41762713a9b036ba7a6e708baea
 patch sing-box-z-deps-security.patch 6f7232981cc6b802da730081d8ecc770e29da0d5e8506aa133034b77e3d2f5dc
 patch sing-box-z-lifecycle.patch 8507dcca218b4e89e6cc4e66a9dcf833fc54774332ee4367691f0c5f5091b11a
 patch sing-openvpn-bounded-exit-notify.patch 158be8026867e9be7141ebb8669e818c7f03c9e5ad86c33e9ee6f3ad2bf1a082
+patch sing-tun-zz-tcp-restart-ports.patch 74aaf554ae97ce26733892c1ec93c6cd4fd054defe3040eb99e0e5d5bbb0703a
