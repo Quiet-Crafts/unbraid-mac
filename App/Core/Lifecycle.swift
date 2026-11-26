@@ -32,8 +32,9 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
         disruptions = spent
     }
 
-    /// A passing failure of [k]: the wait before trying it again, or nil when it is refused from now on.
-    mutating func failed(_ k: Key, disrupted: Bool, now: ContinuousClock.Instant) -> Duration? {
+    /// A passing failure of [k]: the wait before trying it again, or nil when it is refused from now on. [blocking]: a
+    /// deny-all stands in for the setup (`Connection.recover`).
+    mutating func failed(_ k: Key, disrupted: Bool, blocking: Bool = false, now: ContinuousClock.Instant) -> Duration? {
         if k != key { self = Retry(); key = k }
         else if refused { refused = false; failures = 0; due = nil }
         if disrupted { disruptions += 1 }
@@ -51,6 +52,9 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
     }
 
     func refuses(_ k: Key) -> Bool { refused && k == key }
+
+    /// The network changed while [k] waits to be tried again: true when it is due now instead.
+    mutating func networkChanged(_ k: Key, blocking: Bool) -> Bool { false }
 
     mutating func clear() { self = Retry() }
 }

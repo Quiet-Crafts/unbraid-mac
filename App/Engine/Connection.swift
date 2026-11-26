@@ -232,6 +232,10 @@ final class Connection {
             if resetPorts { await self.reload(checked: self.commits, healthAction: true) }
             let routes = Set(self.routeRetry.dates.keys)
             if !routes.isEmpty { await self.reload(retrying: routes) }
+            // Still blocking after a failed change: a new network is when its providers may answer again. Tried once now
+            // (`Retry.networkChanged`); a reconcile stops short after a Pause, Disconnect, sign-out, erase or outside stop.
+            guard self.state.phase == .on, self.retry.networkChanged(self.revision(), blocking: self.committed?.blocking == true) else { return }
+            await self.reconcile()
         }
     }
 
@@ -1560,7 +1564,7 @@ final class Connection {
         guard !quiet || committed?.blocking == true else { return Log.error("health", detail: text) }
         guard charged else { state.error = text; return }
         if error is Refused || error is AuthError { retry.refuse(wanted); recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
-        else if let wait = retry.failed(wanted, disrupted: disrupted, now: .now) { wakeAfter(wait) }
+        else if let wait = retry.failed(wanted, disrupted: disrupted, blocking: committed?.blocking == true, now: .now) { wakeAfter(wait) }
         else { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) }; text += " Not tried again until the setup changes." }
         state.error = text
     }
