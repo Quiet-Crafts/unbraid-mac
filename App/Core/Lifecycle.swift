@@ -539,6 +539,12 @@ nonisolated extension Lifecycle {
     /// tunnel would let every VPN app out.
     static let restricting: [Recovery] = [.denyAll, .previous]
 
+    /// No step of a failed change's recovery (`recovery`) ran: whether the tunnel is left up, holding traffic, instead of
+    /// stopping (`Connection.recover`). It stops.
+    static func holdsAfterFailedRecovery(blocking: Bool, status: Status, erasing: Bool) -> Bool {
+        false
+    }
+
     /// A cold start that failed: whether the deny-all of the setup goes in place (`Connection.block`) instead of the
     /// tunnel stopping. Only once macOS brought this start up and the extension then didn't confirm what runs ([reached]:
     /// the start's own `OutsideStop.up`, which a stop from outside clears), the tunnel still connected ([status]), not
