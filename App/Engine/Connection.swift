@@ -2238,8 +2238,9 @@ final class Connection {
     /// blocked (`Compiler.denyAll`) rather than let out without one, and the setup tried again as any failed change is;
     /// only if none runs does the tunnel stop.
     @discardableResult
+    /// [takeover]: what runs was never taken over (a takeover's failure): a tunnel stopped meanwhile is never started again.
     private func recover(_ old: Compiler.Input?, _ accounts: [String: String]?, blocking: Bool = false, steps: [Lifecycle.Recovery]? = nil,
-                         interim: Bool = false, error: Error, _ g: Int) async -> Recovered {
+                         interim: Bool = false, takeover: Bool = false, error: Error, _ g: Int) async -> Recovered {
         let failure = message(error, "Change not applied")
         // Compiling waits: a sign-out's erase requested meanwhile must not be consumed by restoring the old config.
         let request = eraseRequest
@@ -2251,11 +2252,11 @@ final class Connection {
                     // since the last one is blocked too. From what ran only while the keychain won't open the setup.
                     if blocking {
                         guard let input = old else { throw Fail("No previous configuration") }
-                        return try await block(store.setupStandIn ? input : makeInput(store.setup, [:], probe: nil), failure, request, g)
+                        return try await block(store.setupStandIn ? input : makeInput(store.setup, [:], probe: nil), failure, request, g, takeover: takeover)
                     }
                     // Otherwise never from stand-ins for a setup the keychain won't open.
                     guard !store.setupStandIn else { continue }
-                    return try await block(makeInput(store.setup, [:], probe: nil), failure, request, g)
+                    return try await block(makeInput(store.setup, [:], probe: nil), failure, request, g, takeover: takeover)
                 }
                 guard var input = old else { throw Fail("No previous configuration") }
                 if !input.setup.testing.isEmpty {
@@ -2273,7 +2274,7 @@ final class Connection {
                 // Never sealed again with accounts that were signed out or changed meanwhile, or never checked: it runs
                 // until the next change, and no longer.
                 let current = accounts.map { $0.allSatisfy { store.accounts[$0.key] == $0.value } } ?? false
-                try await Task { try await self.apply(input, json, g, persist: current, since: request) }.value
+                try await Task { try await self.apply(input, json, g, persist: current, since: request, takeover: takeover) }.value
                 commit(input, json, accounts, interim: interim)
                 guard g == generation else { return .restored }
                 state.phase = .on
@@ -2303,16 +2304,16 @@ final class Connection {
 
     /// Runs the deny-all of [input] in place of what failed (part of `recover`). Not sealed: Connect on Demand keeps
     /// whatever copy the extension still has, and is turned off if it has none.
-    private func block(_ input: Compiler.Input, _ failure: String, _ request: Int, _ g: Int) async throws -> Recovered {
+    private func block(_ input: Compiler.Input, _ failure: String, _ request: Int, _ g: Int, takeover: Bool = false) async throws -> Recovered {
         let blocking = Compiler.denyAllInput(input), already = committed?.blocking == true
         let json = try Compiler.denyAll(blocking), searched = search(blocking)
         guard g == generation else { return .off }
-        let running = tunnel.profile, wanted = profile(blocking)
-        let blockerProfile = Lifecycle.blockerTakesWantedProfile(runningKillSwitch: running?.killSwitch, wantedKillSwitch: wanted.killSwitch) ? wanted : running
+        let blockerProfile = Lifecycle.blockerProfile(running: tunnel.profile.map(Self.shape), wanted: Self.shape(profile(blocking)))
+            .map { TunnelControl.Profile(killSwitch: $0.killSwitch, lan: $0.lan, onDemand: $0.onDemand) }
         // Named before it can run, for a takeover after a relaunch: that must never stop it for the accounts of the record it
         // stands in for (it holds none, and stopping it would let the apps it blocks out).
         try await Task {
-            try await self.apply(blocking, json, g, persist: false, profile: blockerProfile, since: request, search: searched) { Running.blocker($0) }
+            try await self.apply(blocking, json, g, persist: false, profile: blockerProfile, since: request, search: searched, takeover: takeover) { Running.blocker($0) }
         }.value
         // No route and no account: nothing to revoke, and the store's setup differs, so it is tried again.
         commit(blocking, json, [:], blocking: true, search: searched)
@@ -2339,7 +2340,8 @@ final class Connection {
         let input = makeInput(store.setup, [:], probe: nil)
         let fresh = deny && !store.setupStandIn
             ? (try? Compiler.denyAll(input)).map { (json: $0, search: search(Compiler.denyAllInput(input))) } : nil
-        guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh) else { return nil }
+        let profiles = tunnel.profile.map { (running: Self.shape($0), wanted: Self.shape(profile(Compiler.denyAllInput(input)))) }
+        guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh, profile: profiles) else { return nil }
         do { return try await block(input, message(error, "Change not applied"), eraseRequest, g) }
         catch is CancellationError { return nil }
         catch let e where e is TunnelControl.Unstaged || TunnelControl.foreign(e) {
@@ -2352,6 +2354,8 @@ final class Connection {
             return await recover(old.input, old.accounts, blocking: old.blocking, steps: left, interim: old.interim, error: error, g)
         }
     }
+
+    private static func shape(_ p: TunnelControl.Profile) -> Lifecycle.Shape { .init(killSwitch: p.killSwitch, lan: p.lan, onDemand: p.onDemand) }
 
     private static let blocking = "Apps that use a VPN are blocked until unbraid can apply your setup. Disconnect to let them out without the VPN."
 
@@ -3398,10 +3402,11 @@ final class Connection {
             return wakeAdoption(after: .seconds(30), g)
         }
         state = VpnState(phase: .connecting)
-        var admitted = false
+        var admitted = false, wanted = revision()
         do {
             while true {
                 let s = store.setup, accounts = store.accounts
+                wanted = revision()
                 let made = record?.accounts.map { made in accounts.filter { made[$0.key] == Running.fingerprint($0.value) } } ?? [:]
                 // No fallback to the last good tunnels: they aren't tied to an account, and these are sealed as the current
                 // account's. A provider that can't be reached leaves the tunnel as it is, and taking over is retried.
@@ -3480,9 +3485,35 @@ final class Connection {
                 recordRun { $0.committed(revision: RunState.revision(ran), setup: ran, fresh: true) }
                 recordRun { $0.refused(revision: RunState.revision(store.setup), setup: store.setup) }
             }
-            switch Lifecycle.takeoverFailure(foreign: foreign, provenance: provenance(record), unvouched: unvouched(record) != nil, admitted: admitted,
-                                             unstaged: error is TunnelControl.Unstaged, onDemand: tunnel.profile?.onDemand == true, engine: engine,
-                                             blocker: blocker) {
+            let decision = Lifecycle.takeoverFailure(foreign: foreign, provenance: provenance(record), unvouched: unvouched(record) != nil, admitted: admitted,
+                                                     unstaged: error is TunnelControl.Unstaged, onDemand: tunnel.profile?.onDemand == true, engine: engine,
+                                                     blocker: blocker)
+            // The setup restricts an app that what runs lets out (an edit or restore not applied before a relaunch), or a
+            // deny-all runs whose rules are older than the setup's: recovered from as a failed change is, from the record.
+            if let record {
+                let now = makeInput(store.setup, [:], probe: nil), denying = Compiler.denyAllInput(now)
+                // Revisions stand in for the configurations: the deny-all running against the fresh one's (`reblock`).
+                let fresh = (try? Compiler.denyAll(denying)).map { (json: Staging.revision($0, search: search(denying)), search: "") }
+                let profiles = tunnel.profile.map { (running: Self.shape($0), wanted: Self.shape(profile(now))) }
+                let blocking = revisions?.staleRunning != true && blocker != nil && engine?.running == blocker
+                let stale = Lifecycle.reblock(blocking: true, held: false, running: (json: blocker ?? "", search: ""), fresh: fresh, profile: profiles)
+                if let steps = Lifecycle.takeoverRecovery(decision, restricts: LinkPicker.restricts(from: record.setup, to: store.setup),
+                                                          blocking: blocking, stale: stale, held: store.setupStandIn) {
+                    let made = record.accounts.map { made in store.accounts.filter { made[$0.key] == Running.fingerprint($0.value) } }
+                    let recovered = await recover(makeInput(record.setup, record.links, probe: nil), made, blocking: blocking, steps: steps,
+                                                  takeover: true, error: error, g)
+                    guard g == generation else { return }
+                    stopAdopting()
+                    guard recovered != .off else { return }
+                    startWatching()
+                    // Charged to the setup this attempt was for; a newer one is tried as its own change.
+                    failed(wanted, error, disrupted: true, quiet: false)
+                    if revision() != wanted { wakeAfter(.zero) }
+                    return
+                }
+            }
+            guard g == generation else { return }
+            switch decision {
             case .leave:
                 // Another user's tunnel: theirs, not this app's to take over or stop.
                 stopAdopting()

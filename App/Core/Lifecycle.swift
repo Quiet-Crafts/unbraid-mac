@@ -59,12 +59,23 @@ nonisolated struct Retry<Key: Equatable & Sendable>: Sendable {
 nonisolated enum Lifecycle {
     enum QuitPause: Equatable { case wait, resume, done }
 
-    /// Whether the deny-all that takes over from a failed change runs under the profile of its own setup instead of the
-    /// running one. Only when that setup has the kill switch on and the running profile has it off: a first blocked app
-    /// turns the kill switch on, and until it is on the blocked app could still reach the home network or bind to the
-    /// physical interface. Every other case keeps the running profile, so no other failure path gains a restart.
-    static func blockerTakesWantedProfile(runningKillSwitch: Bool?, wantedKillSwitch: Bool) -> Bool {
-        runningKillSwitch == false && wantedKillSwitch
+    /// The VPN profile's parts as the deny-all chooses them (`TunnelControl.Profile`): [lan] the home network bypasses the
+    /// tunnel.
+    struct Shape: Equatable, Sendable { var killSwitch: Bool, lan: Bool, onDemand: Bool }
+
+    /// The profile the deny-all that takes over from a failed change runs under; nil (no profile read) leaves it to its
+    /// own setup's. The running one, except that the kill switch [wanted] by its setup is turned on: a first blocked app
+    /// turns it on, and until it is on the blocked app could still reach the home network or bind to the physical
+    /// interface.
+    static func blockerProfile(running: Shape?, wanted: Shape) -> Shape? {
+        guard let running else { return nil }
+        return !running.killSwitch && wanted.killSwitch ? wanted : running
+    }
+
+    /// What a takeover that failed and would keep what runs ([failure] `.retry`) does instead: the recovery of a failed
+    /// change (`recovery`, `Connection.recover`) from the record of what runs, or nil to keep it.
+    static func takeoverRecovery(_ failure: TakeoverFailure, restricts: Bool, blocking: Bool, stale: Bool, held: Bool) -> [Recovery]? {
+        nil
     }
 
     /// On or connecting can be a pause still being applied. Once it settles, resume only that same timed pause.
@@ -457,8 +468,10 @@ nonisolated extension Lifecycle {
     /// While a deny-all stands in for a change that failed ([blocking], `Connection.recover`), a change that can't be applied
     /// either still moves apps between Direct and blocked: the deny-all of the setup as it is now ([fresh] its configuration
     /// and search domain, nil when it couldn't be built) needs no server and no account. Put in place when it differs from
-    /// the one [running], never from stand-ins for a setup the keychain won't open yet ([held]).
-    static func reblock(blocking: Bool, held: Bool, running: (json: String, search: String), fresh: (json: String, search: String)?) -> Bool {
+    /// the one [running], never from stand-ins for a setup the keychain won't open yet ([held]). [profile]: the running
+    /// profile and the one the fresh deny-all's setup wants (`blockerProfile`), nil when not read.
+    static func reblock(blocking: Bool, held: Bool, running: (json: String, search: String), fresh: (json: String, search: String)?,
+                        profile: (running: Shape, wanted: Shape)? = nil) -> Bool {
         guard blocking, !held, let fresh else { return false }
         return fresh != running
     }
