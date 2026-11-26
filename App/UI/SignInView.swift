@@ -152,6 +152,7 @@ private struct ProviderForm: View {
     private let model = AppModel.shared
     @State private var values: [String: String] = [:]
     @State private var pastedQR: (key: String, value: String, changeCount: Int)?
+    @State private var scan: Task<Void, Never>?
     @State private var picking = false
     @State private var revealedFiles: Set<String> = []
     /// The field the file is for; kept apart from `picking`, which the picker resets before it reports.
@@ -221,7 +222,7 @@ private struct ProviderForm: View {
         // A finished sign-in closes a sheet; on first run RootView swaps to the app by itself.
         .onChange(of: model.accounts[id] != nil) { _, signedIn in if signedIn && !first { done() } }
         // Leaving the form discards what was typed (secrets) and its error.
-        .onDisappear { clearPastedSecrets(); values = [:]; revealedFiles = []; model.closeProviderForm(id) }
+        .onDisappear { clearPastedSecrets(); values = [:]; revealedFiles = []; scan?.cancel(); model.closeProviderForm(id) }
     }
 
     /// A secret pasted into the form and then abandoned must not stay on the clipboard.
@@ -277,11 +278,13 @@ private struct ProviderForm: View {
                 HStack {
                     Button("Choose a Picture…") {
                         let panel = NSOpenPanel(); panel.allowedContentTypes = [.image]; panel.allowsMultipleSelection = false
-                        if panel.runModal() == .OK, let url = panel.url, let image = NSImage(contentsOf: url) { readQR(image, into: f.key) }
+                        if panel.runModal() == .OK, let url = panel.url { readQR(file: url, into: f.key) }
                     }
                     Button("Paste Image") {
-                        let count = NSPasteboard.general.changeCount
-                        if let image = NSImage(pasteboard: .general) { readQR(image, into: f.key, changeCount: count) }
+                        let board = NSPasteboard.general
+                        // Read on the main actor (the pasteboard has no size query); a huge raw image is refused only once it is in memory.
+                        let kinds: [NSPasteboard.PasteboardType] = [.png, .tiff, .init("public.jpeg"), .init("public.heic")]
+                        if let data = kinds.lazy.compactMap({ board.data(forType: $0) }).first { readQR(data: data, into: f.key, changeCount: board.changeCount) }
                     }
                 }
             }.onDrop(of: [.image, .fileURL], isTargeted: nil) { providers in
@@ -290,10 +293,8 @@ private struct ProviderForm: View {
                 _ = item.loadDataRepresentation(forTypeIdentifier: type) { data, _ in
                     guard let data else { return }
                     Task { @MainActor in
-                        let image: NSImage?
-                        if type == UTType.fileURL.identifier, let url = URL(dataRepresentation: data, relativeTo: nil) { image = NSImage(contentsOf: url) }
-                        else { image = NSImage(data: data) }
-                        if let image { readQR(image, into: f.key) }
+                        if type == UTType.fileURL.identifier { if let url = URL(dataRepresentation: data, relativeTo: nil) { readQR(file: url, into: f.key) } }
+                        else { readQR(data: data, into: f.key) }
                     }
                 }
                 return true
@@ -305,17 +306,23 @@ private struct ProviderForm: View {
         }
     }
 
-    private func readQR(_ image: NSImage, into key: String, changeCount: Int? = nil) {
-        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), let value = QR.decode(cg) else {
-            model.formError[provider.id] = "No QR code found in the picture"
-            return
+    /// Reads the code off the main thread; a picture over the size limits is refused before it is decoded.
+    private func readQR(data: Data? = nil, file: URL? = nil, into key: String, changeCount: Int? = nil) {
+        scan?.cancel()  // only the latest scan may fill the field
+        scan = Task { @MainActor in
+            let outcome = await QR.read(data: data, file: file)
+            guard !Task.isCancelled else { return }
+            guard case .found(let value) = outcome else {
+                model.formError[provider.id] = outcome == .tooLarge ? "That picture is too large to read. Use a screenshot of the QR code instead." : "No QR code found in the picture"
+                return
+            }
+            // A scanned account replaces what was typed: a challenge asked for the other one goes, as when typing.
+            if let challenge = model.challenges[provider.id], key != challenge.field.key { model.closeProviderForm(provider.id); values[challenge.field.key] = nil }
+            values[key] = value
+            pastedQR = changeCount.map { (key, value, $0) }
+            model.formError[provider.id] = nil
+            model.slotsFull[provider.id] = nil
         }
-        // A scanned account replaces what was typed: a challenge asked for the other one goes, as when typing.
-        if let challenge = model.challenges[provider.id], key != challenge.field.key { model.closeProviderForm(provider.id); values[challenge.field.key] = nil }
-        values[key] = value
-        pastedQR = changeCount.map { (key, value, $0) }
-        model.formError[provider.id] = nil
-        model.slotsFull[provider.id] = nil
     }
 
     private func submit(extra: [String: String] = [:]) {
