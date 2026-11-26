@@ -64,7 +64,7 @@ nonisolated enum Lifecycle {
     /// turns the kill switch on, and until it is on the blocked app could still reach the home network or bind to the
     /// physical interface. Every other case keeps the running profile, so no other failure path gains a restart.
     static func blockerTakesWantedProfile(runningKillSwitch: Bool?, wantedKillSwitch: Bool) -> Bool {
-        false
+        runningKillSwitch == false && wantedKillSwitch
     }
 
     /// On or connecting can be a pause still being applied. Once it settles, resume only that same timed pause.

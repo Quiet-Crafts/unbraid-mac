@@ -397,6 +397,19 @@ final class ProtectedTests: XCTestCase {
     private let de = Route(id: "de", loc: Location(provider: "mullvad", countryCode: "DE"))
     private var record: Setup { Setup(routes: [nl, us, de], defaultRoute: "nl", apps: ["a": "us", "b": BLOCK, "c": DIRECT, "d": BLOCK, "e": BLOCK]) }
 
+    /// A first blocked app turns the kill switch on: if that change fails, the deny-all must not leave it off.
+    func testBlockerTakesTheKillSwitchOfItsOwnSetup() {
+        XCTAssertTrue(Lifecycle.blockerTakesWantedProfile(runningKillSwitch: false, wantedKillSwitch: true))
+    }
+
+    /// Every other pairing keeps the running profile, so no other failure path gains a restart.
+    func testBlockerKeepsTheRunningProfileOtherwise() {
+        XCTAssertFalse(Lifecycle.blockerTakesWantedProfile(runningKillSwitch: true, wantedKillSwitch: true))
+        XCTAssertFalse(Lifecycle.blockerTakesWantedProfile(runningKillSwitch: true, wantedKillSwitch: false))
+        XCTAssertFalse(Lifecycle.blockerTakesWantedProfile(runningKillSwitch: false, wantedKillSwitch: false))
+        XCTAssertFalse(Lifecycle.blockerTakesWantedProfile(runningKillSwitch: nil, wantedKillSwitch: true))
+    }
+
     /// Blocks added and removed during the pause reach the protected setup; nothing else of the edited one does.
     func testOnlyBlocksChange() throws {
         var store = record
