@@ -514,11 +514,11 @@ nonisolated extension Lifecycle {
     /// and search domain, nil when it couldn't be built) needs no server and no account. Put in place when it differs from
     /// the one [running], never from stand-ins for a setup the keychain won't open yet ([held]). [profile]: the running
     /// profile and the one the fresh deny-all's setup wants (`blockerProfile`), nil when not read.
-    /// [down]: what ran may no longer run.
+    /// [down]: what ran may no longer run (the tunnel holds traffic): put in again even when the same.
     static func reblock(blocking: Bool, held: Bool, running: (json: String, search: String), fresh: (json: String, search: String)?,
                         profile: (running: Shape, wanted: Shape)? = nil, down: Bool = false) -> Bool {
         guard blocking, !held, let fresh else { return false }
-        return fresh != running || profile.map { blockerProfile(running: $0.running, wanted: $0.wanted) != $0.running } == true
+        return down || fresh != running || profile.map { blockerProfile(running: $0.running, wanted: $0.wanted) != $0.running } == true
     }
 
     enum Recovery: Equatable, Sendable { case denyAll, previous }
@@ -541,20 +541,27 @@ nonisolated extension Lifecycle {
     static let restricting: [Recovery] = [.denyAll, .previous]
 
     /// No step of a failed change's recovery (`recovery`) ran: whether the tunnel is left up, holding traffic, instead of
-    /// stopping (`Connection.recover`). It stops.
+    /// stopping (`Connection.recover`). While a deny-all stands in for the setup ([blocking], `retriesAsBlocking`) and the
+    /// tunnel is still up ([status] connected): held, the setup tried again. Its engine down, the tunnel holds traffic
+    /// (never Direct), so stopping it would only let VPN apps out without the VPN. Not while an erase is pending
+    /// ([erasing]), nor once the tunnel is down: nothing is left to hold, and it stops as it did. Not blocking, it stops.
     static func holdsAfterFailedRecovery(blocking: Bool, status: Status, erasing: Bool) -> Bool {
-        false
+        blocking && status == .connected && !erasing
     }
 
-    /// Whether the extension's error answer to a message ([text]) says another user's engine runs.
-    static func foreignRefusal(_ text: String) -> Bool { false }
+    /// Whether the extension's error answer to a message ([text]) says another user's engine runs: its owner check at the
+    /// swap answers with the same words as staging (the extension cleans them, `Redact.clean`). Then `TunnelControl.Foreign`,
+    /// as at staging, so nothing here reports another user's tunnel as this user's, holds it or stops it.
+    static func foreignRefusal(_ text: String) -> Bool { text == Redact.clean(Ownership.otherUser) }
 
-    /// A configuration built the same as the one committed ([same]) counts as running ([held]: the tunnel may hold traffic).
-    static func runsAlready(same: Bool, held: Bool) -> Bool { same }
+    /// A configuration built the same as the one committed ([same]) counts as running, except while the tunnel holds
+    /// traffic ([held]): its engine may be down, so it is applied again.
+    static func runsAlready(same: Bool, held: Bool) -> Bool { same && !held }
 
     /// A failed change that is refused ([refusal]: refused, a refused sign-in, a pick held back for account reasons) waits
-    /// for new inputs ([held]: the tunnel may hold traffic).
-    static func waitsForNewInputs(refusal: Bool, held: Bool) -> Bool { refusal }
+    /// for new inputs, except while the tunnel holds traffic ([held]): tried again at the blocking retry's waits, so at
+    /// least the deny-all, which needs no provider, goes back in.
+    static func waitsForNewInputs(refusal: Bool, held: Bool) -> Bool { refusal && !held }
 
     /// A cold start that failed: whether the deny-all of the setup goes in place (`Connection.block`) instead of the
     /// tunnel stopping. Only once macOS brought this start up and the extension then didn't confirm what runs ([reached]:

@@ -115,6 +115,65 @@ final class RetryTests: XCTestCase {
         XCTAssertFalse(Lifecycle.retriesAsBlocking(blocking: false, interim: false, standIn: .denyAll))
     }
 
+    /// While blocking, a retry and its deny-all both failed with the tunnel still up: held (its engine down, nothing goes
+    /// out), not stopped, which would let VPN apps out without the VPN. Also when local rules stood in for the deny-all.
+    func testWhileBlockingTheLastResortHoldsATunnelStillUp() {
+        XCTAssertTrue(Lifecycle.holdsAfterFailedRecovery(blocking: true, status: .connected, erasing: false))
+        let interim = Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: .denyAll)
+        XCTAssertTrue(Lifecycle.holdsAfterFailedRecovery(blocking: interim, status: .connected, erasing: false))
+        // The retry goes on: a held setup is never given up.
+        var r = Retry<Int>()
+        for _ in 0..<(Retry<Int>.limit * 2) { XCTAssertNotNil(r.failed(1, disrupted: true, blocking: true, now: t0)) }
+    }
+
+    /// Not blocking, the tunnel stops as A-2's last resort; nor is anything held once the tunnel is down (macOS ended it,
+    /// a restart that didn't come up) or while an erase is pending.
+    func testOtherwiseTheLastResortStaysTheStop() {
+        for status in [Lifecycle.Status.connected, .connecting, .stopping, .stopped] {
+            XCTAssertFalse(Lifecycle.holdsAfterFailedRecovery(blocking: false, status: status, erasing: false))
+        }
+        for status in [Lifecycle.Status.connecting, .stopping, .stopped] {
+            XCTAssertFalse(Lifecycle.holdsAfterFailedRecovery(blocking: true, status: status, erasing: false))
+        }
+        XCTAssertFalse(Lifecycle.holdsAfterFailedRecovery(blocking: true, status: .connected, erasing: true))
+        XCTAssertFalse(Lifecycle.holdsAfterFailedRecovery(blocking: Lifecycle.retriesAsBlocking(blocking: false, interim: true, standIn: .none),
+                                                          status: .connected, erasing: false))
+    }
+
+    /// The extension refused a swap because another user's engine runs: that user's tunnel, never held or stopped here.
+    func testAnotherUsersSwapRefusalIsForeign() {
+        XCTAssertTrue(Lifecycle.foreignRefusal(Redact.clean(Ownership.otherUser)))
+    }
+
+    func testOtherSwapRefusalsAreNotForeign() {
+        for text in ["Not running", "The change expired. Try again.", "", "The tunnel did not answer"] {
+            XCTAssertFalse(Lifecycle.foreignRefusal(text), text)
+        }
+    }
+
+    /// While the tunnel holds traffic its engine may be down: a configuration built the same as the committed one (the
+    /// last VPN app moved to Block matches the deny-all) is applied again, never taken as running; a refused setup is
+    /// tried again at the blocking waits, and the deny-all goes back in even when it is the same.
+    func testWhileHeldNothingCountsAsRunningOrWaitsForInputs() {
+        XCTAssertFalse(Lifecycle.runsAlready(same: true, held: true))
+        XCTAssertFalse(Lifecycle.waitsForNewInputs(refusal: true, held: true))
+        let deny = (json: "{}", search: "")
+        XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: deny, fresh: deny, down: true))
+    }
+
+    /// Not held: as before.
+    func testNotHeldTheSameConfigRunsAndARefusalWaits() {
+        XCTAssertTrue(Lifecycle.runsAlready(same: true, held: false))
+        XCTAssertFalse(Lifecycle.runsAlready(same: false, held: false))
+        XCTAssertFalse(Lifecycle.runsAlready(same: false, held: true))
+        XCTAssertTrue(Lifecycle.waitsForNewInputs(refusal: true, held: false))
+        XCTAssertFalse(Lifecycle.waitsForNewInputs(refusal: false, held: false))
+        XCTAssertFalse(Lifecycle.waitsForNewInputs(refusal: false, held: true))
+        let deny = (json: "{}", search: "")
+        XCTAssertFalse(Lifecycle.reblock(blocking: true, held: false, running: deny, fresh: deny))
+        XCTAssertFalse(Lifecycle.reblock(blocking: true, held: true, running: deny, fresh: deny, down: true), "never from a stand-in setup")
+    }
+
     func testABlockedSetupGivenUpBeforeIsTriedAgain() {
         var r = Retry<Int>()
         for _ in 0..<Retry<Int>.limit { _ = r.failed(1, disrupted: true, now: t0) }

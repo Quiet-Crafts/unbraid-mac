@@ -122,6 +122,9 @@ final class Connection {
         var interim = false
         /// The search domain it runs with (`search`).
         var search = ""
+        /// A recovery after it found nothing to run and left the tunnel holding traffic (`Recovered.held`): its engine may
+        /// be down. Ends with the next commit.
+        var held = false
     }
     private var committed: Committed?
     private var committedEngine: String?
@@ -947,7 +950,8 @@ final class Connection {
                     else if !input.setup.assignsNothing {
                         // Blocking: the setup is tried again as after any failed change (this pause's own retry wake went
                         // with the generation it bumped).
-                        if await recover(old, accounts, blocking: blocking, interim: interim, error: error, g) == .blocking, g == generation, state.phase == .on {
+                        let recovered = await recover(old, accounts, blocking: blocking, interim: interim, error: error, g)
+                        if recovered == .blocking || recovered == .held, g == generation, state.phase == .on {
                             failed(revision(), error, disrupted: true, quiet: false)
                         }
                     }
@@ -1344,7 +1348,7 @@ final class Connection {
             let recovered = await recover(old.input, old.accounts, blocking: old.blocking, interim: old.interim, error: error, g)
             guard g == generation, state.phase == .on else { return }
             // Everything blocked is never quiet: said, and the setup tried again.
-            if recovered == .blocking { failed(revision(), error, disrupted: true, quiet: false) } else { state.error = shown }
+            if recovered == .blocking || recovered == .held { failed(revision(), error, disrupted: true, quiet: false) } else { state.error = shown }
         }
     }
 
@@ -1418,8 +1422,10 @@ final class Connection {
                         try Task.checkCancellation()
                         guard fits(input) else { return }
                         var json = try compiled.get()
-                        // A favourite, a rename or another sign-in changes the setup, not what the engine runs.
-                        if Lifecycle.needsApply(signOut: signOut, sealedInterim: sealedInterim, changed: json != lastGood || tunnel.profile != profile(input)) {
+                        // A favourite, a rename or another sign-in changes the setup, not what the engine runs; while the
+                        // tunnel holds traffic, the same configuration is applied again.
+                        let same = Lifecycle.runsAlready(same: json == lastGood && tunnel.profile == profile(input), held: committed?.held == true)
+                        if Lifecycle.needsApply(signOut: signOut, sealedInterim: sealedInterim, changed: !same) {
                             input.probe = newProbe()
                             let checked = await Self.compile(input)
                             try Task.checkCancellation()
@@ -1442,11 +1448,11 @@ final class Connection {
                                 let recovered = await recover(recovery.input, recovery.accounts, blocking: recovery.blocking, steps: steps, interim: recovery.interim, error: error, g)
                                 guard g == generation, state.phase == .on else { return }
                                 // Everything blocked is never quiet: whoever asked, it is said.
-                                if !testChange && !fallback && (recovered == .restored || recovered == .blocking) { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
+                                if !testChange && !fallback && recovered != .off { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
                                 // A test's own failure stays the test's, unless it left everything blocked: that is said, and the
                                 // setup itself (without the test's routes) is tried again.
-                                if testChange && recovered != .blocking { state.error = shown; return failed(wanted, error, disrupted: true, quiet: true, testChange: true) }
-                                if recovered == .blocking { return failed(testChange ? revision() : wanted, error, disrupted: true, quiet: false, charged: !fallback) }
+                                if testChange && recovered != .blocking && recovered != .held { state.error = shown; return failed(wanted, error, disrupted: true, quiet: true, testChange: true) }
+                                if recovered == .blocking || recovered == .held { return failed(testChange ? revision() : wanted, error, disrupted: true, quiet: false, charged: !fallback) }
                                 // A failed failover leaves the reason already on screen (a pending edit's, or none).
                                 if quiet { state.error = shown }
                                 return failed(wanted, error, disrupted: true, quiet: quiet, charged: !fallback)
@@ -1579,15 +1585,19 @@ final class Connection {
     /// provider refused) waits for different inputs; anything else is tried again after a growing wait, and given up
     /// after interrupting the tunnel a few times. [quiet]: a failover nobody asked for, only logged; what is shown stays.
     /// [charged] false: [wanted] wasn't what ran (a move within the running setup): said when blocking, never counted.
+    /// While the tunnel holds traffic (`Committed.held`): said so, never quiet, and tried again at the blocking retry's waits.
     private func failed(_ wanted: Revision, _ error: Error, disrupted: Bool, quiet: Bool, testChange: Bool = false, charged: Bool = true) {
         // apply() closed the Tailscale status before failing: the engine that still runs needs it again.
         watchTailscale()
+        let held = committed?.held == true
         // Still blocking after a change failed twice: said with every later failure until a change goes through.
-        var text = message(error, "Change not applied") + (committed?.blocking == true ? " " + Self.blocking : "")
-        if testChange { testingFailures += 1; return Log.error("speed test", detail: text) }
-        guard !quiet || committed?.blocking == true else { return Log.error("health", detail: text) }
+        let note = held ? Self.held : committed?.blocking == true ? Self.blocking : nil
+        var text = message(error, "Change not applied") + (note.map { " " + $0 } ?? "")
+        if testChange && !held { testingFailures += 1; return Log.error("speed test", detail: text) }
+        guard !quiet || note != nil else { return Log.error("health", detail: text) }
         guard charged else { state.error = text; return }
-        if error is Refused || error is AuthError || Lifecycle.waitsForInputs((error as? BlockedPick)?.blocked ?? [:], blocking: retryBlocking) { retry.refuse(wanted); recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
+        let refusal = error is Refused || error is AuthError || Lifecycle.waitsForInputs((error as? BlockedPick)?.blocked ?? [:], blocking: retryBlocking)
+        if Lifecycle.waitsForNewInputs(refusal: refusal, held: held) { retry.refuse(wanted); recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
         else if let wait = retry.failed(wanted, disrupted: disrupted, blocking: retryBlocking, now: .now) { wakeAfter(wait) }
         else { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) }; text += " Not tried again until the setup changes." }
         state.error = text
@@ -2262,7 +2272,8 @@ final class Connection {
         _ = await hold(engine)
     }
 
-    enum Recovered { case restored, blocking, off }
+    /// `held`: nothing could run and the tunnel was left up, holding traffic (`Lifecycle.holdsAfterFailedRecovery`).
+    enum Recovered { case restored, blocking, held, off }
 
     /// Recovery is part of the same transaction and must finish even if its caller was cancelled, but not once a newer
     /// operation (a Disconnect) took over. [accounts]: those [old] was built with; nil = not known. [blocking]: [old] is
@@ -2337,6 +2348,16 @@ final class Connection {
         // Nothing left to try because an account was signed out meanwhile: stopped as a sign-out is, so Connect on Demand
         // can't start the copy that holds it again.
         if revoked { await teardown(error: Self.signedOut, revoke: true, g); return .off }
+        // While blocking, a tunnel still up is held rather than stopped: its engine down, it lets nothing out, where a stop
+        // would let VPN apps out without the VPN. The caller tries the setup again (`failed`, `Committed.held`).
+        if Lifecycle.holdsAfterFailedRecovery(blocking: retryBlocking, status: Self.status(tunnel.refreshStatus()), erasing: store.extensionWipePending) {
+            Log.error("recovery: traffic held", detail: reason)
+            committed?.held = true
+            state.phase = .on
+            state.servers = [:]
+            state.error = Self.held
+            return .held
+        }
         await teardown(error: "Change failed and the previous connection could not be restored: \(reason)", g)
         return .off
     }
@@ -2382,7 +2403,7 @@ final class Connection {
         let fresh = deny && !store.setupStandIn
             ? (try? Compiler.denyAll(input)).map { (json: $0, search: search(Compiler.denyAllInput(input))) } : nil
         let profiles = tunnel.profile.map { (running: Self.shape($0), wanted: Self.shape(profile(input))) }
-        guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh, profile: profiles) else { return nil }
+        guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh, profile: profiles, down: old.held) else { return nil }
         do { return try await block(input, message(error, "Change not applied"), eraseRequest, g) }
         catch is CancellationError { return nil }
         catch let e where e is TunnelControl.Unstaged || TunnelControl.foreign(e) {
@@ -2399,6 +2420,7 @@ final class Connection {
     private static func shape(_ p: TunnelControl.Profile) -> Lifecycle.Shape { .init(killSwitch: p.killSwitch, lan: p.lan, onDemand: p.onDemand) }
 
     private static let blocking = "Apps that use a VPN are blocked until unbraid can apply your setup. Disconnect to let them out without the VPN."
+    private static let held = "unbraid couldn't apply your setup or block VPN apps safely, so traffic is held until it can. Disconnect to go back online without the VPN."
 
     /// Records what the engine runs. [accounts]: those its links were made with; nil = not known.
     /// [blocking]: a deny-all (see `recover`). Its record isn't kept: the one of the configuration it stands in for still
