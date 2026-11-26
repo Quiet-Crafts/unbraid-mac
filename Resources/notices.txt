@@ -711,12 +711,15 @@ with the patches in the tools folder of unbraid's source (published with each re
   port, the replacement is searched from a random start each time the tunnel's port table is set up (as when the
   engine starts), so a restarted engine doesn't pick the ports the far side may still hold for its old connections.
 - gvisor-local-ingress-decision.patch, gvisor-tcp-forwarder-handler.patch, sing-tun-deferred-flow.patch and
-  sing-box-tun-deferred-resolve.patch, 2026-11-27: the parts that let a new connection wait for its own route's name
-  lookup without holding up the others (packets kept per waiting connection, within limits, and lookups and answers
-  dropped when the network changes or the engine stops). DNS answers and their cache follow the network generation
-  they were asked in.
-- sing-box-tun-dormant.patch, 2026-11-27: until that is switched on, each new connection is still decided as before,
-  on arrival.
+  sing-box-tun-deferred-resolve.patch, 2026-11-27: a new connection whose route must first look up its name waits
+  for that lookup on its own, without holding up the others (its packets are kept, within limits, and lookups and
+  answers are dropped when the network changes or the engine stops). DNS answers and their cache follow the network
+  generation they were asked in.
+- sing-box-tun-owner-path.patch, 2026-11-27: a connection decided after such a wait is still taken only by the
+  program it was decided for; another program on the same connection gets a decision of its own.
+- sing-tun-gvisor-start-lock.patch, 2026-11-27: a network change while the engine's network stack is starting waits
+  for the start to finish.
+- sing-box-zz-mac-dns-wait-test.patch, 2026-11-27: tests only (a waiting lookup holds up no other connection).
 
 === lzokay (the LZO code in github.com/anchore/go-lzo derives from it)
 The MIT License

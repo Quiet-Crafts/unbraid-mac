@@ -1,0 +1,60 @@
+diff --git a/route/tun_resolve.go b/route/tun_resolve.go
+index 229eeae..899917d 100644
+--- a/route/tun_resolve.go
++++ b/route/tun_resolve.go
+@@ -115,7 +115,9 @@ func (r *Router) pendingFlowValid(ctx context.Context, metadata adapter.InboundC
+ 		if err != nil {
+ 			current = nil
+ 		}
+-		if (owner == nil && current == nil) || (owner != nil && current != nil && owner.UserId == current.UserId && slices.Equal(owner.AndroidPackageNames, current.AndroidPackageNames)) {
++		// unbraid: on the Mac every app of a user shares its user ID, so the program decides: the effective one, as
++		// process rules match it. Another program (or none) on this tuple gets a fresh decision.
++		if (owner == nil && current == nil) || (owner != nil && current != nil && owner.UserId == current.UserId && owner.ProcessPath == current.ProcessPath && slices.Equal(owner.AndroidPackageNames, current.AndroidPackageNames)) {
+ 			return true
+ 		}
+ 		r.processCache.Remove(processCacheKey{Network: metadata.Network, Source: metadata.Source.AddrPort(), Destination: destination.AddrPort()})
+diff --git a/route/tun_resolve_owner_path_test.go b/route/tun_resolve_owner_path_test.go
+new file mode 100644
+index 0000000..9c9aa9f
+--- /dev/null
++++ b/route/tun_resolve_owner_path_test.go
+@@ -0,0 +1,39 @@
++package route
++
++import (
++	"context"
++	"testing"
++
++	"github.com/sagernet/sing-box/adapter"
++	M "github.com/sagernet/sing/common/metadata"
++	"github.com/sagernet/sing/contrab/freelru"
++	"github.com/sagernet/sing/contrab/maphash"
++
++	"github.com/stretchr/testify/require"
++)
++
++// On the Mac every app of a user has the same user ID, so a held decision still applies only while the flow's tuple
++// belongs to the same program (its effective one, as process rules match it). Another program, or none, gets a fresh
++// decision.
++func TestDeferredPolicyRequiresTheSameProgram(t *testing.T) {
++	m := flowTestMetadata()
++	a := &adapter.ConnectionOwner{UserId: 501, ProcessPath: "/Applications/A.app/Contents/MacOS/A"}
++	m.ProcessInfo = a
++	destination := M.ParseSocksaddr("198.51.100.7:443")
++	now := &flowTestOwner{owner: a}
++	r := flowTestRouter(flowTestDNS{})
++	r.processSearcher = newPlatformSearcher(now)
++	var err error
++	r.processCache, err = freelru.New[processCacheKey, processCacheEntry](8, maphash.NewHasher[processCacheKey]().Hash32, true)
++	require.NoError(t, err)
++	valid := r.pendingFlowValid(context.Background(), m, destination, "", newFlowResolveReplay(r))
++	require.True(t, valid(), "the same program")
++	now.owner = &adapter.ConnectionOwner{UserId: 501, ProcessPath: "/Applications/B.app/Contents/MacOS/B"}
++	require.False(t, valid(), "another program of the same user")
++	now.owner = &adapter.ConnectionOwner{UserId: 501}
++	require.False(t, valid(), "a socket whose program is no longer known")
++	now.owner = &adapter.ConnectionOwner{UserId: 502, ProcessPath: a.ProcessPath}
++	require.False(t, valid(), "the same program run by another user")
++	now.owner = &adapter.ConnectionOwner{UserId: 501, ProcessPath: a.ProcessPath}
++	require.True(t, valid(), "the same program again, found afresh")
++}

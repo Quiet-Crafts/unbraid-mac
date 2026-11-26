@@ -218,8 +218,8 @@ the app's connection checks look up their servers through the tunnel being check
 DNS servers first, narrow how UDP traffic is matched to its app, keep a test or Tailscale sign-out that overlaps a
 reload from stopping the engine, bound OpenVPN's exit notifications, send a connection that the local network or home
 rules take to only the addresses those rules cover, send random packets before each WireGuard handshake when a provider's Junk packets switch is on, pick a TCP connection's
-replacement source port from a random start after an engine restart, carry the (not yet switched on) parts that let a
-connection wait for its own route's lookup without holding up others, and take security fixes of some dependencies (the
+replacement source port from a random start after an engine restart, let a connection
+wait for its own route's name lookup without holding up the others, and take security fixes of some dependencies (the
 full list: `tools/notices/changes-sing-box.txt`). `tools/build-cli.sh` builds the engine's command-line version, which
 the tests use to check every generated configuration.
 

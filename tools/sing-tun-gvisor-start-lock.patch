@@ -1,0 +1,32 @@
+diff --git a/stack_gvisor.go b/stack_gvisor.go
+index 2248f61..86784b3 100644
+--- a/stack_gvisor.go
++++ b/stack_gvisor.go
+@@ -46,6 +46,9 @@ type GVisor struct {
+ 	transportDecisions   [3]flowDecisionQueue
+ 	icmpForwarder        *ICMPForwarder
+ 	udpForwarder         *UDPForwarder
++
++	// unbraid: a network change can suspend or reset flow decisions while Start is still setting up what they read.
++	startAccess sync.RWMutex
+ }
+ 
+ type GVisorTun interface {
+@@ -97,6 +100,8 @@ func NewGVisor(
+ }
+ 
+ func (t *GVisor) Start() error {
++	t.startAccess.Lock()
++	defer t.startAccess.Unlock()
+ 	linkEndpoint, nicOptions, err := t.tun.NewEndpoint()
+ 	if err != nil {
+ 		return err
+@@ -176,6 +181,8 @@ func (t *GVisor) ResetNetwork() {
+ }
+ 
+ func (t *GVisor) withDecisionGates(action func([]*flowDecisionQueue)) {
++	t.startAccess.RLock()
++	defer t.startAccess.RUnlock()
+ 	d := t.dispatcher
+ 	if d == nil || d.deferred == nil {
+ 		action(nil)

@@ -1,0 +1,351 @@
+diff --git a/tun_dns_wait_test.go b/tun_dns_wait_test.go
+new file mode 100644
+--- /dev/null
++++ b/tun_dns_wait_test.go
+@@ -0,0 +1,346 @@
++//go:build darwin && with_gvisor
++
++package box_test
++
++import (
++	"context"
++	"encoding/binary"
++	"errors"
++	"fmt"
++	"net"
++	"net/netip"
++	"os"
++	"strings"
++	"sync/atomic"
++	"syscall"
++	"testing"
++	"time"
++
++	box "github.com/sagernet/sing-box"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/include"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing-tun"
++	"github.com/sagernet/sing/common/json"
++	"github.com/sagernet/sing/service"
++
++	mDNS "github.com/miekg/dns"
++	"github.com/sagernet/gvisor/pkg/tcpip"
++	"github.com/sagernet/gvisor/pkg/tcpip/header"
++)
++
++// A TUN device the test owns: one end of a datagram socket pair, framed like utun (a 4-byte address family first).
++type socketTunPlatform struct {
++	adapter.PlatformInterface // anything not overridden below is not expected to be called
++	fd                        int
++}
++
++func (p *socketTunPlatform) Initialize(adapter.NetworkManager) error     { return nil }
++func (p *socketTunPlatform) UsePlatformAutoDetectInterfaceControl() bool { return false }
++func (p *socketTunPlatform) UsePlatformInterface() bool                  { return true }
++func (p *socketTunPlatform) OpenInterface(options *tun.Options, _ option.TunPlatformOptions) (tun.Tun, error) {
++	options.FileDescriptor = p.fd
++	options.EXP_ExternalConfiguration = true
++	options.EXP_MultiPendingPackets = false // a utun socket option
++	return tun.New(*options)
++}
++func (p *socketTunPlatform) ProcessPlatformOptions(option.TunPlatformOptions) error { return nil }
++func (p *socketTunPlatform) UsePlatformDefaultInterfaceMonitor() bool               { return false }
++func (p *socketTunPlatform) UsePlatformNetworkInterfaces() bool                     { return false }
++func (p *socketTunPlatform) UnderNetworkExtension() bool                            { return false }
++func (p *socketTunPlatform) NetworkExtensionIncludeAllNetworks() bool               { return false }
++func (p *socketTunPlatform) ClearDNSCache()                                         {}
++func (p *socketTunPlatform) UsePlatformConnectionOwnerFinder() bool                 { return false }
++func (p *socketTunPlatform) UsePlatformWIFIMonitor() bool                           { return false }
++func (p *socketTunPlatform) UsePlatformNotification() bool                          { return false }
++func (p *socketTunPlatform) MyInterfaceAddress() []netip.Addr                       { return nil }
++func (p *socketTunPlatform) UsePlatformNeighborResolver() bool                      { return false }
++func (p *socketTunPlatform) UsePlatformShell() bool                                 { return false }
++func (p *socketTunPlatform) UsePlatformBridge() bool                                { return false }
++func (p *socketTunPlatform) TailscaleHostname() string                              { return "" }
++
++func tcpSYN(src, dst netip.AddrPort) []byte {
++	packet := make([]byte, 4+header.IPv4MinimumSize+header.TCPMinimumSize)
++	binary.BigEndian.PutUint32(packet, syscall.AF_INET)
++	ip := header.IPv4(packet[4:])
++	ip.Encode(&header.IPv4Fields{
++		TotalLength: uint16(len(ip)), TTL: 64, ID: 1, Protocol: uint8(header.TCPProtocolNumber),
++		SrcAddr: tcpip.AddrFrom4(src.Addr().As4()), DstAddr: tcpip.AddrFrom4(dst.Addr().As4()),
++	})
++	ip.SetChecksum(^ip.CalculateChecksum())
++	tcp := header.TCP(ip.Payload())
++	tcp.Encode(&header.TCPFields{SrcPort: src.Port(), DstPort: dst.Port(), SeqNum: 1000, DataOffset: header.TCPMinimumSize,
++		Flags: header.TCPFlagSyn, WindowSize: 65535})
++	pseudo := header.PseudoHeaderChecksum(header.TCPProtocolNumber, ip.SourceAddress(), ip.DestinationAddress(), uint16(len(tcp)))
++	tcp.SetChecksum(^tcp.CalculateChecksum(pseudo))
++	return packet
++}
++
++func udpDatagram(src, dst netip.AddrPort) []byte {
++	packet := make([]byte, 4+header.IPv4MinimumSize+header.UDPMinimumSize+1)
++	binary.BigEndian.PutUint32(packet, syscall.AF_INET)
++	ip := header.IPv4(packet[4:])
++	ip.Encode(&header.IPv4Fields{
++		TotalLength: uint16(len(ip)), TTL: 64, ID: 1, Protocol: uint8(header.UDPProtocolNumber),
++		SrcAddr: tcpip.AddrFrom4(src.Addr().As4()), DstAddr: tcpip.AddrFrom4(dst.Addr().As4()),
++	})
++	ip.SetChecksum(^ip.CalculateChecksum())
++	udp := header.UDP(ip.Payload())
++	udp.Encode(&header.UDPFields{SrcPort: src.Port(), DstPort: dst.Port(), Length: uint16(len(udp))})
++	udp.Payload()[0] = 42
++	pseudo := header.PseudoHeaderChecksum(header.UDPProtocolNumber, ip.SourceAddress(), ip.DestinationAddress(), uint16(len(udp)))
++	udp.SetChecksum(^udp.CalculateChecksum(checksumOf(udp.Payload(), pseudo)))
++	return packet
++}
++
++func checksumOf(payload []byte, initial uint16) uint16 {
++	sum := uint32(initial)
++	for i := 0; i+1 < len(payload); i += 2 {
++		sum += uint32(payload[i])<<8 | uint32(payload[i+1])
++	}
++	if len(payload)%2 == 1 {
++		sum += uint32(payload[len(payload)-1]) << 8
++	}
++	for sum > 0xffff {
++		sum = sum>>16 + sum&0xffff
++	}
++	return uint16(sum)
++}
++
++// The engine on a socket-pair TUN, with three resolvers: "dead" never answers, "warm" answers warm.test with 127.0.0.1
++// while answering is on, and the fake-address server answers every app lookup. 192.0.2.10 is refused, 192.0.2.20
++// goes Direct to a local listener, *.slow.test resolves on dead, *.warm.test on warm, then Direct.
++type dnsWaitEngine struct {
++	t          *testing.T
++	ctx        context.Context
++	instance   *box.Box
++	peer       *os.File
++	accepted   chan struct{}
++	refused    chan struct{}
++	answering  atomic.Bool
++	unanswered atomic.Int32 // lookups the warm resolver let wait
++	listener   uint16
++	next       uint16
++}
++
++func newDNSWaitEngine(t *testing.T) *dnsWaitEngine {
++	e := &dnsWaitEngine{t: t, accepted: make(chan struct{}, 64), refused: make(chan struct{}, 64), next: 40000}
++	e.answering.Store(true)
++	silent := func(answer bool) uint16 {
++		conn, err := net.ListenPacket("udp4", "127.0.0.1:0")
++		if err != nil {
++			t.Fatal(err)
++		}
++		t.Cleanup(func() { conn.Close() })
++		go func() {
++			buffer := make([]byte, 2048)
++			for {
++				n, from, err := conn.ReadFrom(buffer)
++				if err != nil {
++					return
++				}
++				query := new(mDNS.Msg)
++				if answer && !e.answering.Load() {
++					e.unanswered.Add(1)
++				}
++				if !answer || !e.answering.Load() || query.Unpack(buffer[:n]) != nil || len(query.Question) != 1 {
++					continue
++				}
++				reply := new(mDNS.Msg)
++				reply.SetReply(query)
++				if query.Question[0].Qtype == mDNS.TypeA {
++					reply.Answer = append(reply.Answer, &mDNS.A{Hdr: mDNS.RR_Header{Name: query.Question[0].Name, Rrtype: mDNS.TypeA,
++						Class: mDNS.ClassINET, Ttl: 600}, A: net.IPv4(127, 0, 0, 1)})
++				}
++				if packed, err := reply.Pack(); err == nil {
++					conn.WriteTo(packed, from)
++				}
++			}
++		}()
++		return uint16(conn.LocalAddr().(*net.UDPAddr).Port)
++	}
++	dead, warm := silent(false), silent(true)
++	direct, err := net.Listen("tcp4", "127.0.0.1:0")
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { direct.Close() })
++	e.listener = uint16(direct.Addr().(*net.TCPAddr).Port)
++	go func() {
++		for {
++			conn, err := direct.Accept()
++			if err != nil {
++				return
++			}
++			e.accepted <- struct{}{}
++			conn.Close()
++		}
++	}()
++	pair, err := syscall.Socketpair(syscall.AF_UNIX, syscall.SOCK_DGRAM, 0)
++	if err != nil {
++		t.Fatal(err)
++	}
++	e.peer = os.NewFile(uintptr(pair[1]), "tun-peer")
++	t.Cleanup(func() { e.peer.Close() })
++	config := fmt.Sprintf(`{
++	  "log": {"level": "error"},
++	  "dns": {
++	    "servers": [
++	      {"type": "udp", "tag": "dead", "server": "127.0.0.1", "server_port": %d},
++	      {"type": "udp", "tag": "warm", "server": "127.0.0.1", "server_port": %d},
++	      {"type": "fakeip", "tag": "fake", "inet4_range": "198.18.0.0/15"}
++	    ],
++	    "rules": [{"query_type": ["A", "AAAA"], "server": "fake"}],
++	    "final": "dead", "strategy": "ipv4_only", "timeout": "5s"
++	  },
++	  "inbounds": [{"type": "tun", "tag": "tun", "address": ["172.19.0.1/30"], "mtu": 9000, "stack": "gvisor"}],
++	  "outbounds": [{"type": "direct", "tag": "direct"}],
++	  "route": {
++	    "rules": [
++	      {"ip_cidr": ["192.0.2.10/32"], "action": "reject"},
++	      {"ip_cidr": ["192.0.2.20/32"], "action": "route", "outbound": "direct", "override_address": "127.0.0.1", "override_port": %d},
++	      {"domain_suffix": ["slow.test"], "action": "resolve", "server": "dead"},
++	      {"domain_suffix": ["warm.test"], "action": "resolve", "server": "warm"}
++	    ],
++	    "final": "direct"
++	  }
++	}`, dead, warm, e.listener)
++	ctx := include.Context(service.ContextWithDefaultRegistry(context.Background()))
++	ctx = service.ContextWith[adapter.PlatformInterface](ctx, &socketTunPlatform{fd: pair[0]})
++	options, err := json.UnmarshalExtendedContext[option.Options](ctx, []byte(config))
++	if err != nil {
++		t.Fatal(err)
++	}
++	e.ctx = ctx
++	e.instance, err = box.New(box.Options{Context: ctx, Options: options})
++	if err != nil {
++		t.Fatal(err)
++	}
++	if err := e.instance.Start(); err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { e.instance.Close() })
++	go func() {
++		buffer := make([]byte, 65536)
++		for {
++			n, err := e.peer.Read(buffer)
++			if err != nil {
++				return
++			}
++			if n < 4+header.IPv4MinimumSize || binary.BigEndian.Uint32(buffer) != syscall.AF_INET {
++				continue
++			}
++			ip := header.IPv4(buffer[4:n])
++			if ip.TransportProtocol() == header.TCPProtocolNumber && ip.SourceAddress() == tcpip.AddrFrom4([4]byte{192, 0, 2, 10}) &&
++				header.TCP(ip.Payload()).Flags().Contains(header.TCPFlagRst) {
++				e.refused <- struct{}{}
++			}
++		}
++	}()
++	return e
++}
++
++// The fake address an app's own lookup of name gets, as the TUN's DNS hijack would pass it on.
++func (e *dnsWaitEngine) fake(name string) netip.Addr {
++	query := new(mDNS.Msg)
++	query.SetQuestion(name+".", mDNS.TypeA)
++	response, err := service.FromContext[adapter.DNSRouter](e.ctx).Exchange(e.ctx, query, adapter.DNSQueryOptions{})
++	if err == nil {
++		for _, answer := range response.Answer {
++			if a, isA := answer.(*mDNS.A); isA {
++				if address, _ := netip.AddrFromSlice(a.A.To4()); strings.HasPrefix(address.String(), "198.18.") {
++					return address
++				}
++			}
++		}
++	}
++	e.t.Fatalf("no fake address for %s: %v", name, err)
++	return netip.Addr{}
++}
++
++// One packet from the app side; a full socket buffer (a burst) is waited out.
++func (e *dnsWaitEngine) write(packet []byte) {
++	for attempt := 0; ; attempt++ {
++		_, err := e.peer.Write(packet)
++		if err == nil {
++			return
++		}
++		if !errors.Is(err, syscall.ENOBUFS) || attempt == 1000 {
++			e.t.Fatal(err)
++		}
++		time.Sleep(time.Millisecond)
++	}
++}
++
++// A new connection from the app side.
++func (e *dnsWaitEngine) connect(destination netip.AddrPort) {
++	e.next++
++	e.write(tcpSYN(netip.AddrPortFrom(netip.MustParseAddr("172.19.0.2"), e.next), destination))
++}
++
++// Waits up to 2 s for the given numbers of refusals and Direct connections.
++func (e *dnsWaitEngine) expect(while string, refusals, connections int) {
++	start := time.Now()
++	deadline := time.After(2 * time.Second)
++	for refusals > 0 || connections > 0 {
++		select {
++		case <-e.refused:
++			refusals--
++		case <-e.accepted:
++			connections--
++		case <-deadline:
++			e.t.Fatalf("%s, after %v: %d refusals and %d connections still missing", while, time.Since(start).Round(time.Millisecond), refusals, connections)
++		}
++	}
++	e.t.Logf("%s: went on in %v", while, time.Since(start).Round(time.Millisecond))
++}
++
++// A refused flow and a Direct one.
++func (e *dnsWaitEngine) others(while string) {
++	e.connect(netip.MustParseAddrPort("192.0.2.10:80"))
++	e.connect(netip.MustParseAddrPort("192.0.2.20:80"))
++	e.expect(while, 1, 1)
++}
++
++// A route whose DNS server never answers must not hold up flows it doesn't own: the refused and Direct flows go on
++// while another connection's lookup waits.
++func TestTunDNSWaitDoesNotStallOtherFlows(t *testing.T) {
++	e := newDNSWaitEngine(t)
++	e.others("with no lookup waiting")
++	e.connect(netip.AddrPortFrom(e.fake("app.slow.test"), 443))
++	time.Sleep(200 * time.Millisecond)
++	e.others("while a route's lookup waits")
++}
++
++// A route's resolver busy with many slow lookups still lets a connection whose name it already answered go on at
++// once; and after a network reset (as when an OpenVPN tunnel restarts its session) drops the cached answers, the cold
++// lookup that follows holds up only its own connection.
++func TestTunDNSWaitKeepsCachedAndResetFlowsMoving(t *testing.T) {
++	e := newDNSWaitEngine(t)
++	cached := netip.AddrPortFrom(e.fake("app.warm.test"), e.listener)
++	e.connect(cached)
++	e.expect("first connection to a name the route's resolver answers", 0, 1)
++	e.answering.Store(false) // from here the route's resolver is slow: it answers nothing new
++	for i := range 24 {
++		e.connect(netip.AddrPortFrom(e.fake(fmt.Sprintf("n%d.warm.test", i)), 443))
++		e.next++
++		e.write(udpDatagram(netip.AddrPortFrom(netip.MustParseAddr("172.19.0.2"), e.next),
++			netip.AddrPortFrom(e.fake(fmt.Sprintf("u%d.warm.test", i)), 443)))
++	}
++	time.Sleep(200 * time.Millisecond)
++	if waiting := e.unanswered.Load(); waiting < 8 { // the most a resolver group may have waiting at the TUN
++		t.Fatalf("only %d lookups are waiting on the route's resolver", waiting)
++	}
++	e.connect(cached)
++	t.Logf("%d lookups wait on the route's resolver", e.unanswered.Load())
++	e.expect("a cached name while its resolver has 48 slow connections", 0, 1)
++	e.others("other flows while that resolver is busy")
++	e.instance.Network().ResetNetwork(e.ctx)
++	before := e.unanswered.Load()
++	e.connect(cached) // its answer was dropped by the reset: this lookup waits on the silent resolver
++	time.Sleep(300 * time.Millisecond)
++	if e.unanswered.Load() == before || len(e.accepted) != 0 {
++		t.Fatal("after the reset the cached name should be looked up again, and wait")
++	}
++	e.others("other flows while a lookup after a network reset waits")
++}
