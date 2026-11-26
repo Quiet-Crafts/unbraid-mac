@@ -459,10 +459,20 @@ nonisolated extension Lifecycle {
 
     /// What a failed change puts in place of the rules it couldn't apply, in order and one attempt each; when none of
     /// them runs, the tunnel stops (`Connection.recover`). [blocking]: a deny-all runs: it is put back, built from the
-    /// setup as it is now. Otherwise the previous rules come back, and the deny-all only if they can't.
+    /// setup as it is now. A change that [restricts] someone compared with what runs (`LinkPicker.restricts`) gets
+    /// `restricting`. A speed test's own change ([testChange]) restricts nobody. Otherwise the previous rules come back,
+    /// and the deny-all only if they can't. [blockerFailed]: the first deny-all failed after it may have changed the
+    /// engine (`Connection.reblock`): only the steps after it are left, except that a deny-all already running is put
+    /// back once more, as before.
     static func recovery(blocking: Bool, restricts: Bool, testChange: Bool, blockerFailed: Bool = false) -> [Recovery] {
-        blocking ? [.denyAll] : [.previous, .denyAll]
+        let steps: [Recovery] = blocking ? [.denyAll] : restricts && !testChange ? restricting : [.previous, .denyAll]
+        return blockerFailed && !blocking ? Array(steps.dropFirst()) : steps
     }
+
+    /// A change that restricts someone: the deny-all first, since the previous rules would let the app just restricted
+    /// out by its old Direct rule; they come back only if it can't run, as they expose only that app while a stopped
+    /// tunnel would let every VPN app out.
+    static let restricting: [Recovery] = [.denyAll, .previous]
 
     /// A sign-out's erase still pending while a tunnel runs (a quit interrupted it): stop that tunnel and erase, leave it
     /// (another user's), or keep it running and ask again. Stopped only on the extension's word that it runs this user's

@@ -2243,7 +2243,7 @@ final class Connection {
         let failure = message(error, "Change not applied")
         // Compiling waits: a sign-out's erase requested meanwhile must not be consumed by restoring the old config.
         let request = eraseRequest
-        var reason = failure
+        var reason = failure, revoked = false
         for step in steps ?? Lifecycle.recovery(blocking: blocking, restricts: false, testChange: false) {
             do {
                 if step == .denyAll {
@@ -2268,6 +2268,8 @@ final class Connection {
                 input.tsLoginPending = input.tsLoginPending && tsLoginPending
                 let json = try await Self.compile(input).get()
                 guard g == generation else { return .off }
+                // A sign-out meanwhile (a partial one bumps no generation): a route holding its account never comes back.
+                if Lifecycle.revokes(running: input.setup, linked: Set(input.links.keys), applied: accounts, accounts: store.accounts) { revoked = true; continue }
                 // Never sealed again with accounts that were signed out or changed meanwhile, or never checked: it runs
                 // until the next change, and no longer.
                 let current = accounts.map { $0.allSatisfy { store.accounts[$0.key] == $0.value } } ?? false
@@ -2292,6 +2294,9 @@ final class Connection {
                 }
             }
         }
+        // Nothing left to try because an account was signed out meanwhile: stopped as a sign-out is, so Connect on Demand
+        // can't start the copy that holds it again.
+        if revoked { await teardown(error: Self.signedOut, revoke: true, g); return .off }
         await teardown(error: "Change failed and the previous connection could not be restored: \(reason)", g)
         return .off
     }
@@ -2346,8 +2351,7 @@ final class Connection {
         }
     }
 
-    private static let blocking = "unbraid couldn't put the previous connection back either, so apps that use a VPN are blocked until "
-        + "it can apply your setup. Disconnect to let them out without the VPN."
+    private static let blocking = "Apps that use a VPN are blocked until unbraid can apply your setup. Disconnect to let them out without the VPN."
 
     /// Records what the engine runs. [accounts]: those its links were made with; nil = not known.
     /// [blocking]: a deny-all (see `recover`). Its record isn't kept: the one of the configuration it stands in for still

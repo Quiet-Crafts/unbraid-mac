@@ -740,6 +740,80 @@ final class CompilerTests: XCTestCase {
         XCTAssertFalse(rules(try parse(Compiler.denyAll(input(s)))).contains { action($0) == "reject" && on($0, "com.x") })
     }
 
+    /// A change that restricts someone compared with what runs (an app or the default leaving Direct, for a VPN or a
+    /// route that can't run; a new Block; a website rule that sent it Direct removed, or a route where it had none or a
+    /// Direct one) and can't be applied: the deny-all of the setup as it is now first, since the rules that ran would let
+    /// those apps out; those rules only if it can't run, then the tunnel stops.
+    func testAFailedChangeThatRestrictsSomeoneBlocksFirst() throws {
+        func input(_ s: Setup) -> Compiler.Input {
+            Compiler.Input(setup: s, links: links(s), apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: "tail123.ts.net")
+        }
+        let s = example
+        var moved = s, missing = s, blocked = s, site = s, direct = s, directSite = s, child = s, vpnSite = s
+        moved.apps["com.x"] = "us"
+        missing.apps["com.x"] = "missing"
+        blocked.apps["com.x"] = BLOCK
+        site.sites["example.com"] = BLOCK
+        direct.defaultRoute = DIRECT
+        directSite.sites["example.com"] = DIRECT
+        child.sites = ["example.com": DIRECT, "sub.example.com": "us"]
+        vpnSite.defaultRoute = DIRECT
+        vpnSite.sites["example.com"] = "us"
+        for (old, wanted) in [(s, moved), (s, missing), (s, blocked), (s, site), (direct, s), (directSite, s), (directSite, child), (direct, vpnSite)] {
+            XCTAssertTrue(LinkPicker.restricts(from: old, to: wanted))
+        }
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: false), [.denyAll, .previous])
+        // What ran lets the app out direct; the deny-all put in its place refuses it, and the other Direct app still goes direct.
+        let running = try Compiler.compile(input(s))
+        XCTAssertFalse(rules(try parse(running)).contains { action($0) == "reject" && on($0, "com.x") })
+        for wanted in [moved, blocked] {
+            let fresh = try Compiler.denyAll(input(wanted))
+            XCTAssertTrue(Lifecycle.reblock(blocking: true, held: false, running: (running, "tail123.ts.net"), fresh: (fresh, "tail123.ts.net")))
+            XCTAssertTrue(rules(try parse(fresh)).contains { action($0) == "reject" && on($0, "com.x") })
+            XCTAssertTrue(rules(try parse(fresh)).contains { outbound($0) == "direct" && on($0, "com.y") })
+        }
+    }
+
+    /// A restricting change's deny-all that failed after it may have changed the engine is not tried again: the previous
+    /// rules once, then the tunnel stops. A deny-all that was already running is put back once more, as before.
+    func testABlockerForARestrictingChangeIsTriedOnce() {
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: false, blockerFailed: true), [.previous])
+        for restricts in [false, true] {
+            XCTAssertEqual(Lifecycle.recovery(blocking: true, restricts: restricts, testChange: false, blockerFailed: true), [.denyAll])
+        }
+    }
+
+    /// A failed change that restricts nobody (a Block or website Block removed, a favourite, a move between VPN routes,
+    /// a VPN website rule removed under a Direct default, the default back to Direct) keeps the previous rules first, as
+    /// does a speed test's own change; a deny-all that runs is put back as one.
+    func testAFailedChangeThatRestrictsNobodyKeepsThePreviousRules() {
+        let s = example
+        var blocked = s, site = s, favourite = s, vpnMove = s, vpnDefault = s, siteUs = s, siteIt = s, direct = s
+        blocked.apps["com.x"] = BLOCK
+        site.sites["example.com"] = BLOCK
+        favourite.favorites = []
+        vpnMove.apps["com.a"] = "it"
+        vpnDefault.defaultRoute = "us"
+        siteUs.sites["example.com"] = "us"
+        siteIt.sites["example.com"] = "it"
+        direct.defaultRoute = DIRECT
+        direct.apps["com.x"] = BLOCK
+        var directVpnSite = direct
+        directVpnSite.sites["example.com"] = "us"
+        // Removing a website's Block still takes the interim path, but restricts nobody.
+        XCTAssertTrue(LinkPicker.needsInterim(from: site, to: s))
+        for (old, wanted) in [(blocked, s), (site, s), (s, favourite), (s, vpnMove), (s, vpnDefault), (siteUs, siteIt), (directVpnSite, direct), (blocked, direct)] {
+            XCTAssertFalse(LinkPicker.restricts(from: old, to: wanted))
+        }
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: false, testChange: false), [.previous, .denyAll])
+        XCTAssertEqual(Lifecycle.recovery(blocking: false, restricts: true, testChange: true), [.previous, .denyAll])
+        for restricts in [false, true] {
+            for testChange in [false, true] {
+                XCTAssertEqual(Lifecycle.recovery(blocking: true, restricts: restricts, testChange: testChange), [.denyAll])
+            }
+        }
+    }
+
     /// A pause and a deny-all run without the home, but keep the tailnet's search domain while the user's setup has a
     /// Tailscale home: short tailnet names expand to it and are refused, not asked of the local network.
     func testAPauseKeepsTheTailnetsSearchDomain() throws {

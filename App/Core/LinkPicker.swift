@@ -109,17 +109,22 @@ nonisolated enum LinkPicker {
     }
 
     /// The change takes away something the rules running for [old] still allow: an app or the default leaving Direct
-    /// for a VPN route, a new Block for an app, a website or the default, or a website leaving Direct (or its app's way)
-    /// for a VPN route. The rules that ran would let that traffic out without the VPN (`Lifecycle.recovery`). A move
+    /// (for a VPN route, a Block, or a route that can't run), a new Block, or a website rule that sent it Direct
+    /// removed, or a route given to a website that had no rule or went Direct. The rules that ran would let that traffic
+    /// out without the VPN (`Lifecycle.recovery`). Websites by their own rules only, erring toward restricting. A move
     /// between VPN routes, a Block removed or a favourite restricts nobody.
     static func restricts(from old: Setup, to new: Setup) -> Bool {
-        let routes = Set(new.activeRoutes.map(\.id))
         func restricted(_ before: String, _ after: String) -> Bool {
-            (before == DIRECT && routes.contains(after)) || (before != BLOCK && after == BLOCK)
+            (before == DIRECT && after != DIRECT) || (before != BLOCK && after == BLOCK)
+        }
+        func site(_ o: String?, _ n: String?) -> Bool {
+            guard o != n else { return false }
+            guard let n else { return o == DIRECT }
+            return n != DIRECT && (n == BLOCK || o == nil || o == DIRECT)
         }
         return restricted(old.defaultRoute, new.defaultRoute)
             || Set(old.apps.keys).union(new.apps.keys).contains { restricted(old.routeOf($0), new.routeOf($0)) }
-            || new.sites.contains { restricted(old.sites[$0.key] ?? DIRECT, $0.value) }
+            || Set(old.sites.keys).union(new.sites.keys).contains { site(old.sites[$0], new.sites[$0]) }
     }
 
     /// A route restored without its keys, or one given an own server still waiting for its config however it got there:
