@@ -108,6 +108,20 @@ nonisolated enum LinkPicker {
                 && new.activeRoutes.contains { !$0.imported && $0.loc.provider == "ivpn" }
     }
 
+    /// The change takes away something the rules running for [old] still allow: an app or the default leaving Direct
+    /// for a VPN route, a new Block for an app, a website or the default, or a website leaving Direct (or its app's way)
+    /// for a VPN route. The rules that ran would let that traffic out without the VPN (`Lifecycle.recovery`). A move
+    /// between VPN routes, a Block removed or a favourite restricts nobody.
+    static func restricts(from old: Setup, to new: Setup) -> Bool {
+        let routes = Set(new.activeRoutes.map(\.id))
+        func restricted(_ before: String, _ after: String) -> Bool {
+            (before == DIRECT && routes.contains(after)) || (before != BLOCK && after == BLOCK)
+        }
+        return restricted(old.defaultRoute, new.defaultRoute)
+            || Set(old.apps.keys).union(new.apps.keys).contains { restricted(old.routeOf($0), new.routeOf($0)) }
+            || new.sites.contains { restricted(old.sites[$0.key] ?? DIRECT, $0.value) }
+    }
+
     /// A route restored without its keys, or one given an own server still waiting for its config however it got there:
     /// it has no tunnel to run, and its traffic is refused rather than sent anywhere else.
     static func keyLeftOut(_ r: Route, in setup: Setup) -> Bool {

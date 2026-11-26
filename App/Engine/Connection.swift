@@ -1410,7 +1410,8 @@ final class Connection {
                                     state.retryAt = routeRetry.dates
                                 }
                                 let shown = state.error
-                                let recovered = await recover(recovery.input, recovery.accounts, blocking: recovery.blocking, interim: recovery.interim, error: error, g)
+                                let steps = Lifecycle.recovery(blocking: recovery.blocking, restricts: LinkPicker.restricts(from: recovery.input.setup, to: s), testChange: testChange)
+                                let recovered = await recover(recovery.input, recovery.accounts, blocking: recovery.blocking, steps: steps, interim: recovery.interim, error: error, g)
                                 guard g == generation, state.phase == .on else { return }
                                 // Everything blocked is never quiet: whoever asked, it is said.
                                 if !testChange && !fallback && (recovered == .restored || recovered == .blocking) { recordRun { $0.refused(revision: RunState.revision(wanted.setup), setup: wanted.setup) } }
@@ -1464,7 +1465,7 @@ final class Connection {
                         var reblocked: Recovered?
                         let shown = state.error
                         if !TunnelControl.foreign(error) {
-                            reblocked = await reblock(recovery, error, g)
+                            reblocked = await reblock(recovery, restricts: LinkPicker.restricts(from: recovery.input.setup, to: s), testChange: testChange, error, g)
                             guard reblocked != .off, g == generation, state.phase == .on, revision() == wanted else { return }
                         }
                         if testChange { state.error = shown }
@@ -2233,66 +2234,66 @@ final class Connection {
     /// Recovery is part of the same transaction and must finish even if its caller was cancelled, but not once a newer
     /// operation (a Disconnect) took over. [accounts]: those [old] was built with; nil = not known. [blocking]: [old] is
     /// a deny-all, put back as one.
-    /// When the old configuration can't be restored either, apps that would use a VPN are blocked (`Compiler.denyAll`)
-    /// rather than let out without one, and the setup is tried again as any failed change is; only if that fails too does
-    /// the tunnel stop.
+    /// [steps] (`Lifecycle.recovery`), one attempt each: the old configuration restored, or apps that would use a VPN
+    /// blocked (`Compiler.denyAll`) rather than let out without one, and the setup tried again as any failed change is;
+    /// only if none runs does the tunnel stop.
     @discardableResult
-    private func recover(_ old: Compiler.Input?, _ accounts: [String: String]?, blocking: Bool = false, interim: Bool = false, error: Error, _ g: Int) async -> Recovered {
+    private func recover(_ old: Compiler.Input?, _ accounts: [String: String]?, blocking: Bool = false, steps: [Lifecycle.Recovery]? = nil,
+                         interim: Bool = false, error: Error, _ g: Int) async -> Recovered {
         let failure = message(error, "Change not applied")
         // Compiling waits: a sign-out's erase requested meanwhile must not be consumed by restoring the old config.
         let request = eraseRequest
-        do {
-            guard var input = old else { throw Fail("No previous configuration") }
-            // A deny-all put back is built from the setup as it is now: an app moved from Direct to a VPN route since the
-            // last one is blocked too. From what ran only while the keychain won't open the setup.
-            if blocking { return try await block(store.setupStandIn ? input : makeInput(store.setup, [:], probe: nil), failure, request, g) }
-            if !input.setup.testing.isEmpty {
-                input.setup.testing = []
-                let active = Set(input.setup.activeRoutes.map(\.id))
-                input.links = input.links.filter { active.contains($0.key) }
-                input.blocked = input.blocked.intersection(active)
-            }
-            input.probe = newProbe()
-            input.tsLoginPending = input.tsLoginPending && tsLoginPending
-            let json = try await Self.compile(input).get()
-            guard g == generation else { return .off }
-            // Never sealed again with accounts that were signed out or changed meanwhile, or never checked: it runs until
-            // the next change, and no longer.
-            let current = accounts.map { $0.allSatisfy { store.accounts[$0.key] == $0.value } } ?? false
-            try await Task { try await self.apply(input, json, g, persist: current, since: request) }.value
-            commit(input, json, accounts, interim: interim)
-            guard g == generation else { return .restored }
-            state.phase = .on
-            state.servers = input.links.mapValues(\.server)
-            syncAutoTcp()
-            state.error = failure
-            armRouteRetry()
-            watchTailscale()
-            return .restored
-        } catch {
-            guard g == generation else { return .off }
-            var reason = message(error, failure)
-            // Another user's engine runs now: theirs, never stopped from here (the stop's own check gives up after seconds).
-            if TunnelControl.foreign(error) {
-                await teardown(error: reason, stop: false, g)
-                return .off
-            }
-            // Another user's engine runs now: nothing of this user's to block, nor to stop. Built from the setup as it is
-            // now (which apps go direct), never from stand-ins for one the keychain won't open. A deny-all that failed to
-            // go back was built the same way: not tried twice.
-            if !blocking, !TunnelControl.foreign(error), !store.setupStandIn {
-                do { return try await block(makeInput(store.setup, [:], probe: nil), failure, request, g) } catch {
-                    guard g == generation else { return .off }
-                    reason = message(error, "Could not block VPN apps")
-                    if TunnelControl.foreign(error) {
-                        await teardown(error: reason, stop: false, g)
-                        return .off
+        var reason = failure
+        for step in steps ?? Lifecycle.recovery(blocking: blocking, restricts: false, testChange: false) {
+            do {
+                if step == .denyAll {
+                    // A deny-all put back is built from the setup as it is now: an app moved from Direct to a VPN route
+                    // since the last one is blocked too. From what ran only while the keychain won't open the setup.
+                    if blocking {
+                        guard let input = old else { throw Fail("No previous configuration") }
+                        return try await block(store.setupStandIn ? input : makeInput(store.setup, [:], probe: nil), failure, request, g)
                     }
+                    // Otherwise never from stand-ins for a setup the keychain won't open.
+                    guard !store.setupStandIn else { continue }
+                    return try await block(makeInput(store.setup, [:], probe: nil), failure, request, g)
+                }
+                guard var input = old else { throw Fail("No previous configuration") }
+                if !input.setup.testing.isEmpty {
+                    input.setup.testing = []
+                    let active = Set(input.setup.activeRoutes.map(\.id))
+                    input.links = input.links.filter { active.contains($0.key) }
+                    input.blocked = input.blocked.intersection(active)
+                }
+                input.probe = newProbe()
+                input.tsLoginPending = input.tsLoginPending && tsLoginPending
+                let json = try await Self.compile(input).get()
+                guard g == generation else { return .off }
+                // Never sealed again with accounts that were signed out or changed meanwhile, or never checked: it runs
+                // until the next change, and no longer.
+                let current = accounts.map { $0.allSatisfy { store.accounts[$0.key] == $0.value } } ?? false
+                try await Task { try await self.apply(input, json, g, persist: current, since: request) }.value
+                commit(input, json, accounts, interim: interim)
+                guard g == generation else { return .restored }
+                state.phase = .on
+                state.servers = input.links.mapValues(\.server)
+                syncAutoTcp()
+                state.error = failure
+                armRouteRetry()
+                watchTailscale()
+                return .restored
+            } catch {
+                guard g == generation else { return .off }
+                reason = step == .denyAll && !blocking ? message(error, "Could not block VPN apps") : message(error, failure)
+                // Another user's engine runs now: theirs, never stopped from here (the stop's own check gives up after
+                // seconds), and nothing of this user's to block.
+                if TunnelControl.foreign(error) {
+                    await teardown(error: reason, stop: false, g)
+                    return .off
                 }
             }
-            await teardown(error: "Change failed and the previous connection could not be restored: \(reason)", g)
-            return .off
         }
+        await teardown(error: "Change failed and the previous connection could not be restored: \(reason)", g)
+        return .off
     }
 
     /// Runs the deny-all of [input] in place of what failed (part of `recover`). Not sealed: Connect on Demand keeps
@@ -2322,14 +2323,16 @@ final class Connection {
         return .blocking
     }
 
-    /// While a deny-all runs (`recover`) and a change can't be applied: the deny-all of the setup as it is now, when it
-    /// differs from the one that runs (`Lifecycle.reblock`). Refused before anything changed: the one that runs stays. Any
-    /// other failure is recovered from as a failed change is (a deny-all again, or the tunnel stops). Inside `exclusive`.
-    private func reblock(_ old: Committed, _ error: Error, _ g: Int) async -> Recovered? {
+    /// A change that can't be applied, with nothing changed in the engine: when its recovery starts with the deny-all
+    /// (`Lifecycle.recovery`: one runs, or the change restricts someone), the deny-all of the setup as it is now, when it
+    /// differs from what runs (`Lifecycle.reblock`). Refused before anything changed: what runs stays. Any other failure
+    /// goes on with the steps left (the tunnel stops when there are none). Inside `exclusive`.
+    private func reblock(_ old: Committed, restricts: Bool, testChange: Bool, _ error: Error, _ g: Int) async -> Recovered? {
+        let deny = Lifecycle.recovery(blocking: old.blocking, restricts: restricts, testChange: testChange).first == .denyAll
         let input = makeInput(store.setup, [:], probe: nil)
-        let fresh = old.blocking && !store.setupStandIn
+        let fresh = deny && !store.setupStandIn
             ? (try? Compiler.denyAll(input)).map { (json: $0, search: search(Compiler.denyAllInput(input))) } : nil
-        guard Lifecycle.reblock(blocking: old.blocking, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh) else { return nil }
+        guard Lifecycle.reblock(blocking: deny, held: store.setupStandIn, running: (old.json, old.search), fresh: fresh) else { return nil }
         do { return try await block(input, message(error, "Change not applied"), eraseRequest, g) }
         catch is CancellationError { return nil }
         catch let e where e is TunnelControl.Unstaged || TunnelControl.foreign(e) {
@@ -2338,7 +2341,8 @@ final class Connection {
             return nil
         } catch {
             guard g == generation else { return .off }
-            return await recover(old.input, old.accounts, blocking: true, error: error, g)
+            let left = Lifecycle.recovery(blocking: old.blocking, restricts: restricts, testChange: testChange, blockerFailed: true)
+            return await recover(old.input, old.accounts, blocking: old.blocking, steps: left, interim: old.interim, error: error, g)
         }
     }
 
