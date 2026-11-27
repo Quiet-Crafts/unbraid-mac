@@ -98,7 +98,7 @@ struct MenuBarPanel: View {
                     HStack(spacing: 8) {
                         Slash(color: s.color(id)).frame(width: Measure.slashColumn)
                         Text(s.label(id)).lineLimit(1)
-                        if v.phase == .on, let server = v.servers[id], let line = s.route(id)?.serverLine(server) {
+                        if v.phase == .on, let server = v.servers[id], let line = s.route(id)?.serverLine(server), !s.label(id).hasSuffix(" · \(line)") {
                             Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.dim).lineLimit(1)
                         }
                         if let reason = v.blocked[id] {

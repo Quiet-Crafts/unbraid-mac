@@ -274,6 +274,18 @@ final class SetupImportTests: XCTestCase {
         XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1").nameDetail, "Tailscale exit")
     }
 
+    /// Only a real IPv6 address goes in brackets, and an OpenVPN route's server, which is its profile's name, is never
+    /// shown as an address.
+    func testOnlyAnAddressIsShownAsOne() throws {
+        let server = { (host: String) in Server(name: "x", host: host, ip: "", publicKey: "", load: 0) }
+        XCTAssertEqual(Route(id: "w", wg: wg).serverLine(server("not:an:address")), "not:an:address")
+        XCTAssertEqual(Route(id: "w", wg: wg).serverLine(server("2001:db8::1")), "[2001:db8::1]")
+        let o = try ovpn()
+        XCTAssertNil(Route(id: "o", ovpn: o).serverLine(server("Office: VPN")))
+        XCTAssertNil(Route(id: "o", ovpn: o).serverLine(server("vpn.example.net")))
+        XCTAssertEqual(Route(id: "o", ovpn: o).nameDetail, "OpenVPN")
+    }
+
     /// What menus call two routes of one name, as the sidebar, Move To and the menu bar show them.
     func testRoutesOfOneNameAreToldApartInEveryMenu() {
         var alpha = wg, beta = wg

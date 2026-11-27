@@ -114,8 +114,11 @@ nonisolated enum RestoreTraffic {
             if s.viaProblem(r) != nil || (!r.viaNative && r.via.map { links[$0] == nil } == true) { links[r.id] = nil; blocked.insert(r.id) }
             else if r.viaNative, case .wg(let sv, var p, let ports, let entries)? = links[r.id] { p.hopEntry = "192.0.2.1"; links[r.id] = .wg(sv, p, ports: ports, entries: entries) }
         }
-        let input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
+        var input = Compiler.Input(setup: s, links: links, blocked: blocked, apps: apps, selfPattern: selfPattern,
                                    tsSuffix: s.tailscale ? Compiler.trustedStoredSuffix(s.home) : nil, ownerless: .refusedWhileSplit)
+        // A proxy route with a login that doesn't wait for its password runs, as it will: a made-up password stands in
+        // for each, only for this check. It is never stored, shown or sent anywhere.
+        input.socks5 = Dictionary(s.routes.compactMap { r in r.socks5.flatMap { !r.keyless && $0.username != nil ? ($0.item, "x") : nil } }) { a, _ in a }
         guard let text = try? Compiler.compile(input), let o = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any],
               let route = o["route"] as? [String: Any], let rules = route["rules"] as? [[String: Any]], let final = route["final"] as? String,
               let dns = o["dns"] as? [String: Any] else { return nil }

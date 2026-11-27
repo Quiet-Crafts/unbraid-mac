@@ -1595,6 +1595,29 @@ extension BackupTests {
         }
     }
 
+    /// An app blocked here that the backup puts on a proxy route that will run is named: a route with its password in
+    /// the backup, and one taking this Mac's.
+    func testThePreviewNamesABlockedAppThatAWorkingProxyRouteCarries() throws {
+        let unblocked = "1 app that is blocked now won't be."
+        let backup = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": "p1"])
+        let keyed = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
+        let blocking = Setup(routes: [nl()], defaultRoute: "nl", apps: ["org.example.p": BLOCK])
+        XCTAssertTrue(Backup.plan(onto: blocking, from: keyed, keepPrevious: false, now: .now, held: []).weakens.contains(unblocked))
+        let keyless = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: false))
+        let here = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": BLOCK])
+        XCTAssertTrue(Backup.plan(onto: here, from: keyless, keepPrevious: false, now: .now, held: [Self.proxyItem]).weakens.contains(unblocked))
+    }
+
+    /// A proxy route that will still wait for its password carries nothing, so the preview names nothing for it.
+    func testThePreviewNamesNothingForAProxyRouteThatStillWaits() throws {
+        let backup = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": "p1"])
+        let keyless = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: false))
+        let here = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": BLOCK])
+        let plan = Backup.plan(onto: here, from: keyless, keepPrevious: false, now: .now, held: [])
+        XCTAssertEqual(plan.setup.route("p1")?.keyless, true)
+        XCTAssertFalse(plan.weakens.contains { $0.contains("1 app") })
+    }
+
     /// A password the keychain refuses for a route that brings its own (not this Mac's) leaves that route waiting.
     func testARefusedPasswordOfAProxyRouteNotTakenOverLeavesItWaiting() throws {
         let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))

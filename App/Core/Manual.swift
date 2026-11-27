@@ -813,9 +813,10 @@ nonisolated extension Route {
 
     /// The server [s] this route runs on, as the route's header and the menu bar name it: its name and, where the
     /// provider publishes it, its load ("nl1256 · 9% load"). For an imported route the address it reaches, never a load,
-    /// and nothing where that is empty or its name already.
+    /// and nothing where that is empty or its name already. None for an OpenVPN route: its server is its profile's name.
     func serverLine(_ s: Server) -> String? {
         if imported {
+            guard ovpn == nil else { return nil }
             let address = socks5?.endpoint ?? Self.shown(s.host)
             return address.isEmpty || address == self.name ? nil : address
         }
@@ -823,10 +824,11 @@ nonisolated extension Route {
         return [name, s.load >= 0 && Providers.get(loc.provider)?.hasLoad == true ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · ")
     }
 
-    /// A host as a label shows it: an IPv6 address in brackets, once.
+    /// A host as a label shows it: an IPv6 address in brackets, once; anything else as it is.
     private static func shown(_ host: String) -> String {
         let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
-        return bare.contains(":") ? "[\(bare)]" : bare
+        var v6 = in6_addr()
+        return inet_pton(AF_INET6, bare, &v6) == 1 ? "[\(bare)]" : host
     }
 }
 
