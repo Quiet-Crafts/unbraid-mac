@@ -1399,7 +1399,8 @@ extension BackupTests {
         for (change, why) in [({ (r: inout Route) in r.socks5?.host = "proxy example" }, "host"), ({ $0.socks5?.port = 70000 }, "port"),
                               ({ $0.socks5?.username = "" }, "empty username"), ({ $0.socks5?.item = "x" }, "item"), ({ $0.socks5?.name = " " }, "name"),
                               ({ $0.own = "s1" }, "own server"), ({ $0.ss = SsProfile(name: "x", server: "203.0.113.5", port: 1, method: "aes-256-gcm", password: "p") }, "two exits"),
-                              ({ $0.socks5?.username = nil; $0.keyless = true }, "waits for a password it doesn't have")] as [((inout Route) -> Void, String)] {
+                              ({ $0.socks5?.username = nil; $0.keyless = true }, "waits for a password it doesn't have"),
+                              ({ $0.socks5?.proxyApp = "" }, "an empty proxy program")] as [((inout Route) -> Void, String)] {
             var s = withProxy()
             change(&s.routes[s.routes.count - 1])
             XCTAssertFalse(refused(s).isEmpty, why)

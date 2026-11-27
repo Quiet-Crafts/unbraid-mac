@@ -105,8 +105,8 @@ final class PromisesTests: XCTestCase {
                     links["iw"] = .wg(sv, peer, ports: ports, entries: entries)
                 }
             }
-            // A proxy server, sometimes, with an app or the default on it: refused while the caller gives no passwords (the
-            // app gives none yet) or its login's isn't there. The extension doesn't take one that runs yet (P6).
+            // A proxy server, sometimes, with an app or the default on it: run with its password (or none, without a login),
+            // or refused while the caller gives no passwords or its login's isn't there.
             var passwords: [String: String]? = nil, proxy = "-"
             if next(3) == 0 {
                 let login = coin(), item = "6B1F3C2A-0D4E-4F5A-8B9C-1D2E3F4A5B6C"
@@ -114,7 +114,11 @@ final class PromisesTests: XCTestCase {
                 s.routes.append(px)
                 links["px"] = LinkPicker.imported(px)
                 if coin() { s.apps[appKeys[next(appKeys.count)]] = "px" } else { s.defaultRoute = "px" }
-                if login && coin() { passwords = ["another-item": "proxy-password"]; proxy = "password missing" } else { proxy = "no passwords" }
+                switch next(3) {
+                case 0: proxy = "no passwords"
+                case 1 where login: passwords = ["another-item": "proxy-password"]; proxy = "password missing"
+                default: passwords = [item: "proxy-password"]; proxy = login ? "login" : "no login"
+                }
             }
             var input = Compiler.Input(setup: s, links: links, blocked: blockedNow, apps: installed, remembered: remembered,
                                        selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: s.tailscale ? s.home.tsSuffix : nil,
@@ -169,6 +173,10 @@ final class PromisesTests: XCTestCase {
             "tsSuffix": "gen", "probe": "gen (its own path: batch 2)", "ownerless": "gen", "tsLoginPending": "gen (sign-in hosts walk: batch 2)",
             "portStep": "ports step: batch 4", "siteDomain": "gen (and the named case below)", "socks5": "gen",
         ],
+        "Socks5Profile": [
+            "name": "gen", "host": "gen", "port": "gen", "username": "gen", "item": "gen",
+            "proxyApp": "a proxy on this Mac: CompilerTests.testALocalDefaultProxyKeepsItsOwnProgramDirect",
+        ],
         "Location": [
             "provider": "gen (Nord, IVPN)", "countryId": "gen", "countryCode": "gen", "country": "gen",
             "cityId": "server choice: batch 4", "city": "server choice: batch 4", "region": "server choice: batch 4",
@@ -184,7 +192,8 @@ final class PromisesTests: XCTestCase {
     func testEverySettingIsGeneratedOrSaysWhyNot() {
         let input = Compiler.Input(setup: Setup(), links: [:], apps: [:], selfPattern: "", tsSuffix: nil)
         let actual = ["Setup": Self.stored(Setup()), "Prefs": Self.stored(Prefs()), "Home": Self.stored(Home()),
-                      "Route": Self.stored(Route(id: "x")), "Input": Self.stored(input), "Location": Self.stored(Location())]
+                      "Route": Self.stored(Route(id: "x")), "Input": Self.stored(input), "Location": Self.stored(Location()),
+                      "Socks5Profile": Self.stored(Socks5Profile(name: "", host: "", port: 0, item: ""))]
         for (type, names) in actual {
             let listed = Set(Self.fields[type, default: [:]].keys)
             XCTAssertEqual(names.subtracting(listed).sorted(), [], "\(type): fields the promises' generator doesn't know; generate them or say why not")
@@ -242,9 +251,10 @@ final class PromisesTests: XCTestCase {
             let config: String
             do { config = try Compiler.compile(given) } catch { refusals.append("\(c.label): \(error)"); continue }
             let denyConfig = try Compiler.denyAll(given)
-            // Refused besides the routes without a tunnel: every generated proxy route, as none is given its password.
+            // Refused besides the routes without a tunnel: a proxy route the caller gives no passwords, or whose login's
+            // password isn't given.
             var i = given
-            i.blocked.formUnion(s.routes.filter { $0.socks5 != nil }.map(\.id))
+            i.blocked.formUnion(s.routes.filter { r in r.socks5.map { x in given.socks5.map { x.username != nil && $0[x.item] == nil } ?? true } ?? false }.map(\.id))
             let shared = try Compiler.shared(s, LinkPicker.ported(s, i.links, step: [:]), blocked: i.blocked, tailnet: i.websiteDomain)
             let w = Walked(c: c, walk: try EngineWalk(config), deny: try EngineWalk(denyConfig), config: config, denyConfig: denyConfig, shared: shared)
             let applied = Sites.applied(s, tailnet: i.websiteDomain)
@@ -284,6 +294,7 @@ final class PromisesTests: XCTestCase {
                             // exit route); never Direct, never another route, never refused while the tunnel is there.
                             XCTAssertTrue(exits(normal, w.tag(route)), "P1 \(ctx): \(normal), wanted \(w.tag(route))")
                             count(s.route(route)?.tsExit != nil ? "app:tx" : "app:vpn")
+                            if s.route(route)?.socks5 != nil { count("app:proxy") }
                         }
                         // P5 A failed change leaks nothing: an app on a VPN route is refused.
                         XCTAssertEqual(denied, "reject", "P5 \(ctx)")
@@ -393,7 +404,7 @@ final class PromisesTests: XCTestCase {
         for k in ["default:direct", "default:vpn", "default:tx", "default:blocked", "tunnel:shared", "sites:applied", "app:block",
                   "app:direct", "app:vpn", "app:tx", "app:route-without-tunnel", "site:followed", "ownerless:refused:refusedWhileBlocking",
                   "ownerless:refused:refusedWhileSplit", "ownerless:split-only", "ownerless:vpn-default-split", "ownerless:default", "disguise:on", "domain:given",
-                  "app:proxy-refused"] {
+                  "app:proxy", "app:proxy-refused"] {
             XCTAssertGreaterThanOrEqual(seen[k, default: 0], 5, "coverage: \(k) came up in \(seen[k, default: 0]) setups")
         }
         XCTAssertEqual(refusals, [], "compiles refused")

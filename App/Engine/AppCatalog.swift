@@ -216,7 +216,8 @@ final class AppCatalog {
     /// The apps whose patterns the compiler needs for [setup]: those it routes, and those listed here on the default route
     /// inside the bundle of one routed elsewhere, which get a rule of their own (`Compiler.nestedDefaults`).
     func routingKeys(_ setup: Setup) -> [String] {
-        let routed = Array(setup.apps.keys)
+        // A proxy's own program too: it is kept Direct (`Compiler.gated`).
+        let routed = Array(Set(setup.apps.keys).union(setup.routes.compactMap { $0.socks5?.proxyApp }))
         // Only an app with a copy inside another bundle can be nested: few, found by the scan, so only theirs are worked out.
         let inner = nesting.candidates(setup).filter { index[$0]?.missing != true }
         guard !inner.isEmpty else { return routed }

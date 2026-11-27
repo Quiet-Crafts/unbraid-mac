@@ -98,19 +98,29 @@ nonisolated enum Compiler {
         }
     }
 
-    static func compile(_ input: Input) throws -> String {
-        var i = input
-        i.links = LinkPicker.ported(i.setup, i.links, step: i.portStep)
-        i.blocked.formUnion(waitingProxies(i))
-        return try build(i).string
-    }
+    static func compile(_ input: Input) throws -> String { try build(gated(input)).string }
 
     /// The resolver used by each health-checked exit.
-    static func probeDNS(_ input: Input) throws -> [String: String] {
+    static func probeDNS(_ input: Input) throws -> [String: String] { try Plan(gated(input)).probeTags }
+
+    /// What a start with no app open runs in place of [i]'s config when that one can't be sealed as it is: one waiting
+    /// for a Tailscale sign-in, or one running a proxy server, whose password never leaves the app (its proxy routes are
+    /// refused there). Nil: [i]'s own config is sealed.
+    static func unattended(_ i: Input) -> Input? {
+        guard i.tsLoginPending || (i.socks5 != nil && i.setup.routes.contains { $0.socks5 != nil }) else { return nil }
+        var u = i
+        u.tsLoginPending = false; u.socks5 = nil
+        return u
+    }
+
+    /// [input] as it is built: port steps applied, proxy routes that can't run refused, and each running proxy's own
+    /// program Direct, so its traffic never comes back into the proxy.
+    static func gated(_ input: Input) -> Input {
         var i = input
         i.links = LinkPicker.ported(i.setup, i.links, step: i.portStep)
         i.blocked.formUnion(waitingProxies(i))
-        return try Plan(i).probeTags
+        for r in i.setup.activeRoutes where !i.blocked.contains(r.id) { if let app = r.socks5?.proxyApp { i.setup.apps[app] = DIRECT } }
+        return i
     }
 
     /// The proxy routes that can't run now, refused like a route without a tunnel (never sent another way): all of them
@@ -120,8 +130,16 @@ nonisolated enum Compiler {
         Set(i.setup.routes.filter { r in
             guard let x = r.socks5 else { return false }
             guard let passwords = i.socks5, x.valid, !r.keyless else { return true }
+            // On this Mac as the default, its own program must be known and found: the default would carry its traffic.
+            if r.id == i.setup.defaultRoute, x.onThisMac, x.proxyApp.flatMap({ i.apps[$0] })?.isEmpty != false { return true }
             return x.username != nil && passwords[x.item] == nil
         }.map(\.id))
+    }
+
+    /// The rule that sends a proxy's own address and port Direct: by address, or by name for one given by name.
+    static func proxyGuard(_ x: Socks5Profile) -> J {
+        let ip = FilterServer.ipv4(x.host) ? "\(x.host)/32" : x.host.contains(":") ? "\(x.host)/128" : nil
+        return .o([ip == nil ? "domain" : "ip_cidr": .a([.s(ip ?? x.host)]), "port": .a([.i(x.port)]), "outbound": "direct"])
     }
 
     /// A proxy server as the engine dials it: SOCKS version 5, with its login when it has one.
@@ -348,6 +366,7 @@ nonisolated enum Compiler {
         }
         func dns(_ id: String) -> String { Self.dns(id, s, shared, i.links) }
         func onTs(_ id: String) -> Bool { s.route(id)?.tsExit != nil }
+        func proxied(_ id: String) -> Bool { s.route(id)?.socks5 != nil }
         var homeTs: Bool { s.home.tailscale }
         /// A website's traffic is refused: Block, a route without a tunnel right now, or one the setup no longer has
         /// (never sent to its app's route or the default instead).
@@ -426,6 +445,11 @@ nonisolated enum Compiler {
         }
         rules += p.blocked.map { ["process_path_regex": $0, "action": "reject"] }
         if let refuse = p.othersRefused { rules.append(refuse) }
+        // A proxy route that can't run refuses its apps on the local and home networks too: they are refused, not let
+        // out there. A Direct website rule the user made still sends that website Direct (its rule, below).
+        for (id, match) in p.perApp where p.i.blocked.contains(id) && s.route(id)?.socks5 != nil {
+            rules.append(["process_path_regex": match, "ip_cidr": J.strings(lan + lan6 + p.home + (p.homeTs ? [tailnet] : [])), "action": "reject"])
+        }
         rules += [
             ["protocol": "dns", "action": "hijack-dns"],
             // UDP only: the engine never completes a hijacked TCP connection, and apps test "am I online?" with TCP to
@@ -440,7 +464,12 @@ nonisolated enum Compiler {
                 rules.append(["inbound": .s(probeTag), "auth_user": [.s(t)], "outbound": .s(t)])
             }
         }
+        // A running proxy's own address and port go Direct, whoever connects: never into that proxy itself.
+        for r in p.active { if let x = r.socks5 { rules.append(proxyGuard(x)) } }
         rules.append(["process_path_regex": [.s(p.i.selfPattern)], "outbound": "direct"])
+        // A running proxy's own program goes Direct before any website rule could send it into that proxy.
+        let proxyApps = p.active.compactMap(\.socks5?.proxyApp).flatMap { p.i.apps[$0] ?? [] }
+        if !proxyApps.isEmpty { rules.append(["process_path_regex": J.strings(proxyApps), "outbound": "direct"]) }
         rules += network
         // Connections with no program to match (see `Ownerless`): TCP and UDP only, as one rule (an `invert` beside
         // `network` would turn both around and catch ping too).
@@ -458,6 +487,8 @@ nonisolated enum Compiler {
         // what is left, and leaves through the route's `final`.
         func wayOut(_ id: String, _ match: J?, dns: String) {
             func rule(_ fields: [String: J]) -> J { var r = fields; r["process_path_regex"] = match; return .o(r) }
+            // A proxy server is given the name itself (a stand-in address comes back as its name): it looks it up.
+            if p.proxied(id) { if match != nil { rules.append(rule(["outbound": .s(p.tag(id))])) }; return }
             if p.onTs(id) { rules += tsLogin.map { k, v in rule([k: v, "outbound": "direct"]) } }
             rules.append(rule(["action": "resolve", "server": .s(dns)]))
             rules += network
@@ -473,8 +504,10 @@ nonisolated enum Compiler {
             if p.refused(site: id) { rules.append(rule(["action": "reject", "no_drop": true])); continue }
             // A website on a Tailscale exit that is itself a sign-in page skips the exit while the sign-in waits.
             if p.onTs(id) { rules += tsLogin.map { k, v in ["type": "logical", "mode": "and", "outbound": "direct", "rules": [.o(match), [k: v]]] } }
-            rules.append(rule(["action": "resolve", "server": .s(p.siteDns(id))]))
-            rules += network
+            if !p.proxied(id) {
+                rules.append(rule(["action": "resolve", "server": .s(p.siteDns(id))]))
+                rules += network
+            }
             rules.append(rule(["outbound": .s(p.tag(id))]))
         }
         for (id, match) in p.perApp where id != BLOCK {
@@ -585,7 +618,8 @@ nonisolated enum Compiler {
             if let server = filter.server, filter.routes {
                 guard pushed.insert("filter-\(p.tag(r.id))").inserted else { continue }
                 // At home: no lookup of its name on the route first (a tailnet name is the tailnet resolver's to answer).
-                if let filterVia { servers.append(filterDns(server, tag: p.dns(r.id), detour: filterVia, boot: "dns-tailnet")); continue }
+                // Never for a proxy server: its apps' lookups go through the proxy, not a home tunnel.
+                if let filterVia, r.socks5 == nil { servers.append(filterDns(server, tag: p.dns(r.id), detour: filterVia, boot: "dns-tailnet")); continue }
                 let boot = "boot-\(p.tag(r.id))"
                 if server.byName, pushed.insert(boot).inserted {
                     if case .ovpn = link, r.imported || r.loc.provider != "nord" {

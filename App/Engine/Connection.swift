@@ -1671,9 +1671,7 @@ final class Connection {
         try await tunnel.initialize()
         guard g == generation else { throw CancellationError() }
         let search = searched ?? search(input)
-        var unattended = input
-        unattended.tsLoginPending = false
-        let safeSeal = persist && input.tsLoginPending ? try Compiler.compile(unattended) : nil
+        let safeSeal = persist ? try Compiler.unattended(input).map(Compiler.compile) : nil
         let stagePersist = persist && safeSeal == nil
         func durableSeal(_ durable: Bool) async -> Bool {
             guard let safeSeal else { return durable }
@@ -3115,7 +3113,8 @@ final class Connection {
     private func makeInput(_ s: Setup, _ links: [String: Link], blocked: Set<String> = [], probe: (port: Int, password: String)?) -> Compiler.Input {
         Compiler.Input(setup: s, links: links, portStep: portStep, blocked: blocked, apps: AppCatalog.shared.patterns(for: AppCatalog.shared.routingKeys(s)), remembered: AppCatalog.shared.remembered(Array(s.apps.keys)),
                        // The app's own executable, not its bundle: anything else placed inside it doesn't go direct.
-                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: store.tsSuffix, siteDomain: .given(Sites.tailnet(of: store.setup)), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending)
+                       selfPattern: Compiler.pattern(forPath: Bundle.main.executablePath ?? Bundle.main.bundlePath), tsSuffix: store.tsSuffix, siteDomain: .given(Sites.tailnet(of: store.setup)), probe: probe, ownerless: .refusedWhileSplit, tsLoginPending: tsLoginPending,
+                       socks5: Socks5Secrets.passwords(s))
     }
 
     /// What the paused engine is built from now (`PauseKey`).

@@ -71,6 +71,8 @@ nonisolated enum ConfigVet {
     private static let outbounds: [String: [String: Field]] = [
         "direct": fields("type", "tag"),
         "shadowsocks": fields("type", "tag", "server", "server_port", "method", "password", "plugin", "plugin_opts"),
+        // A proxy server route: SOCKS version 5, its login when it has one. Never in a sealed copy (`sealable`).
+        "socks": fields("type", "tag", "server", "server_port", "version", "username", "password"),
         // The V2Ray hop of a disguised WireGuard tunnel: VMess over TCP with an HTTP header, as the compiler writes it.
         "vmess": fields("type", "tag", "server", "server_port", "uuid", "security", "alter_id").merging([
             "transport": .object(fields("type", "method", "path", "host").merging([
@@ -209,6 +211,8 @@ nonisolated enum ConfigVet {
                       c.password == nil else { throw refused }
             }
             if type(item) == "shadowsocks" { try checkPlugin(item) }
+            // SOCKS version 5 to a server and port, as the compiler writes it: never 4 or 4a, which take no password.
+            if type(item) == "socks", item["version"] as? String != "5" || !(item["server"] is String) || !(item["server_port"] is Int) { throw refused }
         }
         // What the compiler always writes, so nothing is left to the engine's defaults: a final route and resolvers, every
         // name pointing at something that exists.
@@ -604,5 +608,19 @@ nonisolated enum ConfigVet {
             out[key] = v
         }
         return out
+    }
+}
+
+nonisolated extension ConfigVet {
+    /// Whether [config] may be sealed for a start with no app open: never one that runs a proxy server, whose login the
+    /// app keeps (the app seals a copy with its proxy routes refused instead).
+    static func sealable(_ config: String) -> Bool {
+        // Names read without regard to case, as the engine and `check` read them.
+        guard let o = (try? JSONSerialization.jsonObject(with: Data(config.utf8))) as? [String: Any], let root = folded(o) else { return false }
+        guard let outbounds = root["outbounds"] as? [Any] else { return root["outbounds"] == nil }
+        return outbounds.allSatisfy { item in
+            guard let x = (item as? [String: Any]).flatMap(folded) else { return false }
+            return (x["type"] as? String)?.lowercased() != "socks"
+        }
     }
 }

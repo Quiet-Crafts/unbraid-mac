@@ -1,4 +1,5 @@
 import CryptoKit
+import Network
 import XCTest
 
 private typealias O = [String: Any]
@@ -3952,10 +3953,138 @@ extension CompilerTests {
         XCTAssertEqual(Compiler.waitingProxies(Compiler.Input(setup: deflt, links: [:], apps: [:], selfPattern: "", tsSuffix: nil)), ["p1"])
     }
 
-    /// Until the extension is given the shape of a proxy server, it runs none: nothing with a password is staged or sealed.
-    func testTheExtensionDoesntRunAProxyServerYet() throws {
-        XCTAssertThrowsError(try ConfigVet.check(try proxyConfig(proxied(), passwords: [Self.proxyItem: Self.proxyPassword])))
-        XCTAssertNoThrow(try ConfigVet.check(try proxyConfig(proxied(), passwords: nil)), "refused, it is an ordinary config")
+    /// The extension runs a proxy server the app gives it, but never seals one: a start with no app open gets the copy
+    /// with its proxy routes refused, which holds no password.
+    func testTheExtensionRunsAProxyServerButNeverSealsIt() throws {
+        let live = try proxyConfig(proxied(), passwords: [Self.proxyItem: Self.proxyPassword])
+        XCTAssertNoThrow(try ConfigVet.check(live))
+        XCTAssertFalse(ConfigVet.sealable(try ConfigVet.check(live)))
+        let unattended = try proxyConfig(proxied(), passwords: nil)
+        XCTAssertNoThrow(try ConfigVet.check(unattended))
+        XCTAssertTrue(ConfigVet.sealable(try ConfigVet.check(unattended)))
+        XCTAssertFalse(unattended.contains(Self.proxyPassword))
+        XCTAssertTrue(ConfigVet.sealable(try raw(example)), "every other config is sealed as before")
+        // However its names are written.
+        for (outbounds, type) in [("OUTBOUNDS", "socks"), ("outbounds", "SOCKS"), ("Outbounds", "Socks")] {
+            var o = try parse(unattended)
+            var outs = try XCTUnwrap(o.removeValue(forKey: "outbounds") as? [O])
+            outs.append(["TYPE": type, "tag": "x"])
+            o[outbounds] = outs
+            XCTAssertFalse(ConfigVet.sealable(String(decoding: try JSONSerialization.data(withJSONObject: o), as: UTF8.self)), "\(outbounds) \(type)")
+        }
+        // Only version 5 to a server and port, as the compiler writes it.
+        var o = try parse(live)
+        var outs = try XCTUnwrap(o["outbounds"] as? [O])
+        let at = try XCTUnwrap(outs.firstIndex { $0["type"] as? String == "socks" })
+        for bad in [("version", "4"), ("version", nil), ("server", nil), ("server_port", "1080")] as [(String, Any?)] {
+            var x = outs[at]; x[bad.0] = bad.1; outs[at] = x; o["outbounds"] = outs
+            XCTAssertThrowsError(try ConfigVet.check(String(decoding: JSONSerialization.data(withJSONObject: o), as: UTF8.self)), "\(bad.0)")
+            outs = try XCTUnwrap(try parse(live)["outbounds"] as? [O])
+        }
+    }
+
+    /// What is sealed for a start with no app open: never a running proxy server, and nothing else changes.
+    func testTheUnattendedCopyRefusesProxyServers() throws {
+        let given = { (s: Setup, passwords: [String: String]?) -> Compiler.Input in
+            var i = Compiler.Input(setup: s, links: self.links(s), apps: self.patterns(s), selfPattern: "", tsSuffix: nil)
+            i.socks5 = passwords
+            return i
+        }
+        XCTAssertNil(Compiler.unattended(given(example, [:])), "no proxy route: the live config is sealed")
+        XCTAssertNil(Compiler.unattended(given(proxied(), nil)), "proxies already refused: the live config is sealed")
+        let u = try XCTUnwrap(Compiler.unattended(given(proxied(), [Self.proxyItem: Self.proxyPassword])))
+        XCTAssertNil(u.socks5)
+        XCTAssertTrue(ConfigVet.sealable(try Compiler.compile(u)))
+        var login = given(example, [:]); login.tsLoginPending = true
+        XCTAssertEqual(Compiler.unattended(login)?.tsLoginPending, false)
+    }
+
+    /// The proxy is given each name as it is (a stand-in address comes back as its name), never one looked up here: no
+    /// resolve for its apps or its websites, so their names never reach a resolver on this network.
+    func testAProxyAppsNamesGoToTheProxy() throws {
+        var s = proxied()
+        s.sites["proxied.example"] = "p1"
+        let c = try parse(try proxyConfig(s, passwords: [Self.proxyItem: Self.proxyPassword]))
+        let walk = try EngineWalk(String(decoding: JSONSerialization.data(withJSONObject: c), as: UTF8.self))
+        XCTAssertEqual(walk.lookup("news.example", "A"), "server:fake")
+        XCTAssertEqual(walk.connect(proxyApp, name: "news.example", ip: EngineWalk.fake), "exit:r-p1 via -")
+        XCTAssertEqual(walk.connect("/Applications/com.x.app/Contents/MacOS/main", name: "proxied.example", ip: EngineWalk.fake), "exit:r-p1 via -")
+        let proxyRules = rules(c).filter { outbound($0) == "r-p1" || ($0["server"] as? String)?.contains("p1") == true }
+        XCTAssertFalse(proxyRules.contains { action($0) == "resolve" })
+        // Its other lookups (TXT, SRV…) are asked through the proxy, at a public resolver, never the local one.
+        let servers = ((c["dns"] as? O)?["servers"] as? [O]) ?? []
+        XCTAssertEqual(servers.first { $0["tag"] as? String == "dns-r-p1" }?["detour"] as? String, "r-p1")
+        // With a filter that lives in the home network, still through the proxy, never the home tunnel.
+        var filtered = proxied(); filtered.prefs.filter = Filter(id: "own", value: "192.168.178.53", routes: true)
+        let fs = (((try parse(try proxyConfig(filtered, passwords: [Self.proxyItem: Self.proxyPassword])))["dns"] as? O)?["servers"] as? [O]) ?? []
+        XCTAssertEqual(fs.first { $0["tag"] as? String == "dns-r-p1" }?["detour"] as? String, "r-p1")
+        XCTAssertEqual(fs.first { $0["tag"] as? String == "dns-r-us" }?["detour"] as? String, Compiler.tsTag, "other routes keep the home tunnel")
+        // The rules for the other routes are as before: names resolved at their exit.
+        XCTAssertEqual(walk.connect("/Applications/com.a.app/Contents/MacOS/main", name: "news.example", ip: EngineWalk.fake), "exit:r-us via dns-r-us")
+    }
+
+    /// The proxy's own address and port go Direct, whoever connects; another port of that host goes as before.
+    func testTrafficToTheProxyItselfGoesDirect() throws {
+        var s = proxied(); s.routes[3].socks5?.port = 443
+        let walk = try EngineWalk(try proxyConfig(s, passwords: [Self.proxyItem: Self.proxyPassword]))
+        XCTAssertEqual(walk.connect(proxyApp, name: nil, ip: "203.0.113.20"), "exit:direct via -")
+        XCTAssertEqual(walk.connect("/Applications/com.a.app/Contents/MacOS/main", name: nil, ip: "203.0.113.20"), "exit:direct via -")
+        s.routes[3].socks5?.port = 1080
+        XCTAssertNotEqual(try EngineWalk(try proxyConfig(s, passwords: [Self.proxyItem: Self.proxyPassword])).connect(proxyApp, name: nil, ip: "203.0.113.20"), "exit:direct via -")
+        // A proxy given by name: matched by that name.
+        s = proxied(host: "proxy.example.net"); s.routes[3].socks5?.port = 443
+        let named = try EngineWalk(try proxyConfig(s, passwords: [Self.proxyItem: Self.proxyPassword]))
+        XCTAssertEqual(named.connect(proxyApp, name: "proxy.example.net", ip: EngineWalk.fake).prefix(11), "exit:direct")
+        XCTAssertEqual(Compiler.proxyGuard(Socks5Profile(name: "x", host: "2001:db8::1", port: 1080, item: Self.proxyItem)) as J,
+                       ["ip_cidr": ["2001:db8::1/128"], "port": [1080], "outbound": "direct"])
+    }
+
+    /// A proxy on this Mac as the default route: its own program goes Direct (it would carry its own traffic back into
+    /// itself), and without that program known and found, the default is refused, never Direct.
+    func testALocalDefaultProxyKeepsItsOwnProgramDirect() throws {
+        var s = proxied(host: "127.0.0.1")
+        s.defaultRoute = "p1"; s.apps["com.c"] = nil
+        let passwords = [Self.proxyItem: Self.proxyPassword]
+        let other = "/Applications/com.z.app/Contents/MacOS/main", proxyProgram = "/Applications/com.p.app/Contents/MacOS/main"
+        XCTAssertEqual(try EngineWalk(try proxyConfig(s, passwords: passwords)).connect(other, name: nil, ip: EngineWalk.publicAddress), "reject", "no proxy program named")
+        s.routes[3].socks5?.proxyApp = "com.p"
+        XCTAssertEqual(try EngineWalk(try proxyConfig(s, passwords: passwords)).connect(other, name: nil, ip: EngineWalk.publicAddress), "reject", "named but not found here")
+        func config(_ s: Setup) throws -> EngineWalk {
+            var links = links(s)
+            links["p1"] = LinkPicker.imported(s.routes[3])
+            var i = Compiler.Input(setup: s, links: links, apps: patterns(s).merging(["com.p": [pat("com.p")]]) { $1 },
+                                   selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil, probe: nil)
+            i.socks5 = passwords
+            return try EngineWalk(try Compiler.compile(i))
+        }
+        let walk = try config(s)
+        XCTAssertEqual(walk.connect(other, name: nil, ip: EngineWalk.publicAddress), "exit:r-p1 via -")
+        XCTAssertEqual(walk.connect(proxyProgram, name: nil, ip: EngineWalk.publicAddress), "exit:direct via -")
+        // Even when the user put it on the proxy route itself.
+        s.apps["com.p"] = "p1"
+        XCTAssertEqual(try config(s).connect(proxyProgram, name: nil, ip: EngineWalk.publicAddress), "exit:direct via -")
+        // And a website rule never sends it into its proxy.
+        s.sites["proxied.example"] = "p1"
+        XCTAssertEqual(try config(s).connect(proxyProgram, name: "proxied.example", ip: EngineWalk.fake), "exit:direct via -")
+        XCTAssertEqual(try config(s).connect(other, name: "proxied.example", ip: EngineWalk.fake), "exit:r-p1 via -")
+        s.sites = [:]
+        // A proxy on another machine needs no such program as the default.
+        var remote = proxied(); remote.defaultRoute = "p1"; remote.apps["com.c"] = nil
+        XCTAssertEqual(try EngineWalk(try proxyConfig(remote, passwords: passwords)).connect(other, name: nil, ip: EngineWalk.publicAddress), "exit:r-p1 via -")
+        XCTAssertTrue(Socks5Profile(name: "x", host: "localhost", port: 1, item: Self.proxyItem).onThisMac)
+        XCTAssertTrue(Socks5Profile(name: "x", host: "::1", port: 1, item: Self.proxyItem).onThisMac)
+        XCTAssertFalse(Socks5Profile(name: "x", host: "127.example.net", port: 1, item: Self.proxyItem).onThisMac)
+    }
+
+    /// A proxy route that can't run refuses its apps on the local and home networks too; a Direct website rule the user
+    /// made still goes Direct.
+    func testARefusedProxyAppDoesntGetOutOnTheLocalNetwork() throws {
+        var s = proxied(); s.sites["printer.example"] = DIRECT
+        let walk = try EngineWalk(try proxyConfig(s, passwords: nil))
+        XCTAssertEqual(walk.connect(proxyApp, name: nil, ip: "10.0.0.20"), "reject")
+        XCTAssertEqual(walk.connect(proxyApp, name: "printer.example", ip: EngineWalk.fake), "exit:direct via local")
+        // A running one keeps the local network as Settings say, like every route.
+        XCTAssertEqual(try EngineWalk(try proxyConfig(proxied(), passwords: [Self.proxyItem: Self.proxyPassword])).connect(proxyApp, name: nil, ip: "10.0.0.20"), "exit:direct via -")
     }
 
     func testProxyRoutesShareAnOutboundOnlyWithOneLogin() throws {
@@ -3968,5 +4097,137 @@ extension CompilerTests {
         let saved = String(decoding: try JSONEncoder().encode(Link.socks5(sv("a"), a)), as: UTF8.self)
         XCTAssertEqual(try JSONDecoder().decode(Link.self, from: Data(saved.utf8)), .socks5(sv("a"), a))
         XCTAssertFalse(saved.lowercased().contains("password"))
+    }
+}
+
+// MARK: Proxy servers in the engine
+
+
+extension CompilerTests {
+    /// A TCP server answering every connection with `reply`, and a UDP one echoing what it gets: what a proxy reaches.
+    private final class Target: @unchecked Sendable {
+        let tcp: NWListener, udp: NWListener
+        init(reply: String) throws {
+            tcp = try NWListener(using: .tcp, on: .any)
+            udp = try NWListener(using: .udp, on: .any)
+            tcp.newConnectionHandler = { c in
+                c.start(queue: .global())
+                c.send(content: Data(reply.utf8), completion: .contentProcessed { _ in c.cancel() })
+            }
+            udp.newConnectionHandler = { c in
+                c.start(queue: .global())
+                c.receiveMessage { data, _, _, _ in c.send(content: Data("echo:".utf8) + (data ?? Data()), completion: .contentProcessed { _ in }) }
+            }
+            tcp.start(queue: .global()); udp.start(queue: .global())
+        }
+        func ports() -> (Int, Int)? {
+            for _ in 0..<50 {
+                if let t = tcp.port?.rawValue, let u = udp.port?.rawValue, t != 0, u != 0 { return (Int(t), Int(u)) }
+                Thread.sleep(forTimeInterval: 0.05)
+            }
+            return nil
+        }
+        deinit { tcp.cancel(); udp.cancel() }
+    }
+
+    private func command(_ path: String, _ args: [String], timeout: TimeInterval = 8) -> (Int32, String) {
+        let p = Process(), out = Pipe()
+        p.executableURL = URL(fileURLWithPath: path); p.arguments = args
+        p.standardOutput = out; p.standardError = out
+        guard (try? p.run()) != nil else { return (-1, "") }
+        let deadline = Date().addingTimeInterval(timeout)
+        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.05) }
+        if p.isRunning { p.terminate() }
+        p.waitUntilExit()
+        return (p.terminationStatus, String(decoding: out.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self))
+    }
+
+    private func engine(_ bin: URL, _ config: [String: Any], in dir: URL, _ name: String) throws -> (Process, URL) {
+        let d = dir.appending(path: name), log = dir.appending(path: "\(name).log")
+        try FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: config).write(to: d.appending(path: "config.json"))
+        FileManager.default.createFile(atPath: log.path, contents: nil)
+        let p = Process()
+        p.executableURL = bin; p.arguments = ["run", "-D", d.path, "-c", d.appending(path: "config.json").path]
+        let handle = try FileHandle(forWritingTo: log)
+        p.standardOutput = handle; p.standardError = handle
+        try p.run()
+        return (p, log)
+    }
+
+    private func waitFor(_ log: URL, _ text: String) -> Bool {
+        for _ in 0..<100 {
+            if (try? String(contentsOf: log, encoding: .utf8))?.contains(text) == true { return true }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+        return false
+    }
+
+    /// The compiled config in the pinned engine, with a real SOCKS5 server (the engine's own) on this Mac: an app's TCP
+    /// and UDP go through it, each name sent to it as a name; lookups are answered with stand-ins, never asked here; the
+    /// proxy's own address and port go Direct; and once the proxy is gone, its apps are refused, never sent Direct. The
+    /// tun is the one thing swapped: a local SOCKS inbound stands for it (curl), and local UDP ones for DNS and nc. The
+    /// engine finds no program behind those, so the proxy is the default route here (with its own program, as one on this
+    /// Mac needs), and connections with no program follow it.
+    func testAProxyServerCarriesAppsThroughTheEngine() throws {
+        guard let bin = try ProviderFixtures.engine() else { throw XCTSkip("sing-box-cli-mac not found: run tools/build-cli.sh") }
+        let target = try Target(reply: "through-the-proxy")
+        let (tcpPort, udpPort) = try XCTUnwrap(target.ports())
+        let base = 30_000 + Int.random(in: 0..<20_000)
+        let (socksPort, inPort, dnsPort, udpIn) = (base, base + 1, base + 2, base + 3)
+        let dir = FileManager.default.temporaryDirectory.appending(path: "unbraid-proxy-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // The proxy: the engine's own SOCKS5 server, with a login, that knows the test names.
+        let server: [String: Any] = [
+            "log": ["level": "debug"],
+            "dns": ["servers": [["type": "hosts", "tag": "h", "predefined": ["proxied.test": "127.0.0.1", "udp.test": "127.0.0.1"]]], "final": "h"],
+            "inbounds": [["type": "socks", "tag": "s", "listen": "127.0.0.1", "listen_port": socksPort, "users": [["username": "me", "password": Self.proxyPassword]]]],
+            "outbounds": [["type": "direct", "tag": "d"]], "route": ["final": "d", "default_domain_resolver": "h"],
+        ]
+        // The setup: a proxy on this Mac as the default route.
+        let x = Socks5Profile(name: "Local proxy", host: "127.0.0.1", port: socksPort, username: "me", item: Self.proxyItem, proxyApp: "/usr/local/bin/proxy")
+        let s = Setup(routes: [Route(id: "p1", socks5: x)], defaultRoute: "p1", favorites: [])
+        var input = Compiler.Input(setup: s, links: ["p1": try XCTUnwrap(LinkPicker.imported(s.routes[0]))],
+                                   apps: ["/usr/local/bin/proxy": [Compiler.pattern(forPath: "/usr/local/bin/proxy")]],
+                                   selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil, probe: nil, ownerless: .followsDefault)
+        input.socks5 = [Self.proxyItem: Self.proxyPassword]
+        var client = try parse(try Compiler.compile(input))
+        client["log"] = ["level": "debug"]
+        client["inbounds"] = [["type": "mixed", "tag": "tun", "listen": "127.0.0.1", "listen_port": inPort],
+                              ["type": "direct", "tag": "dnsin", "listen": "127.0.0.1", "listen_port": dnsPort, "network": "udp", "override_address": "172.19.0.2", "override_port": 53],
+                              ["type": "direct", "tag": "udpin", "listen": "127.0.0.1", "listen_port": udpIn, "network": "udp", "override_address": "udp.test", "override_port": udpPort]]
+        var route = try XCTUnwrap(client["route"] as? O); route["auto_detect_interface"] = nil; client["route"] = route
+
+        let (proxy, proxyLog) = try engine(bin, server, in: dir, "proxy")
+        defer { if proxy.isRunning { proxy.terminate() } }
+        let (unbraid, log) = try engine(bin, client, in: dir, "unbraid")
+        defer { if unbraid.isRunning { unbraid.terminate() } }
+        XCTAssertTrue(waitFor(proxyLog, "tcp server started") && waitFor(log, "started"), "engines didn't start")
+        Thread.sleep(forTimeInterval: 0.5)
+
+        // A lookup gets a stand-in; nothing is asked of a resolver here.
+        let fake = command("/usr/bin/dig", ["+short", "@127.0.0.1", "-p", "\(dnsPort)", "proxied.test", "A"]).1.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(EngineWalk.inCidr(fake, ConfigVet.fakeRanges[0]), "stand-in: \(fake)")
+        // TCP to that name: through the proxy, which is given the name itself.
+        let url = "http://proxied.test:\(tcpPort)/"
+        let got = command("/usr/bin/curl", ["-s", "-m", "5", "--http0.9", "-x", "socks5://127.0.0.1:\(inPort)", "--resolve", "proxied.test:\(tcpPort):\(fake)", url])
+        XCTAssertEqual(got.1, "through-the-proxy", "curl \(got.0)")
+        XCTAssertTrue(waitFor(proxyLog, "[me] inbound connection to proxied.test:\(tcpPort)"), "the proxy got the name")
+        // UDP: through the proxy too (SOCKS5 UDP ASSOCIATE), the name sent as a name.
+        let echoed = command("/bin/sh", ["-c", "printf ping | /usr/bin/nc -u -w 2 127.0.0.1 \(udpIn)"])
+        XCTAssertEqual(echoed.1, "echo:ping")
+        XCTAssertTrue(waitFor(proxyLog, "inbound packet connection to udp.test:\(udpPort)"), "the proxy carried the datagram")
+        // The proxy's own address and port: Direct, never into the proxy itself.
+        _ = command("/usr/bin/curl", ["-s", "-m", "3", "-x", "socks5://127.0.0.1:\(inPort)", "http://127.0.0.1:\(socksPort)/"])
+        XCTAssertTrue(waitFor(log, "outbound/direct[direct]: outbound connection to 127.0.0.1:\(socksPort)"), "the loop guard")
+        // No proxy: refused, never Direct.
+        proxy.terminate(); proxy.waitUntilExit()
+        let dead = command("/usr/bin/curl", ["-s", "-m", "5", "--http0.9", "-x", "socks5://127.0.0.1:\(inPort)", "--resolve", "proxied.test:\(tcpPort):\(fake)", url])
+        XCTAssertNotEqual(dead.1, "through-the-proxy")
+        let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        XCTAssertFalse(text.contains("outbound/direct[direct]: outbound connection to proxied.test"), "a proxy app went Direct")
+        XCTAssertFalse(text.contains("dns: exchanged proxied.test") && text.contains("=> route(local)"), "a name was asked here")
+        XCTAssertFalse(text.contains(Self.proxyPassword))
     }
 }

@@ -269,7 +269,8 @@ nonisolated enum Backup {
             let own = s.servers.first { $0.id == r.own }
             // A proxy server has no own server: it waits for the password of its login on the route itself.
             if let x = r.socks5 {
-                try need(x.valid && r.own == nil && (!r.keyless || x.username != nil) && plainName(x.name) && plain(x.username ?? "", max: 255),
+                try need(x.valid && r.own == nil && (!r.keyless || x.username != nil) && plainName(x.name) && plain(x.username ?? "", max: 255)
+                         && x.proxyApp.map { !$0.isEmpty && plain($0, max: 1024) } != false,
                          "proxy server \(String(x.name.prefix(40))) is damaged")
             } else {
                 try need(r.keyless == (own?.keyless == true) && (!r.keyless || (n == 1 && r.tsExit == nil)), "a route and its own server don't match")

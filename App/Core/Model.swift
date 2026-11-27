@@ -139,6 +139,15 @@ nonisolated struct Socks5Profile: Codable, Hashable, Sendable {
     var username: String?
     /// Names the password's keychain item; not secret. A backup's restore gives each route a new one.
     var item: String
+    /// The program that is the proxy, for one on this Mac (an app's bundle id or a tool's path, as `Setup.apps` keys
+    /// them): it always goes Direct while the proxy runs, so its own traffic never comes back into it.
+    var proxyApp: String? = nil
+
+    /// The proxy listens on this Mac's own loopback: as the default route it needs `proxyApp`.
+    var onThisMac: Bool {
+        let h = host.lowercased()
+        return h == "localhost" || h.hasSuffix(".localhost") || h == "::1" || (FilterServer.ipv4(h) && h.hasPrefix("127."))
+    }
 
     /// What the compiler may hand the engine: a name, an IPv4 or IPv6 address or a host name, a port, and a username the
     /// SOCKS5 login can carry (1 to 255 bytes).

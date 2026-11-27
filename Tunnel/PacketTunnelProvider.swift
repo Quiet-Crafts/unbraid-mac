@@ -629,6 +629,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     /// Returns the new sealing's id.
     @discardableResult
     private static func persist(_ config: String, owner: uid_t, search: String?, fallback: Bool = false, setup: String? = nil) throws -> String {
+        guard ConfigVet.sealable(config) else { throw Fail("A proxy server's configuration is never sealed") }
         // A new id for every sealing, written first: a copy written after it never carries an older one (`sealing`).
         let id = UUID().uuidString
         let previous = try? Data(contentsOf: sealId)
