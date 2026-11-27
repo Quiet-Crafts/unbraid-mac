@@ -58,6 +58,8 @@ providers. It needs Android 13 or later.
 - Send a WireGuard route *Via* another of your routes, or use IVPN's own multi-hop, so no single server sees both
   your address and where you go. For networks that block VPNs: IVPN *Disguise*, *Junk packets* for WireGuard
   providers, OpenVPN TCP for AirVPN and NordVPN, and *Automatic* for AirVPN. IVPN connections use a quantum-safe key.
+- Add a SOCKS5 proxy server as a route, on this Mac or elsewhere, for the apps and websites you choose. Its password
+  stays in the keychain.
 - A DNS filter of your choice for VPN routes and Direct traffic, plus the provider's own ad and tracker blocking
   where it has one.
 - Saved profiles that can switch by themselves on the networks you remember, a menu bar panel with the front app's
@@ -74,8 +76,8 @@ You bring the VPN. unbraid has no servers of its own and works with the accounts
 You can sign in with NordVPN (NordLynx, OpenVPN, Double VPN and Onion over VPN), Mullvad, Private Internet Access,
 IVPN, ExpressVPN or AirVPN. For Proton VPN (Free included) and Surfshark you add your WireGuard key once, and for
 Windscribe you paste one WireGuard config from their website. After that you choose from the servers your plan
-includes. You can also import your own WireGuard or OpenVPN config, paste a Shadowsocks key, or join a Tailscale
-tailnet (a self-hosted Headscale works as well).
+includes. You can also import your own WireGuard or OpenVPN config, paste a Shadowsocks key, add a SOCKS5 proxy server,
+or join a Tailscale tailnet (a self-hosted Headscale works as well).
 
 Routes can mix providers. One app can use Mullvad in Sweden while another uses NordVPN in Japan.
 
@@ -86,7 +88,7 @@ Routes can mix providers. One app can use Mullvad in Sweden while another uses N
 2. macOS asks you to allow unbraid's network extension. Allow it in System Settings › General › Login Items &
    Extensions. unbraid lives in the menu bar; its window opens from there.
 3. Accept the terms and choose your VPN. You can sign in to a provider, import a WireGuard or OpenVPN file (*Your own
-   server*), paste a Shadowsocks key, or use Tailscale on its own.
+   server*), paste a Shadowsocks key, add a SOCKS5 proxy server, or use Tailscale on its own.
 4. Select the default route in the sidebar and click the pin at the top of its page (*Change Location…*) to pick a
    country. This is where every app goes unless you say otherwise. Then click *Connect* and allow the VPN
    configuration when macOS asks.
@@ -113,7 +115,10 @@ connect as soon as an app is assigned to them, even if that app is idle.
 
 The app needs macOS 26 or later, on a Mac with Apple silicon or an Intel processor. It doesn't update itself: to
 update, quit unbraid, drag the new version from the DMG over the old one and open it. Your setup stays. macOS may ask
-you to allow the updated network extension again. *Check for updates* is on unless you turn it off (Settings › About):
+you to allow the updated network extension again, and the VPN reconnects for a moment. Open unbraid once after an
+update before you rely on *Connect on demand*, because a start without the app open uses the copy of your setup that
+the new version saved. Once you add a proxy server, versions before 1.4.1 can't read your settings or a backup of
+them, so going back to an older version means setting up again. *Check for updates* is on unless you turn it off (Settings › About):
 unbraid looks about once a day for a newer version and tells you in the window and the menu bar when one is out.
 
 ## Questions
@@ -136,7 +141,7 @@ blocked website does not turn the kill switch on. A name on your own network or 
 ### Can I use it without a VPN subscription?
 
 Yes. The free Proton VPN plan works, and so does a server of your own. You can import a WireGuard or OpenVPN file,
-paste a Shadowsocks key, or use only Tailscale, for example with an exit node at home.
+paste a Shadowsocks key, add a SOCKS5 proxy server, or use only Tailscale, for example with an exit node at home.
 
 ### Can I use Tailscale and a VPN at the same time?
 
@@ -158,12 +163,29 @@ Yes. In Settings › Protection, *Block traffic outside the VPN* has three level
 Ethernet themselves can skip the VPN, and while a VPN reconnects any app may use your normal connection. *Internet*:
 apps only go out the way you chose for them, so while a VPN reconnects its apps wait instead of using your normal
 connection. *Internet and home network*: the same, and blocked apps can't reach devices on your home network either.
-Blocking an app turns it on. *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
+Blocking an app turns it on. If a change can't be applied, unbraid blocks the apps that use a VPN and keeps trying
+until it can. *Disconnect* always takes you back online without the VPN. A proxy server is
+not a VPN: if one stops responding, the apps routed through it are blocked. *Connect on demand* lets macOS bring the tunnel back after sleep, network changes and
 restarts. A start without the app open runs only a saved copy of your latest setup; if you changed something since,
 it runs a stand-in that keeps blocked apps and websites blocked and sends everything else Direct, until unbraid opens
 and connects your current setup. At every level, apps you set to Direct use your normal connection, and nothing is covered while unbraid is
 disconnected. unbraid's own requests (signing in to your provider, server lists, and the update check while it is
 on) also use your normal connection, not the VPN, so your network can see which provider you use.
+
+### Can I use a SOCKS5 proxy?
+
+Yes. In Settings › Providers › My Servers, choose *Add Proxy Server…* and enter its address and port, plus a username
+and password if it needs them, or paste a socks5:// link. It becomes a route like any other: put apps or websites on
+it. Website names are looked up by the proxy, and UDP traffic (games, calls, QUIC) goes through it too when the proxy
+supports it. The password stays in the keychain, and a backup holds it only if you choose *Include server keys and
+passwords*.
+
+A proxy is not a VPN. SOCKS5 doesn't encrypt anything between your Mac and the proxy, so for a proxy on another
+machine the network in between can see where your apps connect and read the proxy login; unbraid asks you to confirm
+with *Add Anyway*. If a proxy stops answering, its apps are blocked at once and don't fall back to your normal
+connection; after about three minutes the route says *Not answering*. A proxy on this Mac can be your default route once you choose the app
+that runs it: that app, and everything inside its bundle, then uses your normal connection. Removing a proxy leaves
+its password in the keychain until *Sign Out of Everything*, and a proxy route can't be used with *Via*.
 
 ### Does it get around my provider's device limit?
 
