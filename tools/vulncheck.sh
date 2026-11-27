@@ -56,11 +56,28 @@ OVPN_PATCHES=("$TMP"/patches/sing-openvpn-*.patch)
     go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -tags with_gvisor,with_wireguard,with_utls,with_tailscale,ts_omit_logtail,ts_omit_cachenetmap,ts_omit_ssh,ts_omit_drive,ts_omit_taildrop,ts_omit_webclient,ts_omit_doctor,ts_omit_capture,ts_omit_kube,ts_omit_aws,ts_omit_synology,ts_omit_bird,with_openvpn,grpcnotrace,badlinkname,tfogo_checklinkname0 ./experimental/libbox ./cmd/sing-box
   }
   # govulncheck matches advisories by module version, and a module replaced by a local folder has none: so with sing-tun
-  # or gVisor patches, the pinned versions are scanned first, unpatched, then the patched source below.
+  # or gVisor patches, the versions sing-box pins are checked first, then the patched source below. The pins are checked
+  # by module, not by call: the patched engine uses API only their patches add, so it can't be built against them.
+  # Any advisory for either pinned module fails the check, reachable or not.
   MODULE_PATCHES=("$TMP"/patches/sing-tun-*.patch "$TMP"/patches/gvisor-*.patch)
   if [ -f "${MODULE_PATCHES[0]}" ] || [ -f "${MODULE_PATCHES[${#MODULE_PATCHES[@]}-1]}" ]; then
     echo "== sing-tun and gVisor as sing-box pins them"
-    scan
+    go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -scan module -format json > "$TMP/pins.json"
+    python3 -I - "$TMP/pins.json" <<'PY' || exit 1
+import json, sys
+text, at, dec, hits, seen = open(sys.argv[1]).read(), 0, json.JSONDecoder(), set(), 0
+while True:
+    while at < len(text) and text[at].isspace(): at += 1
+    if at >= len(text): break
+    obj, at = dec.raw_decode(text, at)
+    seen += "finding" in obj
+    for frame in (obj.get("finding") or {}).get("trace") or []:
+        if frame.get("module") in ("github.com/sagernet/sing-tun", "github.com/sagernet/gvisor"):
+            hits.add(f'{obj["finding"]["osv"]} in {frame["module"]} {frame.get("version", "")}')
+for h in sorted(hits): print("advisory:", h)
+print(f"{seen} module findings read; " + ("no advisories for the pinned sing-tun or gVisor" if not hits else "the pinned sing-tun or gVisor has advisories"))
+sys.exit(1 if hits else 0)
+PY
     echo "== with the sing-tun and gVisor patches"
   fi
   for m in sing-tun gvisor; do
