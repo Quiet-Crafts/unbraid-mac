@@ -741,8 +741,22 @@ nonisolated extension Setup {
     mutating func useProxy(_ target: String, _ p: Socks5Profile, id: String, signedIn: Set<String>, keepDefault: Bool = false) -> String {
         let before = defaultRoute
         let made = addImported(target, id: id, signedIn: signedIn) { $0.socks5 = p }
-        if keepDefault, defaultRoute == made, before != made { defaultRoute = route(before) != nil ? before : DIRECT }
+        // A proxy on this Mac becomes the default only through Make Default, which first asks which app runs it.
+        let keep = keepDefault || p.onThisMac && p.proxyApp == nil
+        if keep, defaultRoute == made, before != made { defaultRoute = route(before) != nil ? before : DIRECT }
         return made
+    }
+
+    /// Making route [id] the default first asks "Which app runs this proxy?": a proxy on this Mac with no proxy app yet,
+    /// which the compiler refuses as the default until it has one.
+    func asksProxyApp(_ id: String) -> Bool { route(id)?.socks5.map { $0.onThisMac && $0.proxyApp == nil } ?? false }
+
+    /// [app] (a bundle id or a tool's path) runs route [id]'s proxy, so it goes Direct; with [makeDefault] the route
+    /// becomes the default too. Nothing changes for a route that isn't a proxy.
+    mutating func setProxyApp(_ id: String, _ app: String, makeDefault: Bool) {
+        guard let i = routes.firstIndex(where: { $0.id == id }), routes[i].socks5 != nil else { return }
+        routes[i].socks5?.proxyApp = app
+        if makeDefault { defaultRoute = id }
     }
 }
 

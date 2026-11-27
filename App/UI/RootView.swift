@@ -42,6 +42,8 @@ struct SiteTarget: Identifiable {
     var renaming: String?
     /// The route about to be removed: its apps go back to the default and it can't be brought back, so it is confirmed first.
     var removing: String?
+    /// "Which app runs this proxy?" for a route: before Make Default, or from Change Proxy App….
+    var proxyApp: ProxyAppAsk?
     var addSite: SiteTarget?
     /// The first app was just blocked: ask whether Block covers the home network too.
     var blockScope = false
@@ -221,6 +223,7 @@ struct RootView: View {
             Text(apps + sites + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
         }
         .sheet(item: $presentation.addSite) { target in AddWebsiteSheet(target: target, undo: undo) }
+        .sheet(item: $presentation.proxyApp) { ProxyAppSheet(ask: $0) }
         .sheet(item: $presentation.picker, onDismiss: {
             if addAfterPicker { addAfterPicker = false; adding = true }
         }) { item in
@@ -409,7 +412,12 @@ struct RouteActions: View {
         let r = s.route(id)
         if r != nil { Button("Change Location…") { openPicker(id) } }
         if r?.imported == true { Button("Rename…") { Presentation.shared.renaming = id } }
-        if id != s.defaultRoute && id != BLOCK { Button("Make Default") { model.setDefault(id) } }
+        if id != s.defaultRoute && id != BLOCK {
+            Button("Make Default") {
+                if s.asksProxyApp(id) { Presentation.shared.proxyApp = ProxyAppAsk(id: id, makeDefault: true) } else { model.setDefault(id) }
+            }
+        }
+        if r?.socks5?.onThisMac == true { Button("Change Proxy App…") { Presentation.shared.proxyApp = ProxyAppAsk(id: id, makeDefault: false) } }
         if let r, !r.imported, let provider = Providers.get(r.loc.provider), provider.protection != nil {
             Menu(providerProtectionAvailable(s.prefs.effectiveFilter) ? "\(provider.name) blocking" : "\(provider.name) blocking (Off while unbraid’s filter is on for VPN routes)") {
                 Button { model.setFilter(id, nil) } label: { Label("As Set for \(provider.name) in Settings", systemImage: r.filter == nil ? "checkmark" : "") }

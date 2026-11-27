@@ -173,4 +173,35 @@ final class SetupImportTests: XCTestCase {
         XCTAssertEqual(s.proxyServers.map { "\($0.name) | \($0.caption)" },
                        ["Office | SOCKS5 · proxy.example.net:1080", "Proxy on this Mac | SOCKS5 · [::1]:9050"])
     }
+
+    private var local: Socks5Profile { Socks5Profile(name: "Proxy on this Mac", host: "127.0.0.1", port: 1080, item: "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C") }
+
+    func testMakingALocalProxyTheDefaultFirstAsksWhichAppRunsIt() {
+        var s = Setup(routes: [Route(id: "r0", wg: wg)], defaultRoute: "r0")
+        s.useProxy("", local, id: "r1", signedIn: [])
+        s.useProxy("", proxy, id: "r2", signedIn: [])
+        XCTAssertTrue(s.asksProxyApp("r1"))
+        XCTAssertFalse(s.asksProxyApp("r2"), "a proxy elsewhere doesn't run on this Mac")
+        XCTAssertFalse(s.asksProxyApp("r0"))
+        s.setProxyApp("r1", "com.example.proxy", makeDefault: true)
+        XCTAssertEqual(s.route("r1")?.socks5?.proxyApp, "com.example.proxy")
+        XCTAssertEqual(s.defaultRoute, "r1")
+        XCTAssertFalse(s.asksProxyApp("r1"), "asked once: Change Proxy App changes it later")
+        s.setProxyApp("r1", "/usr/local/bin/microsocks", makeDefault: false)
+        XCTAssertEqual(s.route("r1")?.socks5?.proxyApp, "/usr/local/bin/microsocks")
+        let before = s
+        s.setProxyApp("r0", "com.example.proxy", makeDefault: true)
+        XCTAssertEqual(s, before, "only a proxy route takes a proxy app")
+    }
+
+    func testALocalProxyWithoutItsAppNeverBecomesTheDefaultByItself() {
+        var s = reset
+        s.useProxy("", local, id: "r1", signedIn: [])
+        XCTAssertEqual(s.defaultRoute, DIRECT, "Make Default asks for its app first")
+        var known = local
+        known.proxyApp = "com.example.proxy"
+        var t = reset
+        t.useProxy("", known, id: "r1", signedIn: [])
+        XCTAssertEqual(t.defaultRoute, "r1")
+    }
 }

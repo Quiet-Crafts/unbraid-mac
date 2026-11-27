@@ -202,7 +202,8 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     var checksInternet: Bool {
         guard imported, tsExit == nil else { return false }
         if let checkInternet { return checkInternet }
-        if ss != nil { return true }
+        // A Shadowsocks server and a proxy carry everything sent to them: a proxy that doesn't answer is shown as such.
+        if ss != nil || socks5 != nil { return true }
         if let wg { return wg.allowedIps.contains { ["0.0.0.0/0", "::/0"].contains($0.trimmingCharacters(in: .whitespaces)) } }
         return ovpn.map { Self.redirectsGateway($0.config) } ?? false
     }

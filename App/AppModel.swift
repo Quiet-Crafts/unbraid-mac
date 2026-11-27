@@ -669,6 +669,12 @@ final class AppModel {
         }, targets: [.defaultRoute])
     }
 
+    /// The app that runs route `id`'s proxy on this Mac (`Setup.setProxyApp`); with `makeDefault` the route becomes the
+    /// default in the same change.
+    func setProxyApp(_ id: String, _ app: String, makeDefault: Bool) {
+        guarded({ $0.setProxyApp(id, app, makeDefault: makeDefault) }, targets: makeDefault ? [.location(id), .defaultRoute] : [.location(id)])
+    }
+
     /// `routeId` nil: the app follows the default. Any route, the default included, is the app's own choice, which a
     /// later change of the default never moves.
     func assign(_ app: String, _ routeId: String?) {

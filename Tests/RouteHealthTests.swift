@@ -38,6 +38,19 @@ final class RouteHealthTests: XCTestCase {
                        "Its 1 app can't connect until it answers again. Your other routes answer, so the trouble is at the server or its own connection. unbraid keeps checking. It never moves your own server's route somewhere else. If this file came from a provider, it may have expired: download a new one.")
     }
 
+    /// A proxy route is checked like a Shadowsocks server, and one that doesn't answer says so in its own words.
+    func testAProxyThatDoesntAnswerIsShownWithItsOwnText() {
+        var proxy = Route(id: "p")
+        proxy.socks5 = Socks5Profile(name: "Office", host: "proxy.example.net", port: 1080, item: "6F1B5D2E-2C4A-4F8E-9B1D-3A7C5E9F0B12")
+        XCTAssertTrue(proxy.checksInternet)
+        XCTAssertTrue(RouteHealth.offersInternetCheck(proxy))
+        proxy.checkInternet = false
+        XCTAssertFalse(proxy.checksInternet, "the user's switch still decides")
+        XCTAssertEqual(RouteHealth.proxySilent(proxy), "The proxy didn't answer. Traffic on this route is blocked. Check the address and port.")
+        XCTAssertNil(RouteHealth.proxySilent(home))
+        XCTAssertNil(RouteHealth.proxySilent(nil))
+    }
+
     /// A file imported from a provider may have expired; a provider's own route and a Tailscale exit say nothing of it.
     func testExplanationMentionsExpiryForImportedFilesOnly() {
         var ts = Route(id: "ts")

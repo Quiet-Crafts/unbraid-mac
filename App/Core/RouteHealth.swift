@@ -39,6 +39,12 @@ nonisolated enum RouteHealth: Equatable, Sendable {
         return first + cause + " unbraid keeps checking." + why
     }
 
+    /// What a proxy route that doesn't answer says instead of `title` and `explanation`, with Try Again; nil for any other.
+    static func proxySilent(_ r: Route?) -> String? {
+        r?.socks5 == nil ? nil : "The proxy didn't answer. Traffic on this route is blocked. Check the address and port."
+    }
+    static let tryAgain = "Try Again"
+
     /// A Tailscale device as Tailscale lists it: [id] is the stable id its status names the exit in use by.
     struct ExitDevice: Equatable, Sendable {
         var name: String, ip: String, online: Bool, id = ""

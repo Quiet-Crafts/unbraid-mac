@@ -63,3 +63,62 @@ struct ProxySheet: View {
         dismiss()
     }
 }
+
+/// A route that asks which app runs its proxy: before it becomes the default, or to change the app.
+struct ProxyAppAsk: Identifiable, Hashable {
+    let id: String
+    let makeDefault: Bool
+}
+
+/// "Which app runs this proxy?": the app (or a helper or command-line tool) that is the proxy on this Mac goes Direct,
+/// so its own traffic never comes back into it. Nothing changes until Make Default (or Save); Cancel keeps the default.
+struct ProxyAppSheet: View {
+    let ask: ProxyAppAsk
+    private let model = AppModel.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var query = ""
+    @State private var chosen: String?
+
+    init(ask: ProxyAppAsk) {
+        self.ask = ask
+        _chosen = State(initialValue: AppModel.shared.setup.route(ask.id)?.socks5?.proxyApp)
+    }
+
+    var body: some View {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        let apps = model.apps.apps.filter { !$0.missing && AppSearch.matches(name: $0.name, id: $0.id, query: q) }
+            .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        SheetFrame(title: "Which app runs this proxy?", subtitle: "This app will use Direct so it can connect without going through itself.") {
+            HStack {
+                TextField("Search Apps", text: $query).textFieldStyle(.roundedBorder)
+                Button("Choose Executable…", action: chooseExecutable).contentButton()
+            }
+            .padding(.horizontal, Layout.gutter).padding(.bottom, 12)
+            List(apps, selection: $chosen) { a in
+                HStack(spacing: 8) { AppIconView(app: a); Text(a.name) }.tag(a.id)
+            }
+        } status: {
+            Text(ask.makeDefault ? "Change it later with Change Proxy App… on the route's page." : chosen.map { model.appName($0) } ?? "").lineLimit(1)
+        } actions: {
+            Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+            Button(ask.makeDefault ? "Make Default" : "Save") {
+                if let chosen { model.setProxyApp(ask.id, chosen, makeDefault: ask.makeDefault) }
+                dismiss()
+            }
+            .keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(chosen == nil)
+        }
+        .frame(height: 520)
+    }
+
+    /// A helper or a command-line proxy that isn't in the list: listed from now on, and chosen.
+    private func chooseExecutable() {
+        let p = NSOpenPanel()
+        p.message = "Choose the app or command-line tool that runs this proxy."
+        p.prompt = "Choose"
+        p.resolvesAliases = false
+        guard p.runModal() == .OK, let url = p.url,
+              AppScan.bundle(url, system: false) != nil || FileManager.default.isExecutableFile(atPath: url.path) else { return }
+        chosen = model.apps.add(url)
+        query = ""
+    }
+}

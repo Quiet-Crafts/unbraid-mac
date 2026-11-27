@@ -2867,6 +2867,14 @@ final class Connection {
     }
 
     /// The network, the Mac's sleep or the engine changed: no earlier answer says anything about now.
+    /// Try Again on a route that doesn't answer: the checks start over now, as after the Mac wakes, so it is said to be
+    /// silent again only if it still doesn't answer. Nothing in the engine changes.
+    func checkAgain() {
+        healthReset += 1
+        if !state.silent.isEmpty { state.silent = [] }
+        forgetAnswers()
+    }
+
     private func forgetAnswers() {
         passedChecks.removeAll()
         if !state.answering.isEmpty { state.answering = [] }

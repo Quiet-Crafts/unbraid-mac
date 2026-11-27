@@ -500,7 +500,15 @@ private struct RouteHealthCards: View {
                     }
                     .padding(.horizontal, Layout.inset).padding(.vertical, 14).card()
                 }
-                if silent {
+                if silent, let text = RouteHealth.proxySilent(route) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
+                        Text(text).font(.system(size: 13)).fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        Button(RouteHealth.tryAgain) { model.vpn.checkAgain() }.controlSize(.small)
+                    }
+                    .padding(.horizontal, Layout.inset).padding(.vertical, 14).card()
+                } else if silent {
                     HStack(alignment: .firstTextBaseline, spacing: 12) {
                         Image(systemName: "exclamationmark.triangle").foregroundStyle(Ink.failedText).frame(width: Measure.slashColumn)
                         VStack(alignment: .leading, spacing: 2) {
