@@ -686,7 +686,7 @@ private struct ProviderDetail: View {
                     Section("Used by") {
                         ForEach(routes) { r in
                             let apps = s.apps.values.filter { $0 == r.id }.count
-                            SettingsRow(title: r.name, caption: ([s.defaultRoute == r.id ? "Default route" : "\(apps) app\(apps == 1 ? "" : "s")"] + [live[r.id].map { serverId(r, $0) }].compactMap { $0 }).joined(separator: " · "), symbol: "point.topleft.down.curvedto.point.bottomright.up", route: r) { EmptyView() }
+                            SettingsRow(title: r.name, caption: ([s.defaultRoute == r.id ? "Default route" : "\(apps) app\(apps == 1 ? "" : "s")"] + [live[r.id].flatMap(r.serverLine)].compactMap { $0 }).joined(separator: " · "), symbol: "point.topleft.down.curvedto.point.bottomright.up", route: r) { EmptyView() }
                         }
                     }
                 }

@@ -21,12 +21,6 @@ private func placeOnly(_ r: Route, _ live: [String: Server], tcp: [String]) -> S
     return [r.source, nord ? nordGroups.first { $0.key != nil && $0.key == r.loc.group }?.label : nil, city, tech].compactMap { $0 }.joined(separator: " · ")
 }
 
-/// Server name and, where the provider publishes it, its load: "nl1256 · 9% load".
-func serverId(_ r: Route, _ s: Server) -> String {
-    let name = r.loc.provider == "nord" ? String(s.host.split(separator: ".").first ?? "") : s.name
-    return [name, s.load >= 0 && Providers.get(r.loc.provider)?.hasLoad == true ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · ")
-}
-
 
 /// Home access: the tailnet and home subnets, reached from every app.
 struct HomeRow: View {

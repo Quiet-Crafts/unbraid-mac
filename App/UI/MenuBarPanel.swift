@@ -98,8 +98,8 @@ struct MenuBarPanel: View {
                     HStack(spacing: 8) {
                         Slash(color: s.color(id)).frame(width: Measure.slashColumn)
                         Text(s.label(id)).lineLimit(1)
-                        if v.phase == .on, let server = v.servers[id], let r = s.route(id) {
-                            Text(serverId(r, server)).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.dim).lineLimit(1)
+                        if v.phase == .on, let server = v.servers[id], let line = s.route(id)?.serverLine(server) {
+                            Text(line).font(.system(size: 11, design: .monospaced)).foregroundStyle(Ink.dim).lineLimit(1)
                         }
                         if let reason = v.blocked[id] {
                             Text("Not working").font(.system(size: 11)).foregroundStyle(Ink.failedText).help(reason)

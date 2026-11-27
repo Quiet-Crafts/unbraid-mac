@@ -217,6 +217,28 @@ final class SetupImportTests: XCTestCase {
         XCTAssertNil(provider("n").ownPlace, "a provider route shows its city or Fastest")
     }
 
+    /// A provider route's server line: NordVPN's host code, another provider's server name, and the load only where the
+    /// provider publishes one.
+    func testAProviderRoutesServerLineNamesItsServerAndLoad() {
+        let nord = Server(name: "Netherlands #1256", host: "nl1256.nordvpn.com", ip: "203.0.113.80", publicKey: "", load: 9)
+        XCTAssertEqual(provider("n").serverLine(nord), "nl1256 · 9% load")
+        var unknown = nord; unknown.load = -1
+        XCTAssertEqual(provider("n").serverLine(unknown), "nl1256")
+        XCTAssertEqual(provider("i", "ivpn").serverLine(Server(name: "nl-ams-wg-1", host: "nl-ams-wg-1.example", ip: "", publicKey: "", load: 30)), "nl-ams-wg-1 · 30% load")
+        XCTAssertEqual(provider("m", "mullvad").serverLine(Server(name: "se-got-wg-001", host: "se-got-wg-001.example", ip: "", publicKey: "", load: 12)), "se-got-wg-001")
+    }
+
+    /// Two provider routes of one name are told apart by their city, else their server group, else their provider.
+    func testProviderRoutesOfOneNameAreToldApartByCityGroupOrProvider() {
+        var city = provider("a"); city.loc.city = "Amsterdam"; city.loc.group = "legacy_p2p"
+        XCTAssertEqual(city.nameDetail, "Amsterdam")
+        var group = provider("b"); group.loc.group = "legacy_p2p"
+        XCTAssertEqual(group.nameDetail, "legacy_p2p")
+        XCTAssertEqual(provider("c").nameDetail, "NordVPN")
+        XCTAssertEqual(provider("d", "mullvad").nameDetail, "Mullvad")
+        XCTAssertNil(provider("e", "gone").nameDetail, "a provider this build doesn't know adds nothing")
+    }
+
     func testRemovingTheDefaultNeverHandsItToALocalProxyWithoutItsApp() {
         let lp = Route(id: "r1", socks5: Socks5Profile(name: "Proxy on this Mac", host: "127.0.0.1", port: 1080, item: "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C"))
         var s = Setup(routes: [Route(id: "r0", wg: wg), lp, Route(id: "r2", wg: wg)], defaultRoute: "r0")

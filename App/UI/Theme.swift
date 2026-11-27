@@ -327,8 +327,7 @@ extension Setup {
         guard let r = route(id) else { return "Removed route" }
         // Two routes with one name (same country, another city or provider) are told apart in every menu.
         guard routes.contains(where: { $0.id != id && $0.name == r.name }) else { return r.name }
-        let detail = r.loc.city ?? r.loc.group ?? Providers.get(r.loc.provider)?.name
-        return detail.map { "\(r.name) · \($0)" } ?? r.name
+        return r.nameDetail.map { "\(r.name) · \($0)" } ?? r.name
     }
 
     /// "Netherlands · Default" for apps that follow the default.

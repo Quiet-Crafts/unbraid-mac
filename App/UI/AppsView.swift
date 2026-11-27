@@ -147,7 +147,7 @@ struct AppsView: View {
             guard let r = s.route(id) else { return "" }
             let live = model.vpn.state.phase == .on ? model.vpn.state.servers[id] : nil
             let p = place(r, model.vpn.state.servers, tcp: model.vpn.state.autoTcp, routes: s.routes)
-            return [live.map { "\(p) · \(serverId(r, $0))" } ?? p, id == s.defaultRoute ? "every app that follows the default" : nil]
+            return [live.flatMap(r.serverLine).map { "\(p) · \($0)" } ?? p, id == s.defaultRoute ? "every app that follows the default" : nil]
                 .compactMap { $0 }.joined(separator: " · ")
         }
     }

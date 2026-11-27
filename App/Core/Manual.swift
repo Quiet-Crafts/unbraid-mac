@@ -799,6 +799,16 @@ nonisolated extension Route {
     var ownPlace: String? {
         wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : socks5 != nil ? "SOCKS5" : tsExit != nil ? "Tailscale exit" : nil
     }
+
+    /// What tells this route apart from another of the same name in menus: its city, server group or provider.
+    var nameDetail: String? { loc.city ?? loc.group ?? Providers.get(loc.provider)?.name }
+
+    /// The server [s] this route runs on, as the route's header and the menu bar name it: its name and, where the
+    /// provider publishes it, its load ("nl1256 · 9% load").
+    func serverLine(_ s: Server) -> String? {
+        let name = loc.provider == "nord" ? String(s.host.split(separator: ".").first ?? "") : s.name
+        return [name, s.load >= 0 && Providers.get(loc.provider)?.hasLoad == true ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · ")
+    }
 }
 
 nonisolated extension Socks5Profile {
