@@ -1232,11 +1232,16 @@ extension AppModel {
         let now = Date.now
         // Every route either setup has, and with the profile every assignment: no edit still under way lands on top.
         let targets = Set([RouteEdits.Target.profile, .defaultRoute] + (setup.routes + content.setup.routes).map { .location($0.id) })
-        // Proxy server passwords first, under the new items the backup's routes name (`Backup.read`): one the keychain
-        // didn't take leaves its route waiting for it, and the restore says so.
-        let rejected = Set(content.passwords.filter { !Socks5Secrets.set($0.key, $0.value) }.map(\.key))
-        guarded({ s in s = Backup.waiting(Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, held: held, judge: false).setup, for: rejected) },
-                targets: targets, after: { [weak self] _, _ in
+        // Proxy server passwords first, under the new items the backup's routes name (`Backup.read`), but none for a
+        // proxy that keeps this Mac's item and password (`Backup.keptItems`). One the keychain didn't take leaves its route
+        // waiting for it, and the restore says so; so does one left unwritten that this Mac's setup, changed meanwhile, uses.
+        let written = Backup.passwords(content, onto: setup, held: held)
+        let rejected = Set(written.filter { !Socks5Secrets.set($0.key, $0.value) }.map(\.key))
+        let unwritten = Set(content.passwords.keys).subtracting(written.keys)
+        guarded({ s in s = Backup.waiting(Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, held: held, judge: false).setup,
+                                          for: rejected.union(unwritten)) },
+                targets: targets, after: { [weak self] _, new in
+            let missing = rejected.union(unwritten.filter { item in new.routes.contains { $0.socks5?.item == item } })
             // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
             UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)
             MoveHistory.generation += 1
@@ -1244,13 +1249,13 @@ extension AppModel {
             guard let self else { return }
             refusedProfile = nil
             autoSwitch.replaced()
-            if rejected.isEmpty { notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n") }
-            else { warn("The backup was restored, but the keychain didn't keep \(rejected.count) proxy server password(s). The apps on those routes are blocked until you enter them again.") }
+            if missing.isEmpty { notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n") }
+            else { warn("The backup was restored, but the keychain didn't keep \(missing.count) proxy server password(s). The apps on those routes are blocked until you enter them again.") }
         }, finished: { [weak self] applied in
             guard !applied, let self else { return }
             warn("The backup wasn't restored. Nothing changed.")
-            // Its passwords go too, unless an earlier restore of the same backup uses them.
-            for item in content.passwords.keys where !setup.routes.contains(where: { $0.socks5?.item == item }) { Socks5Secrets.set(item, nil) }
+            // The passwords written go too, unless an earlier restore of the same backup uses them.
+            for item in written.keys where !setup.routes.contains(where: { $0.socks5?.item == item }) { Socks5Secrets.set(item, nil) }
         })
     }
 

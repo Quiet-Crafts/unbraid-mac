@@ -1423,9 +1423,7 @@ extension BackupTests {
     }
 
     func testRestoringKeepsThisMacsProxyPasswordsWhereTheyAre() throws {
-        // This Mac's proxy route under the backup's id but on another port: not the same route, so both stay.
         var here = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": "p1"])
-        here.routes[1].socks5?.port = 1081
         here.profileSalt = UUID().uuidString
         let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
         let plan = Backup.plan(onto: here, from: content, keepPrevious: true, now: .now, judge: false)
@@ -1478,75 +1476,142 @@ extension BackupTests {
 // MARK: Restoring a proxy route this Mac has
 
 extension BackupTests {
-    /// This Mac's own backup with keys, restored keeping the setup: the proxy route is the backup's, once, and the kept
-    /// profile uses it. Two routes on one proxy stay one proxy server.
+    /// This Mac's own backup with keys, restored keeping the setup: the proxy keeps this Mac's item and password (the
+    /// backup's isn't used), so it is one route and one proxy server, and the kept profile uses it.
     func testRestoringTheSameProxyRouteKeepsOneCopy() throws {
-        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true) throws -> (Backup.Content, Backup.Plan) {
+        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true, held: Set<String> = [BackupTests.proxyItem]) throws -> (Backup.Content, Backup.Plan) {
             let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
-            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, judge: false))
+            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, held: held, judge: false))
         }
         var here = withProxy()
         here.routes.append(proxyRoute("p2")); here.apps["org.example.q"] = "p2"
-        let (content, plan) = try proxyPlan(here, here, keys: true)
-        XCTAssertEqual(plan.keptAs, "Previous")
-        XCTAssertEqual(plan.setup.routes.filter { $0.socks5 != nil }.map(\.id), ["p1", "p2"], "no copy of this Mac's routes")
-        XCTAssertEqual(plan.setup.proxyServers.count, 1)
-        XCTAssertEqual(plan.setup.proxyServers.first?.item, content.setup.route("p1")?.socks5?.item, "the backup's item, where its password goes")
-        XCTAssertEqual(plan.setup.routes.map(\.id), content.setup.routes.map(\.id))
-        XCTAssertEqual(plan.setup.profiles.last?.apps["org.example.p"], "p1")
-        XCTAssertEqual(plan.setup.profiles.last?.apps["org.example.q"], "p2")
-        XCTAssertNoThrow(try Backup.valid(plan.setup))
-        // This Mac's routes waiting for their password here: the backup's, with its password, are the ones kept.
-        var waiting = here
-        for i in waiting.routes.indices where waiting.routes[i].socks5 != nil { waiting.routes[i].keyless = true }
-        let (_, again) = try proxyPlan(waiting, here, keys: true)
-        XCTAssertEqual(again.setup.routes.filter { $0.socks5 != nil }.map(\.keyless), [false, false])
-        XCTAssertEqual(again.setup.proxyServers.count, 1)
+        for keep in [true, false] {
+            let (content, plan) = try proxyPlan(here, here, keys: true, keepPrevious: keep)
+            XCTAssertEqual(plan.keptAs, keep ? "Previous" : nil)
+            XCTAssertEqual(plan.setup.routes.filter { $0.socks5 != nil }.map(\.id), ["p1", "p2"], "no copy of this Mac's routes")
+            XCTAssertEqual(plan.setup.proxyServers.map(\.item), [Self.proxyItem], "this Mac's item, with the password it has")
+            XCTAssertEqual(plan.setup.routes.filter { $0.socks5 != nil }.map(\.keyless), [false, false])
+            XCTAssertTrue(Set(plan.setup.routes.compactMap(\.socks5?.item)).isDisjoint(with: content.passwords.keys), "the backup's password is used nowhere")
+            XCTAssertEqual(plan.setup.routes.map(\.id), content.setup.routes.map(\.id))
+            XCTAssertNoThrow(try Backup.valid(plan.setup))
+            if keep {
+                XCTAssertEqual(plan.setup.profiles.last?.apps["org.example.p"], "p1", "Previous keeps the route on this Mac's item")
+                XCTAssertEqual(plan.setup.profiles.last?.apps["org.example.q"], "p2")
+            }
+        }
     }
 
-    /// Saved without keys and restored keeping the setup: the proxy route takes this Mac's keychain item, where its
-    /// password is, instead of waiting for it, and so does every route of the backup on that proxy.
+    /// Saved without keys and restored keeping the setup: the proxy route takes this Mac's item, where its password is,
+    /// instead of waiting for it. Routes on one proxy whose proxy app differs (it is set per route) take it too.
     func testAProxyRouteSavedWithoutKeysTakesThisMacsPassword() throws {
-        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true) throws -> (Backup.Content, Backup.Plan) {
-            let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
-            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, judge: false))
+        func proxyPlan(_ here: Setup, _ backup: Setup, keepPrevious: Bool) throws -> (Backup.Content, Backup.Plan) {
+            let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: false))
+            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, held: [Self.proxyItem], judge: false))
         }
-        let here = withProxy()
-        var backup = withProxy()
-        backup.routes.append(proxyRoute("p3")); backup.apps["org.example.r"] = "p3"
-        let (content, plan) = try proxyPlan(here, backup, keys: false)
+        let (content, plan) = try proxyPlan(withProxy(), withProxy(), keepPrevious: true)
         XCTAssertEqual(content.setup.route("p1")?.keyless, true)
-        let proxies = plan.setup.routes.filter { $0.socks5 != nil }
-        XCTAssertEqual(proxies.map(\.id), ["p1", "p3"])
-        XCTAssertEqual(proxies.map(\.keyless), [false, false])
-        XCTAssertEqual(proxies.map(\.socks5?.item), [Self.proxyItem, Self.proxyItem])
+        XCTAssertEqual(plan.setup.routes.filter { $0.socks5 != nil }, withProxy().routes.filter { $0.socks5 != nil })
         XCTAssertEqual(plan.setup.proxyServers.count, 1)
         XCTAssertNoThrow(try Backup.valid(plan.setup))
-        // Routes on one proxy whose proxy app differs (it is set per route) each find their own.
         var apps = withProxy()
         apps.routes.append(proxyRoute("p2")); apps.apps["org.example.q"] = "p2"
         apps.routes[apps.routes.count - 1].socks5?.proxyApp = "org.example.proxy"
-        let (_, each) = try proxyPlan(apps, apps, keys: false)
+        let (_, each) = try proxyPlan(apps, apps, keepPrevious: true)
         XCTAssertEqual(each.setup.routes.filter { $0.socks5 != nil }, apps.routes.filter { $0.socks5 != nil })
     }
 
     func testWithoutKeepingAProxyRouteSavedWithoutKeysTakesThisMacsPassword() throws {
-        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true) throws -> (Backup.Content, Backup.Plan) {
-            let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
-            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, judge: false))
-        }
-        let (_, plan) = try proxyPlan(withProxy(), withProxy(), keys: false, keepPrevious: false)
+        let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: false))
+        let plan = Backup.plan(onto: withProxy(), from: content, keepPrevious: false, now: .now, held: [Self.proxyItem], judge: false)
         XCTAssertNil(plan.keptAs)
         XCTAssertEqual(plan.setup.route("p1")?.keyless, false)
         XCTAssertEqual(plan.setup.route("p1")?.socks5, proxyRoute().socks5)
     }
 
+    /// Where this Mac's password can't be known to be the right one, nothing is taken over: the backup's route waits for
+    /// its password (without keys) or brings its own (with keys), as a restore did before this Mac's item was kept.
+    func testNoProxyTakeoverWithoutOneSureMatch() throws {
+        func plan(_ here: Setup, _ backup: Setup, keys: Bool = false, held: Set<String> = [BackupTests.proxyItem]) throws -> (Backup.Content, Backup.Plan) {
+            let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
+            return (content, Backup.plan(onto: here, from: content, keepPrevious: true, now: .now, held: held, judge: false))
+        }
+        func untouched(_ c: Backup.Content, _ p: Backup.Plan, _ ids: [String], file: StaticString = #filePath, line: UInt = #line) {
+            for id in ids {
+                XCTAssertEqual(p.setup.route(id)?.socks5?.item, c.setup.route(id)?.socks5?.item, id, file: file, line: line)
+                XCTAssertEqual(p.setup.route(id)?.keyless, c.setup.route(id)?.keyless, id, file: file, line: line)
+            }
+        }
+        // One backup item, two routes of this Mac on two items with different passwords: neither is known to be it.
+        let other = "5D2C3B4A-1E0F-4A9B-8C7D-6E5F4A3B2C1D"
+        var two = withProxy()
+        two.routes.append(proxyRoute("p2", item: other)); two.routes.append(proxyRoute("p3"))
+        var backup = two
+        backup.routes[backup.routes.count - 2].socks5?.item = Self.proxyItem
+        for (order, b) in [(1, backup), (2, { var r = backup; r.routes.reverse(); return r }())] {
+            let (c, p) = try plan(two, b, held: [Self.proxyItem, other])
+            untouched(c, p, ["p1", "p2", "p3"])
+            XCTAssertEqual(c.setup.route("p1")?.keyless, true, "order \(order)")
+        }
+        // A route of the backup on that item that this Mac lacks, or has under another name.
+        var more = withProxy()
+        more.routes.append(proxyRoute("p3"))
+        var (c, p) = try plan(withProxy(), more)
+        untouched(c, p, ["p1", "p3"])
+        var renamed = more
+        renamed.routes[renamed.routes.count - 1].socks5?.name = "Other proxy"
+        (c, p) = try plan(more, renamed)
+        untouched(c, p, ["p1", "p3"])
+        // A username that is the same to Swift but other bytes on the wire.
+        var composed = withProxy(), decomposed = withProxy()
+        composed.routes[composed.routes.count - 1].socks5?.username = "jos\u{E9}"
+        decomposed.routes[decomposed.routes.count - 1].socks5?.username = "jose\u{301}"
+        XCTAssertEqual(composed.routes.last?.socks5?.username, decomposed.routes.last?.socks5?.username, "Swift takes them for one string")
+        (c, p) = try plan(composed, decomposed)
+        untouched(c, p, ["p1"])
+        // This Mac's item has no password in the keychain: the route keeps waiting, as before.
+        (c, p) = try plan(withProxy(), withProxy(), held: [])
+        untouched(c, p, ["p1"])
+        XCTAssertEqual(p.setup.route("p1")?.keyless, true)
+        // This Mac's route waits for its password itself: the backup's, with keys, brings its own, and this Mac's stays beside it.
+        var waiting = withProxy()
+        waiting.routes[waiting.routes.count - 1].keyless = true
+        (c, p) = try plan(waiting, withProxy(), keys: true)
+        untouched(c, p, ["p1"])
+        XCTAssertEqual(p.setup.routes.filter { $0.socks5 != nil }.count, 2)
+    }
+
+    /// The preview judges the setup the restore makes, given the same passwords this Mac holds: with this Mac's password
+    /// the proxy route runs in both, without it it waits in both.
+    func testThePreviewSeesTheProxyTakeoverTheRestoreMakes() throws {
+        let here = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": BLOCK])
+        let backup = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": "p1"])
+        let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: false))
+        for (held, waits) in [([Self.proxyItem], false), ([], true)] as [(Set<String>, Bool)] {
+            let preview = Backup.plan(onto: here, from: content, keepPrevious: false, now: .now, held: held)
+            let applied = Backup.waiting(Backup.plan(onto: here, from: content, keepPrevious: false, now: .now, held: held, judge: false).setup, for: [])
+            XCTAssertEqual(preview.setup, applied)
+            XCTAssertEqual(applied.route("p1")?.keyless, waits)
+            XCTAssertEqual(preview.weakens, Backup.weakens(here, applied))
+        }
+    }
+
+    /// A password the keychain refuses for a route that brings its own (not this Mac's) leaves that route waiting.
+    func testARefusedPasswordOfAProxyRouteNotTakenOverLeavesItWaiting() throws {
+        let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
+        let item = try XCTUnwrap(content.passwords.keys.first)
+        let plan = Backup.plan(onto: withProxy(), from: content, keepPrevious: false, now: .now, held: [], judge: false)
+        XCTAssertEqual(plan.setup.route("p1")?.socks5?.item, item)
+        let out = Backup.waiting(plan.setup, for: [item])
+        XCTAssertEqual(out.route("p1")?.keyless, true)
+        XCTAssertEqual(out.routes.filter { $0.socks5 == nil }, plan.setup.routes.filter { $0.socks5 == nil })
+    }
+
     /// A proxy route of this Mac that really differs from the backup's under the same id is kept as a copy, with its own
     /// item; and a backup's route without keys never takes the item of a different proxy.
     func testAProxyRouteThatDiffersIsStillKeptAsACopy() throws {
-        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true) throws -> (Backup.Content, Backup.Plan) {
+        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool) throws -> (Backup.Content, Backup.Plan) {
             let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
-            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, judge: false))
+            return (content, Backup.plan(onto: here, from: content, keepPrevious: true, now: .now, held: [Self.proxyItem], judge: false))
         }
         for change in [{ (x: inout Socks5Profile) in x.port = 1081 }, { $0.host = "203.0.113.21" }, { $0.username = "you" }] {
             var here = withProxy()
@@ -1575,19 +1640,28 @@ extension BackupTests {
 
     /// A proxy route only the backup has keeps the new item the backup was read with, with keys or without.
     func testAProxyRouteOnlyInTheBackupKeepsItsNewItem() throws {
-        func proxyPlan(_ here: Setup, _ backup: Setup, keys: Bool, keepPrevious: Bool = true) throws -> (Backup.Content, Backup.Plan) {
-            let content = try Backup.read(Backup.export(backup, app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
-            return (content, Backup.plan(onto: here, from: content, keepPrevious: keepPrevious, now: .now, judge: false))
-        }
         var here = Setup(routes: [nl(), proxyRoute("p9")], defaultRoute: "nl", apps: ["org.example.p": "p9"])
         here.profileSalt = UUID().uuidString
         for keys in [true, false] {
-            let (content, plan) = try proxyPlan(here, withProxy(), keys: keys)
+            let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: keys, passwords: [Self.proxyItem: Self.proxyPassword]))
+            let plan = Backup.plan(onto: here, from: content, keepPrevious: true, now: .now, held: [Self.proxyItem], judge: false)
             let item = try XCTUnwrap(content.setup.route("p1")?.socks5?.item)
             XCTAssertNotEqual(item, Self.proxyItem)
             XCTAssertEqual(plan.setup.route("p1")?.socks5?.item, item)
             XCTAssertEqual(plan.setup.route("p1")?.keyless, !keys)
             XCTAssertEqual(plan.setup.route("p9")?.socks5?.item, Self.proxyItem)
+        }
+    }
+
+    /// The restore writes the backup's proxy passwords except where this Mac's item is kept.
+    func testTheRestoreWritesOnlyThePasswordsItsRoutesUse() throws {
+        let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
+        XCTAssertEqual(Backup.passwords(content, onto: withProxy(), held: [Self.proxyItem]), [:])
+        XCTAssertEqual(Backup.passwords(content, onto: withProxy(), held: []), content.passwords)
+        XCTAssertEqual(Backup.passwords(content, onto: Setup(), held: [Self.proxyItem]), content.passwords)
+        for held: Set<String> in [[Self.proxyItem], []] {
+            let used = Set(Backup.plan(onto: withProxy(), from: content, keepPrevious: true, now: .now, held: held, judge: false).setup.routes.compactMap(\.socks5?.item))
+            XCTAssertEqual(Set(Backup.passwords(content, onto: withProxy(), held: held).keys), used.intersection(content.passwords.keys))
         }
     }
 }

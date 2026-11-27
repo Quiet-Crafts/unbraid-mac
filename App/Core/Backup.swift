@@ -595,8 +595,8 @@ nonisolated enum Backup {
 
     /// This Mac's setup replaced by `content`'s. This Mac's Tailscale, statistics consent and profile request salt
     /// stay; its Home WireGuard tunnel stays too unless the backup has keys. A server saved without keys that this Mac
-    /// still has (`OwnServer.sameAs`) takes this Mac's config, and a proxy route waiting for its password takes this
-    /// Mac's keychain item. With `keepPrevious` (and something set up here), the setup in use is kept as the profile
+    /// still has (`OwnServer.sameAs`) takes this Mac's config, and a proxy server this Mac has with its password keeps
+    /// this Mac's keychain item (`keptItems`). With `keepPrevious` (and something set up here), the setup in use is kept as the profile
     /// `previous` (or with a number), with this Mac's routes and own servers: shared where the backup has the same one,
     /// under a new id where it uses that id for something else, and the kept profile follows it. `now` is when the
     /// restore happens, for rules that run from it. `apps` are the patterns of the apps on this Mac, as the engine is
@@ -616,18 +616,11 @@ nonisolated enum Backup {
                 (b.routes[i].wg, b.routes[i].ovpn, b.routes[i].ss, b.routes[i].keyless) = (sv.wg, sv.ovpn, sv.ss, false)
             }
         }
-        // A proxy route waiting for its password that this Mac has under the same id, the very same apart from its
-        // keychain item, takes this Mac's item, where the password is; so do the backup's other routes on that proxy
-        // (its item), with the same server and login.
-        func mine(_ x: Route) -> Socks5Profile? {
-            guard x.keyless, let p = x.socks5, let m = current.route(x.id), !m.keyless, let q = m.socks5, sameProxy(p, q) else { return nil }
-            return q
-        }
-        let here = Dictionary(b.routes.compactMap { x in mine(x).map { (x.socks5?.item ?? "", $0) } }) { a, _ in a }
-        for i in b.routes.indices where b.routes[i].keyless {
-            guard let p = b.routes[i].socks5, let q = mine(b.routes[i]) ?? here[p.item],
-                  (p.host, p.port, p.username) == (q.host, q.port, q.username) else { continue }
-            b.routes[i].socks5?.item = q.item; b.routes[i].keyless = false
+        // A proxy server this Mac has with its password keeps this Mac's item (`keptItems`), with or without keys.
+        let mine = keptItems(onto: current, from: b, held: held)
+        for i in b.routes.indices {
+            guard let item = b.routes[i].socks5.flatMap({ mine[$0.item] }) else { continue }
+            b.routes[i].socks5?.item = item; b.routes[i].keyless = false
         }
         var r = b
         r.home = current.home
@@ -732,9 +725,6 @@ nonisolated enum Backup {
         var r = r
         r.loc = bare(r.loc)
         if !r.keyless { r.wg = r.wg.map { asRead($0) ?? $0 } }
-        // A proxy route's keychain item is new with every restore (`read`), and one waiting for its password is still the
-        // same route: the backup's stays, with the password it brings.
-        if r.socks5 != nil { r.socks5?.item = ""; r.keyless = false }
         return r
     }
     private static func filed(_ s: OwnServer) -> OwnServer {
@@ -743,11 +733,37 @@ nonisolated enum Backup {
         return s
     }
 
-    /// The same in everything but the keychain item that holds the password.
-    private static func sameProxy(_ a: Socks5Profile, _ b: Socks5Profile) -> Bool {
-        var b = b
-        b.item = a.item
-        return a == b
+    /// The backup's proxy items that stay this Mac's own (the backup's item → this Mac's): every route of the backup on
+    /// that item has a route here with the same id, not waiting for its password, with the very same proxy server apart
+    /// from the item (`sameProxy`); all of those are on one item of this Mac, which [held] has its password (or the proxy
+    /// takes no login); and no other item of the backup comes to that one. A restore never writes over a password this
+    /// Mac keeps, and never gives a route a password of another login. Anything else gets the backup's own.
+    static func keptItems(onto current: Setup, from backup: Setup, held: Set<String>) -> [String: String] {
+        var out: [String: String] = [:]
+        for (item, routes) in Dictionary(grouping: backup.routes.filter { $0.socks5 != nil }, by: { $0.socks5?.item ?? "" }) {
+            let here = routes.compactMap { r in
+                current.route(r.id).flatMap { m in m.keyless ? nil : m.socks5.flatMap { sameProxy($0, r.socks5) ? $0 : nil } }
+            }
+            guard here.count == routes.count, Set(here.map(\.item)).count == 1, let mine = here.first,
+                  held.contains(mine.item) || here.allSatisfy({ $0.username == nil }) else { continue }
+            out[item] = mine.item
+        }
+        let taken = Dictionary(grouping: out.values, by: { $0 }).mapValues(\.count)
+        return out.filter { taken[$0.value] == 1 }
+    }
+
+    /// The backup's proxy passwords a restore writes: none for an item whose routes keep this Mac's (`keptItems`).
+    static func passwords(_ content: Content, onto current: Setup, held: Set<String>) -> [String: String] {
+        let kept = keptItems(onto: current, from: content.setup, held: held)
+        return content.passwords.filter { kept[$0.key] == nil }
+    }
+
+    /// The same proxy server, login and proxy app, whatever keychain item holds the password. Compared byte for byte:
+    /// two spellings Swift takes for one string are two logins to the proxy.
+    private static func sameProxy(_ a: Socks5Profile, _ b: Socks5Profile?) -> Bool {
+        guard let b else { return false }
+        func bytes(_ x: Socks5Profile) -> [[UInt8]?] { [Array(x.name.utf8), Array(x.host.utf8), x.username.map { Array($0.utf8) }, x.proxyApp.map { Array($0.utf8) }] }
+        return a.port == b.port && bytes(a) == bytes(b)
     }
 
     private static func fresh(_ prefix: String, _ taken: Set<String>) -> String {
