@@ -727,6 +727,14 @@ nonisolated struct PendingProxy: Hashable {
 }
 
 nonisolated extension Setup {
+    /// Said beside the kill switch once a proxy server is a route: a proxy is no VPN, so it isn't covered by a
+    /// reconnect wait. One that doesn't answer blocks its apps, and the proxy app on this Mac keeps your normal connection.
+    var proxyKillNote: String {
+        routes.contains { $0.socks5 != nil }
+            ? " A proxy server is not a VPN: apps on one that doesn't answer are blocked, never sent another way, and a proxy app on this Mac uses your normal connection."
+            : ""
+    }
+
     /// The user's proxy servers: they live on routes, and routes made from one share its keychain item, so each is
     /// listed once, in route order.
     var proxyServers: [Socks5Profile] {

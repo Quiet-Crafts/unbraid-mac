@@ -161,6 +161,30 @@ final class StatsMathTests: XCTestCase {
         XCTAssertEqual(StatsMath.exitOf(tag: "r-gone", app: "x", setup: s, tags: tags), "gone") // a route removed since
     }
 
+    func testProxyTrafficIsCountedOnceUnderItsRouteAndTwoProxiesStayApart() throws {
+        func proxy(_ id: String) -> Route { Route(id: id, socks5: Socks5Profile(name: id, host: "203.0.113.20", port: 1080, username: "me", item: UUID().uuidString)) }
+        var s = Setup(); s.routes = [proxy("p1"), proxy("p2")]; s.defaultRoute = "p1"; s.apps = ["com.two": "p2"]
+        var links: [String: Link] = [:]
+        for r in s.routes { links[r.id] = LinkPicker.imported(r) }
+        let tags = try Compiler.shared(s, links)
+        XCTAssertNotEqual(tags["p1"], tags["p2"])
+        XCTAssertEqual(StatsMath.exitOf(tag: tags["p1"], app: "com.one", setup: s, tags: tags), "p1")
+        XCTAssertEqual(StatsMath.exitOf(tag: tags["p2"], app: "com.two", setup: s, tags: tags), "p2")
+        // The engine reports the app's connection once, by the proxy's tag; a replay of it adds nothing.
+        var ledger = Ledger()
+        let ev = Ledger.Ev(kind: .new, id: "c1", total: Traffic(up: 10, down: 90), delta: Traffic(), path: "/Applications/Two.app", tag: tags["p2"], closed: true, created: 1, own: false)
+        let open = { (e: Ledger.Ev) in Ledger.Conn(app: "com.two", exit: "p2", server: nil) }
+        XCTAssertEqual(ledger.apply([ev], reset: false, open: open).counted.map { $0.up + $0.down }, [100])
+        XCTAssertTrue(ledger.apply([ev], reset: true, open: open).counted.isEmpty)
+    }
+
+    func testTheKillSwitchTextSaysHowAProxyDiffersOnlyWhenOneExists() {
+        var s = Setup()
+        XCTAssertEqual(s.proxyKillNote, "")
+        s.routes = [Route(id: "p", socks5: Socks5Profile(name: "p", host: "203.0.113.20", port: 1080, item: UUID().uuidString))]
+        XCTAssertTrue(s.proxyKillNote.contains("not a VPN"))
+    }
+
     func testProcessesBelongToTheAppWhoseBundleHoldsThem() {
         let bundles = [("/Applications/Safari.app", "com.apple.Safari"),
                        ("/System/Volumes/Preboot/Cryptexes/App/System/Applications/Safari.app", "com.apple.Safari"),

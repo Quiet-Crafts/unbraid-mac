@@ -953,7 +953,7 @@ private struct ProtectionTab: View {
                     ? (remoteHome ? "Internet and home network applies now. Internet applies when you resume: until then blocked apps stay off your home network." : "Applies now.")
                     : model.vpn.state.phase == .on ? "Turning this on or off restarts the VPN: for a moment apps may use your normal connection. Switching between Internet and Internet and home network doesn't."
                     : model.tunnelUp ? model.appliesLater : ""
-                SettingsRow(title: "Block traffic outside the VPN", caption: killNote(s.prefs.killLevel, lan: s.prefs.lan) + (blocked ? " It stays on while any app is blocked." : "") + (restart.isEmpty ? "" : " " + restart), symbol: "shield", captionLines: nil) {
+                SettingsRow(title: "Block traffic outside the VPN", caption: killNote(s.prefs.killLevel, lan: s.prefs.lan) + s.proxyKillNote + (blocked ? " It stays on while any app is blocked." : "") + (restart.isEmpty ? "" : " " + restart), symbol: "shield", captionLines: nil) {
                     // A menu, like the filter's: three segments with these labels are wider than the card and pushed
                     // the whole page sideways.
                     Picker("Block traffic outside the VPN", selection: Binding(get: { s.prefs.killLevel }, set: { v in model.setPrefs { $0.killLevel = v } })) {
