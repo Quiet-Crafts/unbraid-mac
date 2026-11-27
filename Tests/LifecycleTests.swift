@@ -126,7 +126,7 @@ final class RetryTests: XCTestCase {
         for _ in 0..<(Retry<Int>.limit * 2) { XCTAssertNotNil(r.failed(1, disrupted: true, blocking: true, now: t0)) }
     }
 
-    /// Not blocking, the tunnel stops as A-2's last resort; nor is anything held once the tunnel is down (macOS ended it,
+    /// Not blocking, stopping the tunnel stays the last resort; nor is anything held once the tunnel is down (macOS ended it,
     /// a restart that didn't come up) or while an erase is pending.
     func testOtherwiseTheLastResortStaysTheStop() {
         for status in [Lifecycle.Status.connected, .connecting, .stopping, .stopped] {
