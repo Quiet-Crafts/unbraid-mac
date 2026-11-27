@@ -931,6 +931,14 @@ final class AppModel {
         resetIfEmpty()
     }
 
+    func renameProxy(_ item: String, _ name: String) { store.update { $0.renameProxy(item, name) } }
+
+    /// Removes a proxy server and the routes using it, as `removeServer` does.
+    func removeProxy(_ item: String) {
+        store.update { $0.removeProxy(item) }
+        resetIfEmpty()
+    }
+
     /// Gives an imported source to a route and returns its id: see `Setup.addImported`, which also decides whether the
     /// new route becomes the default.
     @discardableResult

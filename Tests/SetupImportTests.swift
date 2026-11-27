@@ -194,6 +194,29 @@ final class SetupImportTests: XCTestCase {
         XCTAssertEqual(s, before, "only a proxy route takes a proxy app")
     }
 
+    func testAProxyInMyServersIsWordedAndManagedAsTheOtherServers() {
+        var s = Setup(routes: [Route(id: "r0", wg: wg)], defaultRoute: "r0")
+        s.useProxy("", local, id: "r1", signedIn: [])
+        XCTAssertEqual(s.proxyUse(local), "SOCKS5 · 127.0.0.1:1080 · used by 1 route")
+        s.useProxy("app:com.example.mail", local, id: "r2", signedIn: [])
+        XCTAssertEqual(s.proxyUse(local), "SOCKS5 · 127.0.0.1:1080 · used by 2 routes")
+        XCTAssertEqual(Setup().proxyUse(local), "SOCKS5 · 127.0.0.1:1080 · not in use")
+        s.renameProxy(local.item, "  Home proxy  ")
+        XCTAssertEqual(s.proxyRoutes(local.item).map(\.name), ["Home proxy", "Home proxy"])
+        s.renameProxy(local.item, " ")
+        XCTAssertEqual(s.route("r1")?.name, "Home proxy", "an empty name is ignored")
+        s.removeProxy(local.item)
+        XCTAssertEqual(s.routes.map(\.id), ["r0"])
+        XCTAssertNil(s.apps["com.example.mail"], "its apps follow the default")
+        XCTAssertEqual(s.defaultRoute, "r0")
+    }
+
+    func testARouteHeaderNamesAnOwnServersKindWithoutAPlace() {
+        XCTAssertEqual(Route(id: "p", socks5: local).ownPlace, "SOCKS5")
+        XCTAssertEqual(Route(id: "w", wg: wg).ownPlace, "WireGuard")
+        XCTAssertNil(provider("n").ownPlace, "a provider route shows its city or Fastest")
+    }
+
     func testRemovingTheDefaultNeverHandsItToALocalProxyWithoutItsApp() {
         let lp = Route(id: "r1", socks5: Socks5Profile(name: "Proxy on this Mac", host: "127.0.0.1", port: 1080, item: "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C"))
         var s = Setup(routes: [Route(id: "r0", wg: wg), lp, Route(id: "r2", wg: wg)], defaultRoute: "r0")

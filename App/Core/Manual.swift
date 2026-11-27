@@ -742,6 +742,31 @@ nonisolated extension Setup {
         return routes.compactMap(\.socks5).filter { seen.insert($0.item).inserted }
     }
 
+    /// The routes using proxy server [item].
+    func proxyRoutes(_ item: String) -> [Route] { routes.filter { $0.socks5?.item == item } }
+
+    /// A proxy server's caption in My Servers, worded as the other servers': "SOCKS5 · 127.0.0.1:1080 · used by 1 route".
+    func proxyUse(_ x: Socks5Profile) -> String {
+        let n = proxyRoutes(x.item).count
+        return "\(x.caption) · " + (n == 0 ? "not in use" : "used by \(n) route\(n == 1 ? "" : "s")")
+    }
+
+    /// Renames proxy server [item] on every route using it.
+    mutating func renameProxy(_ item: String, _ name: String) {
+        let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        guard !n.isEmpty else { return }
+        for i in routes.indices where routes[i].socks5?.item == item { routes[i].socks5?.name = n }
+    }
+
+    /// Proxy server [item] goes with the routes using it, as a saved server does (`removeServer`); their apps follow the
+    /// default. Its password stays in the keychain until Sign Out of Everything.
+    mutating func removeProxy(_ item: String) {
+        let gone = Set(proxyRoutes(item).map(\.id))
+        routes.removeAll { gone.contains($0.id) }
+        if gone.contains(defaultRoute) { defaultRoute = nextDefault }
+        apps = apps.filter { !gone.contains($0.value) }
+    }
+
     /// Route [target] ("" a new route, "app:<key>", or a route id) exits through proxy server [p], as `addImported` does.
     /// [keepDefault]: the default stays as it was (Direct if it was a route that went), even on a setup that had nothing
     /// usable: a proxy added in Settings is only made the default by the user.
@@ -765,6 +790,14 @@ nonisolated extension Setup {
         guard let i = routes.firstIndex(where: { $0.id == id }), routes[i].socks5 != nil else { return }
         routes[i].socks5?.proxyApp = app
         if makeDefault { defaultRoute = id }
+    }
+}
+
+nonisolated extension Route {
+    /// The place an own server's route shows in its header: its kind alone ("Shadowsocks", "SOCKS5"), never a provider's
+    /// city or "Fastest". Nil for a provider route.
+    var ownPlace: String? {
+        wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : socks5 != nil ? "SOCKS5" : tsExit != nil ? "Tailscale exit" : nil
     }
 }
 

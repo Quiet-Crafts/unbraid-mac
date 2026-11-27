@@ -324,12 +324,10 @@ private struct ConnectionsTab: View {
             }
             Section("My Servers") {
                 ForEach(s.servers) { ServerRow(server: $0) { importer.refill($0) } }
+                ForEach(s.proxyServers, id: \.item) { ProxyServerRow(proxy: $0) }
                 Button { importer.file() } label: {
                     SettingsRow(title: "Import WireGuard or OpenVPN File…", symbol: "doc") { EmptyView() }
                 }.buttonStyle(.plain)
-                ForEach(s.proxyServers, id: \.item) { x in
-                    SettingsRow(title: x.name, caption: x.caption, symbol: "server.rack", mark: "S5") { EmptyView() }
-                }
                 Button { importer.shadowsocks() } label: {
                     SettingsRow(title: "Add Shadowsocks Link…", symbol: "link") { EmptyView() }
                 }.buttonStyle(.plain)
@@ -449,6 +447,48 @@ private struct ServerRow: View {
             Button("Remove", role: .destructive) { model.removeServer(server.id) }
         } message: {
             Text(removalNote(n))
+        }
+    }
+}
+
+/// A proxy server in My Servers, laid out as `ServerRow`: it lives on its routes, so Remove takes them with it.
+private struct ProxyServerRow: View {
+    let proxy: Socks5Profile
+    private let model = AppModel.shared
+    @State private var renaming = false
+    @State private var removing = false
+    @State private var name = ""
+
+    /// What removing does, worded as `ServerRow`'s.
+    private var removalNote: String {
+        let s = model.setup
+        guard let current = s.route(s.defaultRoute), current.socks5?.item == proxy.item else {
+            return "The routes using it are removed too; apps set to them follow the default route."
+        }
+        var left = s
+        left.removeProxy(proxy.item)
+        return "\(current.name) is your default route. Everything that follows the default will "
+            + (left.route(left.defaultRoute).map { "use \($0.name)." } ?? "go Direct.") + " The routes using \(proxy.name) are removed too, and apps set to them follow the default."
+    }
+
+    var body: some View {
+        SettingsRow(title: proxy.name, caption: model.setup.proxyUse(proxy), symbol: "server.rack", mark: "S5") {
+            Menu {
+                Button("Rename…") { name = proxy.name; renaming = true }
+                Button("Remove…", role: .destructive) { removing = true }
+            } label: { Image(systemName: "ellipsis").foregroundStyle(.secondary).frame(width: 28, height: 28).contentShape(.rect) }
+                .menuStyle(.button).buttonStyle(.borderless).menuIndicator(.hidden).tint(.secondary).help("Server actions")
+                .accessibilityLabel("Actions for \(proxy.name)")
+        }
+        .alert("Rename", isPresented: $renaming) {
+            TextField("Name", text: $name, prompt: Text("e.g. Office"))
+            Button("Save") { model.renameProxy(proxy.item, name) }.disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            Button("Cancel", role: .cancel) {}
+        }
+        .confirmationDialog("Remove \(proxy.name)?", isPresented: $removing, titleVisibility: .visible) {
+            Button("Remove", role: .destructive) { model.removeProxy(proxy.item) }
+        } message: {
+            Text(removalNote)
         }
     }
 }

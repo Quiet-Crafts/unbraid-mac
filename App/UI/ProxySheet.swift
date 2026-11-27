@@ -94,8 +94,10 @@ struct ProxyAppSheet: View {
                 Button("Choose Executable…", action: chooseExecutable).contentButton()
             }
             .padding(.horizontal, Layout.gutter).padding(.bottom, 12)
-            List(apps, selection: $chosen) { a in
-                HStack(spacing: 8) { AppIconView(app: a); Text(a.name) }.tag(a.id)
+            List(selection: $chosen) {
+                // A program chosen with Choose Executable… (or hidden by the search) is named at the top, ticked.
+                if let c = chosen, !apps.contains(where: { $0.id == c }) { row(model.apps.app(c), name: model.appName(c), id: c) }
+                ForEach(apps) { row($0, name: $0.name, id: $0.id) }
             }
         } status: {
             Text(ask.makeDefault ? "Change it later with Change Proxy App… on the route's page." : chosen.map { model.appName($0) } ?? "").lineLimit(1)
@@ -108,6 +110,17 @@ struct ProxyAppSheet: View {
             .keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled(chosen == nil)
         }
         .frame(height: 520)
+    }
+
+    /// An app or program, ticked while it is the choice.
+    private func row(_ app: AppInfo?, name: String, id: String) -> some View {
+        HStack(spacing: 8) {
+            AppIconView(app: app)
+            Text(name)
+            Spacer()
+            if id == chosen { Image(systemName: "checkmark").foregroundStyle(Ink.accentText).accessibilityLabel("Chosen") }
+        }
+        .tag(id)
     }
 
     /// A helper or a command-line proxy that isn't in the list: listed from now on, and chosen.

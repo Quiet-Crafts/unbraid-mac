@@ -14,10 +14,7 @@ func place(_ r: Route, _ live: [String: Server], tcp: [String] = [], routes: [Ro
 }
 
 private func placeOnly(_ r: Route, _ live: [String: Server], tcp: [String]) -> String {
-    if r.wg != nil { return "WireGuard" }
-    if r.ovpn != nil { return "OpenVPN" }
-    if r.ss != nil { return "Shadowsocks" }
-    if r.tsExit != nil { return "Tailscale exit" }
+    if let own = r.ownPlace { return own }
     let nord = r.loc.provider == "nord"
     let city = r.loc.pinned?.name ?? r.loc.city ?? live[r.id]?.city.nilIfEmpty ?? "Fastest"
     let tech: String? = nord ? ["openvpn_udp": "OpenVPN", "openvpn_tcp": "OpenVPN TCP"][Nord.tech(r.loc)] : AutoProtocol.label(r, onTcp: tcp, running: live[r.id] != nil)
