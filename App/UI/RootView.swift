@@ -44,6 +44,8 @@ struct SiteTarget: Identifiable {
     var removing: String?
     /// "Which app runs this proxy?" for a route: before Make Default, or from Change Proxy App….
     var proxyApp: ProxyAppAsk?
+    /// The default route was just given a proxy on this Mac without its app: asked once the picker has closed.
+    var proxyAppNext: String?
     var addSite: SiteTarget?
     /// The first app was just blocked: ask whether Block covers the home network too.
     var blockScope = false
@@ -141,6 +143,24 @@ struct RootView: View {
                           noticeShowing: notice, asking: holdUpdateAsk, phase: state.phase, error: state.error != nil)
     }
 
+    /// What removing the route being confirmed does. The default is handed on as the removal will (`Setup.nextDefault`).
+    private func removalText() -> String {
+        let s = model.setup
+        let n = presentation.removing.map(model.apps.count(on:)) ?? 0
+        let profiles = s.saved.filter { p in p.defaultRoute == presentation.removing || p.apps.values.contains(presentation.removing ?? "") }.map(\.name)
+        var left = s
+        if let id = presentation.removing { left.removeRoute(id) }
+        let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(s.label(left.defaultRoute)))."
+        let sites = SiteEdits.losing(presentation.removing.map { SiteEdits.on($0, in: s).count } ?? 0).map { " " + $0 } ?? ""
+        return apps + sites + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone."
+    }
+
+    /// After the picker: Add a Provider opens sign-in; a default just given a proxy on this Mac asks for its app.
+    private func pickerClosed() {
+        if addAfterPicker { addAfterPicker = false; adding = true }
+        if let id = presentation.proxyAppNext { presentation.proxyAppNext = nil; presentation.proxyApp = ProxyAppAsk(id: id, makeDefault: false) }
+    }
+
     var body: some View {
         Group {
             if model.signedIn {
@@ -213,20 +233,11 @@ struct RootView: View {
             Button("Remove Route", role: .destructive) { if let id = presentation.removing { model.removeRoute(id) } }
             Button("Cancel", role: .cancel) {}
         } message: {
-            let n = presentation.removing.map(model.apps.count(on:)) ?? 0
-            let profiles = model.setup.saved.filter { p in p.defaultRoute == presentation.removing || p.apps.values.contains(presentation.removing ?? "") }.map(\.name)
-            // Removing the default hands the default to the first route left, or to Direct.
-            let s = model.setup
-            let after = presentation.removing == s.defaultRoute ? s.label(s.routes.first { $0.id != presentation.removing }?.id ?? DIRECT) : s.label(s.defaultRoute)
-            let apps = n == 0 ? "No apps use this route." : "\(n) app\(n == 1 ? " goes" : "s go") back to the default route (\(after))."
-            let sites = SiteEdits.losing(presentation.removing.map { SiteEdits.on($0, in: s).count } ?? 0).map { " " + $0 } ?? ""
-            Text(apps + sites + (profiles.isEmpty ? "" : " Used by profiles: \(profiles.joined(separator: ", ")).") + " This can't be undone.")
+            Text(removalText())
         }
         .sheet(item: $presentation.addSite) { target in AddWebsiteSheet(target: target, undo: undo) }
         .sheet(item: $presentation.proxyApp) { ProxyAppSheet(ask: $0) }
-        .sheet(item: $presentation.picker, onDismiss: {
-            if addAfterPicker { addAfterPicker = false; adding = true }
-        }) { item in
+        .sheet(item: $presentation.picker, onDismiss: pickerClosed) { item in
             PickerSheet(target: item.id).environment(model)
                 .environment(\.addProvider) { resumePicker = item.id; addAfterPicker = true; presentation.picker = nil }
         }

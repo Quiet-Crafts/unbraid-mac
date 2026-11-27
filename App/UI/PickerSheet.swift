@@ -590,6 +590,8 @@ struct PickerSheet: View {
             if let a = addedProxy, a.profile.item == item {
                 if let e = model.addProxy(target, a) { proxyError = e; return }
             } else if let x = proxy(item) { model.useProxy(target, x) }
+            // The default route now runs a proxy on this Mac: the same question as Make Default, once this closes.
+            if model.setup.defaultRoute == target, model.setup.asksProxyApp(target) { Presentation.shared.proxyAppNext = target }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
         case nil: return
         }

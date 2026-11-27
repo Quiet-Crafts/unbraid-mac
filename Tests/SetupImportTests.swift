@@ -194,6 +194,16 @@ final class SetupImportTests: XCTestCase {
         XCTAssertEqual(s, before, "only a proxy route takes a proxy app")
     }
 
+    func testRemovingTheDefaultNeverHandsItToALocalProxyWithoutItsApp() {
+        let lp = Route(id: "r1", socks5: Socks5Profile(name: "Proxy on this Mac", host: "127.0.0.1", port: 1080, item: "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C"))
+        var s = Setup(routes: [Route(id: "r0", wg: wg), lp, Route(id: "r2", wg: wg)], defaultRoute: "r0")
+        s.removeRoute("r0")
+        XCTAssertEqual(s.defaultRoute, "r2")
+        s.removeRoute("r1"); s.routes.insert(lp, at: 0)
+        s.removeRoute("r2")
+        XCTAssertEqual(s.defaultRoute, DIRECT, "only the waiting proxy is left: Direct, not a default that carries nothing")
+    }
+
     func testALocalProxyWithoutItsAppNeverBecomesTheDefaultByItself() {
         var s = reset
         s.useProxy("", local, id: "r1", signedIn: [])

@@ -463,9 +463,14 @@ nonisolated enum Compiler {
         ]
         // The app's own tests: each proxy user goes out through its exit only, names resolved there too.
         if p.i.probe != nil {
+            // A proxy is given the name itself, over TCP: a lookup first would need UDP through it, which many proxies
+            // (ssh -D among them) don't carry, so a working proxy would fail the check.
+            let proxies = Set(p.active.filter { $0.socks5 != nil }.map { p.tag($0.id) })
             for (t, dns) in p.probeTags.sorted(by: { $0.key < $1.key }) {
-                rules.append(["inbound": .s(probeTag), "auth_user": [.s(t)], "action": "resolve", "server": .s(dns)])
-                rules.append(unspecified)
+                if !proxies.contains(t) {
+                    rules.append(["inbound": .s(probeTag), "auth_user": [.s(t)], "action": "resolve", "server": .s(dns)])
+                    rules.append(unspecified)
+                }
                 rules.append(["inbound": .s(probeTag), "auth_user": [.s(t)], "outbound": .s(t)])
             }
         }

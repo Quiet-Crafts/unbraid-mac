@@ -21,7 +21,7 @@ nonisolated extension Setup {
         home.tailscale = false
         home.tsAuthKey = nil
         home.tsEnrolled = nil
-        if gone.contains(defaultRoute) { defaultRoute = routes.first?.id ?? DIRECT }
+        if gone.contains(defaultRoute) { defaultRoute = nextDefault }
         apps = apps.filter { !gone.contains($0.value) }
     }
 
@@ -31,16 +31,20 @@ nonisolated extension Setup {
     mutating func removeRoute(_ id: String) {
         guard routes.count > 1 || defaultRoute != id else { return }
         routes.removeAll { $0.id == id }
-        if defaultRoute == id { defaultRoute = routes.first?.id ?? DIRECT }
+        if defaultRoute == id { defaultRoute = nextDefault }
         apps = apps.filter { $0.value != id }
     }
+
+    /// The default after the default route went: the first route left, never a proxy on this Mac still waiting for
+    /// its app (it would carry nothing), else Direct.
+    var nextDefault: String { routes.first { !asksProxyApp($0.id) }?.id ?? DIRECT }
 
     /// A saved server goes with the routes using it; their apps follow the default.
     mutating func removeServer(_ id: String) {
         let gone = Set(routes.filter { $0.own == id }.map(\.id))
         servers.removeAll { $0.id == id }
         routes.removeAll { gone.contains($0.id) }
-        if gone.contains(defaultRoute) { defaultRoute = routes.first?.id ?? DIRECT }
+        if gone.contains(defaultRoute) { defaultRoute = nextDefault }
         apps = apps.filter { !gone.contains($0.value) }
     }
 
@@ -48,7 +52,7 @@ nonisolated extension Setup {
     mutating func useTailscaleOnly(noProviders: Bool) {
         if noProviders { routes.removeAll { !$0.imported } }
         home.tailscale = true
-        if route(defaultRoute) == nil { defaultRoute = routes.first?.id ?? DIRECT }
+        if route(defaultRoute) == nil { defaultRoute = nextDefault }
         apps = apps.filter { $0.value == DIRECT || $0.value == BLOCK || route($0.value) != nil }
     }
 }

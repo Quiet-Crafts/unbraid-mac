@@ -3929,6 +3929,22 @@ extension CompilerTests {
         }
     }
 
+    /// The app's own check through a proxy is TCP only: the name goes to the proxy, never looked up first over UDP
+    /// through it, so a proxy without UDP (ssh -D and the like) answers it. Other exits still resolve at their own DNS.
+    func testTheAppsOwnCheckThroughAProxySendsTheNameToTheProxy() throws {
+        let s = proxied()
+        var links = links(s)
+        for r in s.routes { if let l = LinkPicker.imported(r), r.socks5 != nil { links[r.id] = l } }
+        var i = Compiler.Input(setup: s, links: links, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil, probe: (port: 9999, password: "pw"))
+        i.socks5 = [Self.proxyItem: Self.proxyPassword]
+        let probeRules = rules(try parse(try Compiler.compile(i))).filter { $0["inbound"] as? String == "probe" }
+        func of(_ tag: String) -> [O] { probeRules.filter { ($0["auth_user"] as? [String]) == [tag] } }
+        XCTAssertEqual(of("r-p1").map { $0 as NSDictionary }, [["inbound": "probe", "auth_user": ["r-p1"], "outbound": "r-p1"] as NSDictionary])
+        let other = try XCTUnwrap(probeRules.first { $0["action"] as? String == "resolve" }?["auth_user"] as? [String])
+        XCTAssertNotEqual(other, ["r-p1"])
+        XCTAssertTrue(of(other[0]).contains { $0["outbound"] as? String == other[0] })
+    }
+
     /// Refused, never sent another way: the app on it gets no exit, and nothing of the proxy reaches the config.
     func testAProxyRouteIsRefusedUntilItCanRun() throws {
         func refused(_ s: Setup, _ passwords: [String: String]?, _ why: String) throws {
