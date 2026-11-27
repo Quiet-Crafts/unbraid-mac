@@ -800,12 +800,18 @@ nonisolated extension Route {
         wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : socks5 != nil ? "SOCKS5" : tsExit != nil ? "Tailscale exit" : nil
     }
 
-    /// What tells this route apart from another of the same name in menus: its city, server group or provider.
-    var nameDetail: String? { loc.city ?? loc.group ?? Providers.get(loc.provider)?.name }
+    /// What tells this route apart from another of the same name in menus: a proxy's address, an own server's kind, or a
+    /// provider route's city, server group or provider. An imported route's `loc` is the default one, no provider's.
+    var nameDetail: String? {
+        if let x = socks5 { return x.endpoint }
+        if imported { return ownPlace }
+        return loc.city ?? loc.group ?? Providers.get(loc.provider)?.name
+    }
 
     /// The server [s] this route runs on, as the route's header and the menu bar name it: its name and, where the
-    /// provider publishes it, its load ("nl1256 · 9% load").
+    /// provider publishes it, its load ("nl1256 · 9% load"). None for an imported route: its place says what it is.
     func serverLine(_ s: Server) -> String? {
+        guard !imported else { return nil }
         let name = loc.provider == "nord" ? String(s.host.split(separator: ".").first ?? "") : s.name
         return [name, s.load >= 0 && Providers.get(loc.provider)?.hasLoad == true ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · ")
     }
@@ -813,5 +819,7 @@ nonisolated extension Route {
 
 nonisolated extension Socks5Profile {
     /// "SOCKS5 · proxy.example.net:1080", "SOCKS5 · [::1]:1080".
-    var caption: String { "SOCKS5 · \(host.contains(":") ? "[\(host)]" : host):\(port)" }
+    var caption: String { "SOCKS5 · \(endpoint)" }
+    /// "proxy.example.net:1080", "[::1]:1080".
+    var endpoint: String { "\(host.contains(":") ? "[\(host)]" : host):\(port)" }
 }

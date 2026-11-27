@@ -239,6 +239,29 @@ final class SetupImportTests: XCTestCase {
         XCTAssertNil(provider("e", "gone").nameDetail, "a provider this build doesn't know adds nothing")
     }
 
+    /// An imported route has no provider's server code or load: its place ("SOCKS5", "WireGuard") already says what it
+    /// is, so no server line shows beside it.
+    func testAnImportedRouteShowsNoServerCodeOrLoad() {
+        let server = { (host: String) in Server(name: "x", host: host, ip: host, publicKey: "", load: 0) }
+        XCTAssertNil(Route(id: "p", socks5: local).serverLine(server("127.0.0.1")))
+        XCTAssertNil(Route(id: "q", socks5: proxy).serverLine(server("proxy.example.net")))
+        XCTAssertNil(Route(id: "w", wg: wg).serverLine(server("203.0.113.70")))
+        XCTAssertNil(Route(id: "s", ss: ss).serverLine(server("203.0.113.71")))
+        XCTAssertNil(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").serverLine(server("100.64.0.1")))
+    }
+
+    /// Two imported routes of one name are told apart by what is true of them: a proxy's address, another own server's
+    /// kind; never by the provider a provider route would have.
+    func testImportedRoutesOfOneNameAreToldApartByAddressOrKind() {
+        XCTAssertEqual(Route(id: "p", socks5: local).nameDetail, "127.0.0.1:1080")
+        var v6 = local; v6.host = "::1"; v6.port = 9050
+        XCTAssertEqual(Route(id: "p", socks5: v6).nameDetail, "[::1]:9050")
+        XCTAssertEqual(Route(id: "q", socks5: proxy).nameDetail, "proxy.example.net:1080")
+        XCTAssertEqual(Route(id: "w", wg: wg).nameDetail, "WireGuard")
+        XCTAssertEqual(Route(id: "s", ss: ss).nameDetail, "Shadowsocks")
+        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").nameDetail, "Tailscale exit")
+    }
+
     func testRemovingTheDefaultNeverHandsItToALocalProxyWithoutItsApp() {
         let lp = Route(id: "r1", socks5: Socks5Profile(name: "Proxy on this Mac", host: "127.0.0.1", port: 1080, item: "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C"))
         var s = Setup(routes: [Route(id: "r0", wg: wg), lp, Route(id: "r2", wg: wg)], defaultRoute: "r0")
