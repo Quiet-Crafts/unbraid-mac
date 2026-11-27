@@ -945,7 +945,7 @@ final class ViaTests: XCTestCase {
         let android = #"{"version":4,"routes":[{"id":"e","wg":{"name":"e","privateKey":"\#(viaKey)","address":["10.5.0.2/32"],"publicKey":"\#(viaOtherKey)","endpoint":"203.0.113.5:51820","allowedIps":["0.0.0.0/0"],"mtu":1420}},{"id":"x","loc":{"provider":"ivpn","countryCode":"DE"},"via":"e","viaNative":true}],"defaultRoute":"e"}"#
         let read = try JSONDecoder().decode(Setup.self, from: Data(android.utf8))
         XCTAssertEqual(read.routes[1].via, "e"); XCTAssertTrue(read.routes[1].viaNative)
-        XCTAssertThrowsError(try JSONDecoder().decode(Setup.self, from: Data(#"{"version":5,"routes":[]}"#.utf8))) { XCTAssertEqual($0 as? Setup.Newer, Setup.Newer(format: 5)) }
+        XCTAssertThrowsError(try JSONDecoder().decode(Setup.self, from: Data(#"{"version":8,"routes":[]}"#.utf8))) { XCTAssertEqual($0 as? Setup.Newer, Setup.Newer(format: 8)) }
         XCTAssertNoThrow(try JSONDecoder().decode(Setup.self, from: Data(#"{"version":3,"routes":[]}"#.utf8)))
     }
 

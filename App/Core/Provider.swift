@@ -233,10 +233,12 @@ nonisolated enum Link: Codable, Hashable, Sendable {
     case wg(Server, WgPeer, ports: [Int] = [], entries: [String] = [])
     case ovpn(Server, OvpnProfile)
     case ss(Server, SsProfile)
+    /// A proxy server, as the route gives it: never its password (the compiler gets that apart, `Compiler.Input.socks5`).
+    case socks5(Server, Socks5Profile)
     /// Out through the built-in Tailscale client's exit node.
     case ts(Server)
 
-    private enum Kind: String, CodingKey { case wg, ovpn, ss, ts }
+    private enum Kind: String, CodingKey { case wg, ovpn, ss, socks5, ts }
     private enum Value: String, CodingKey { case _0, _1, ports, entries }
 
     init(from decoder: Decoder) throws {
@@ -248,6 +250,7 @@ nonisolated enum Link: Codable, Hashable, Sendable {
         case .wg: self = .wg(server, try c.decode(WgPeer.self, forKey: ._1), ports: try c.decodeIfPresent([Int].self, forKey: .ports) ?? [], entries: try c.decodeIfPresent([String].self, forKey: .entries) ?? [])
         case .ovpn: self = .ovpn(server, try c.decode(OvpnProfile.self, forKey: ._1))
         case .ss: self = .ss(server, try c.decode(SsProfile.self, forKey: ._1))
+        case .socks5: self = .socks5(server, try c.decode(Socks5Profile.self, forKey: ._1))
         case .ts: self = .ts(server)
         }
     }
@@ -265,6 +268,9 @@ nonisolated enum Link: Codable, Hashable, Sendable {
         case .ss(let s, let p):
             var c = outer.nestedContainer(keyedBy: Value.self, forKey: .ss)
             try c.encode(s, forKey: ._0); try c.encode(p, forKey: ._1)
+        case .socks5(let s, let p):
+            var c = outer.nestedContainer(keyedBy: Value.self, forKey: .socks5)
+            try c.encode(s, forKey: ._0); try c.encode(p, forKey: ._1)
         case .ts(let s):
             var c = outer.nestedContainer(keyedBy: Value.self, forKey: .ts)
             try c.encode(s, forKey: ._0)
@@ -272,7 +278,7 @@ nonisolated enum Link: Codable, Hashable, Sendable {
     }
 
     var server: Server {
-        switch self { case .wg(let s, _, _, _), .ovpn(let s, _), .ss(let s, _), .ts(let s): s }
+        switch self { case .wg(let s, _, _, _), .ovpn(let s, _), .ss(let s, _), .socks5(let s, _), .ts(let s): s }
     }
 }
 

@@ -139,6 +139,13 @@ nonisolated enum LinkPicker {
         r.keyless || (r.own.map { id in setup.servers.contains { $0.id == id && $0.keyless } } ?? false)
     }
 
+    /// Whether a pick can't run at all: every route that carries traffic is blocked, and not only because it waits for
+    /// its config (`keyLeftOut`). One that only waits runs with its apps refused, keeping them in the tunnel: nothing a
+    /// retry does would bring its config back.
+    static func nothingRuns(_ blocked: [String: Blocked], active: Int) -> Bool {
+        active > 0 && blocked.count == active && !blocked.values.allSatisfy { $0 == .keyLeftOut }
+    }
+
     /// The tunnel of an imported route, as its config gives it; nil for a provider route.
     static func imported(_ r: Route) -> Link? {
         if let w = r.wg {
@@ -146,6 +153,7 @@ nonisolated enum LinkPicker {
         }
         if let o = r.ovpn { return .ovpn(Server(name: o.name, host: o.name, ip: "", publicKey: "", load: 0), o) }
         if let s = r.ss { return .ss(Server(name: s.name, host: s.server, ip: s.server, publicKey: "", load: 0), s) }
+        if let x = r.socks5 { return .socks5(Server(name: x.name, host: x.host, ip: x.host, publicKey: "", load: 0), x) }
         if let x = r.tsExit { return .ts(Server(name: r.name, host: x, ip: "", publicKey: "", load: 0)) }
         return nil
     }

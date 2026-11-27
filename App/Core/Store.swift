@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Security
 
 /// Everything unbraid persists. Secrets (setup, provider accounts, cached tunnels) are sealed files in Application
 /// Support; server catalogues are plain JSON; small flags live in UserDefaults.
@@ -572,11 +573,13 @@ final class Store {
         linksVersion += 1
         let linksAtForget = linksVersion
         let (failed, tempsRemoved) = await FileWork.shared.read { [dir] in (Self.delete(dir, all), Sealed.sweepTemps(dir)) }
+        // Not tried again later: a password the keychain wouldn't remove may stay (said with the warning).
+        let secretsGone = Socks5Secrets.remove(nil)
         if linksVersion == linksAtForget && !failed.contains("links.bin") { linksOwed = false; defaults.removeObject(forKey: "linksCleanupPending") }
         // Written again meanwhile (a new sign-in): no longer this deletion's to finish.
         forgetting.formIntersection(failed)
         Self.persist(forgetting, defaults)
-        return failed.isEmpty && tempsRemoved
+        return failed.isEmpty && tempsRemoved && secretsGone
     }
 
     /// Remove copies of unreadable credential files after the last sign-out, retrying failures at launch.
@@ -664,4 +667,46 @@ final class Store {
             return true
         } catch { return false }
     }
+}
+
+/// Proxy server passwords: one item each in the app's keychain (the app group's data-protection keychain, where the
+/// storage key is, `Sealed`), named by `Socks5Profile.item`. Never in a sealed file, a backup without keys or a log.
+nonisolated enum Socks5Secrets {
+    private static func query(_ item: String?) -> [String: Any] {
+        var q: [String: Any] = [kSecClass as String: kSecClassGenericPassword, kSecAttrService as String: "app.unbraid.socks5",
+                                kSecUseDataProtectionKeychain as String: true, kSecAttrAccessGroup as String: AppGroup.id]
+        if let item { q[kSecAttrAccount as String] = item }
+        return q
+    }
+
+    /// Nil when there is none, or the keychain can't be read now: the route then waits for it.
+    static func password(_ item: String) -> String? {
+        var out: CFTypeRef?
+        guard SecItemCopyMatching(query(item).merging([kSecReturnData as String: true]) { $1 } as CFDictionary, &out) == errSecSuccess,
+              let data = out as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    /// The passwords of [setup]'s proxy servers that can be read now, by item.
+    static func passwords(_ setup: Setup) -> [String: String] {
+        let items = Set(setup.routes.compactMap { $0.socks5?.username == nil ? nil : $0.socks5?.item })
+        return Dictionary(uniqueKeysWithValues: items.compactMap { i in password(i).map { (i, $0) } })
+    }
+
+    /// Stores [password] as [item]'s, or removes it (nil); false when the keychain didn't take the change.
+    @discardableResult
+    static func set(_ item: String, _ password: String?) -> Bool {
+        guard let password else { return remove(item) }
+        _ = remove(item)
+        let add = query(item).merging([kSecValueData as String: Data(password.utf8),
+                                       kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly]) { $1 }
+        return SecItemAdd(add as CFDictionary, nil) == errSecSuccess
+    }
+
+    /// Removes [item]'s password, or with nil every one (Sign Out of Everything). Without the app group's entitlement (a
+    /// test run) none can exist.
+    static func remove(_ item: String?) -> Bool {
+        [errSecSuccess, errSecItemNotFound, errSecMissingEntitlement].contains(SecItemDelete(query(item) as CFDictionary))
+    }
+
 }

@@ -3887,3 +3887,86 @@ extension CompilerTests {
         XCTAssertEqual(Compiler.clashes(s, all), [])
     }
 }
+
+// MARK: Proxy servers
+
+extension CompilerTests {
+    private static let proxyItem = "0F6C7A44-5B1E-4B7C-9D0A-3E2B1C4D5E6F", proxyPassword = "pr0xy-pass"
+
+    private func proxied(username: String? = "me", host: String = "203.0.113.20") -> Setup {
+        var s = example
+        s.routes.append(Route(id: "p1", socks5: Socks5Profile(name: "Office proxy", host: host, port: 1080, username: username, item: Self.proxyItem), hue: 4))
+        s.apps["com.c"] = "p1"
+        return s
+    }
+
+    private func proxyConfig(_ s: Setup, passwords: [String: String]?) throws -> String {
+        var links = links(s)
+        for r in s.routes { if let l = LinkPicker.imported(r), r.socks5 != nil { links[r.id] = l } }
+        var i = Compiler.Input(setup: s, links: links, apps: patterns(s), selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: nil, probe: nil)
+        i.socks5 = passwords
+        return try Compiler.compile(i)
+    }
+
+    private func socksOutbounds(_ config: String) throws -> [O] { ((try parse(config)["outbounds"] as? [O]) ?? []).filter { $0["type"] as? String == "socks" } }
+
+    private var proxyApp: String { "/Applications/com.c.app/Contents/MacOS/main" }
+
+    func testAProxyServerCompilesToASocks5Outbound() throws {
+        let config = try proxyConfig(proxied(), passwords: [Self.proxyItem: Self.proxyPassword])
+        let outbound = try XCTUnwrap(try socksOutbounds(config).first)
+        XCTAssertEqual(outbound as NSDictionary, ["type": "socks", "tag": "r-p1", "server": "203.0.113.20", "server_port": 1080, "version": "5",
+                                                  "username": "me", "password": Self.proxyPassword] as NSDictionary)
+        XCTAssertEqual(try EngineWalk(config).connect(proxyApp, name: nil, ip: EngineWalk.publicAddress).prefix(9), "exit:r-p1")
+        // No login: no username or password at all. A host name or an IPv6 address is the server as it was entered.
+        let open = try proxyConfig(proxied(username: nil, host: "proxy.example.net"), passwords: [:])
+        XCTAssertEqual(try socksOutbounds(open).first as NSDictionary?, ["type": "socks", "tag": "r-p1", "server": "proxy.example.net", "server_port": 1080,
+                                                                         "version": "5"] as NSDictionary)
+        XCTAssertEqual(try socksOutbounds(try proxyConfig(proxied(username: nil, host: "2001:db8::20"), passwords: [:])).first?["server"] as? String, "2001:db8::20")
+        if let engine = try ProviderFixtures.engine() {
+            for c in [config, open] { XCTAssertNil(ProviderFixtures.engineRefusal(c, engine), "the pinned engine refuses a proxy server") }
+        }
+    }
+
+    /// Refused, never sent another way: the app on it gets no exit, and nothing of the proxy reaches the config.
+    func testAProxyRouteIsRefusedUntilItCanRun() throws {
+        func refused(_ s: Setup, _ passwords: [String: String]?, _ why: String) throws {
+            let config = try proxyConfig(s, passwords: passwords)
+            XCTAssertEqual(try socksOutbounds(config).count, 0, why)
+            XCTAssertFalse(config.contains(Self.proxyPassword), why)
+            XCTAssertEqual(try EngineWalk(config).connect(proxyApp, name: nil, ip: EngineWalk.publicAddress), "reject", why)
+        }
+        try refused(proxied(), nil, "a caller that gives no passwords runs no proxy server")
+        try refused(proxied(username: nil), nil, "not even one without a login")
+        try refused(proxied(), [:], "a login whose password isn't here")
+        try refused(proxied(), ["another": Self.proxyPassword], "another item's password")
+        var keyless = proxied(); keyless.routes[3].keyless = true
+        try refused(keyless, [Self.proxyItem: Self.proxyPassword], "restored without its password")
+        try refused(proxied(host: "proxy example"), [Self.proxyItem: Self.proxyPassword], "an address that isn't one")
+        var port = proxied(); port.routes[3].socks5?.port = 0
+        try refused(port, [Self.proxyItem: Self.proxyPassword], "no port")
+        // As the default route: what would take it is refused, and the Mac isn't sent Direct.
+        var deflt = proxied(); deflt.defaultRoute = "p1"; deflt.apps["com.c"] = nil
+        let config = try proxyConfig(deflt, passwords: nil)
+        XCTAssertEqual(try EngineWalk(config).connect(proxyApp, name: nil, ip: EngineWalk.publicAddress), "reject")
+        XCTAssertEqual(Compiler.waitingProxies(Compiler.Input(setup: deflt, links: [:], apps: [:], selfPattern: "", tsSuffix: nil)), ["p1"])
+    }
+
+    /// Until the extension is given the shape of a proxy server, it runs none: nothing with a password is staged or sealed.
+    func testTheExtensionDoesntRunAProxyServerYet() throws {
+        XCTAssertThrowsError(try ConfigVet.check(try proxyConfig(proxied(), passwords: [Self.proxyItem: Self.proxyPassword])))
+        XCTAssertNoThrow(try ConfigVet.check(try proxyConfig(proxied(), passwords: nil)), "refused, it is an ordinary config")
+    }
+
+    func testProxyRoutesShareAnOutboundOnlyWithOneLogin() throws {
+        let a = Socks5Profile(name: "A", host: "203.0.113.20", port: 1080, username: "me", item: Self.proxyItem)
+        var b = a; b.name = "B"
+        XCTAssertEqual(Compiler.linkKey(Route(id: "a", socks5: a), .socks5(sv("a"), a)), Compiler.linkKey(Route(id: "b", socks5: b), .socks5(sv("b"), b)))
+        var other = a; other.item = UUID().uuidString
+        XCTAssertNotEqual(Compiler.linkKey(Route(id: "a", socks5: a), .socks5(sv("a"), a)), Compiler.linkKey(Route(id: "c", socks5: other), .socks5(sv("c"), other)))
+        // A link is saved with the tunnels: never with a password, which the profile doesn't hold.
+        let saved = String(decoding: try JSONEncoder().encode(Link.socks5(sv("a"), a)), as: UTF8.self)
+        XCTAssertEqual(try JSONDecoder().decode(Link.self, from: Data(saved.utf8)), .socks5(sv("a"), a))
+        XCTAssertFalse(saved.lowercased().contains("password"))
+    }
+}

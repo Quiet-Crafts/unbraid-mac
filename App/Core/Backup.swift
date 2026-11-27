@@ -43,6 +43,8 @@ nonisolated enum Backup {
         /// False: saved without own servers' keys and passwords and without the Home WireGuard tunnel.
         var keys: Bool
         var summary: Summary
+        /// With keys: proxy server passwords by keychain item (`Socks5Profile.item`), as `read` named them anew.
+        var passwords: [String: String] = [:]
     }
 
     /// What a setup holds, as the save and restore sheets count it.
@@ -82,9 +84,16 @@ nonisolated enum Backup {
         return c
     }
 
-    static func export(_ setup: Setup, app: String, created: Date, keys: Bool) -> Data {
+    /// [passwords]: proxy server passwords by keychain item. With keys, a proxy route whose login has none here waits for
+    /// it after a restore, as it would without keys.
+    static func export(_ setup: Setup, app: String, created: Date, keys: Bool, passwords: [String: String] = [:]) -> Data {
+        var mac = contents(setup, keys: keys), kept: [String: String] = [:]
+        for i in mac.routes.indices where keys {
+            guard let x = mac.routes[i].socks5, x.username != nil else { continue }
+            if let p = passwords[x.item] { kept[x.item] = p } else { mac.routes[i].keyless = true }
+        }
         let body = Body(format: format, platform: platform, app: app, created: Int64((created.timeIntervalSince1970 * 1000).rounded()), keys: keys,
-                        mac: contents(setup, keys: keys))
+                        mac: mac, socks5: kept.isEmpty ? nil : kept)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.sortedKeys]
         // Every part of a setup encodes; a failure here would be a bug, and an empty file is never written for it.
@@ -117,7 +126,8 @@ nonisolated enum Backup {
         var s = s
         for i in s.routes.indices {
             let r = s.routes[i]
-            guard r.imported, r.tsExit == nil, !s.servers.contains(where: { $0.id == r.own }) else { continue }
+            // A proxy server gets its password back on the route itself.
+            guard r.imported, r.tsExit == nil, r.socks5 == nil, !s.servers.contains(where: { $0.id == r.own }) else { continue }
             if let o = s.servers.first(where: { $0.wg == r.wg && $0.ovpn == r.ovpn && $0.ss == r.ss }) { s.routes[i].own = o.id; continue }
             let o = OwnServer(id: fresh("s", Set(s.servers.map(\.id))), wg: r.wg, ovpn: r.ovpn, ss: r.ss)
             s.servers.append(o)
@@ -128,6 +138,8 @@ nonisolated enum Backup {
 
     private struct Body: Codable {
         var format: Int, platform: String, app: String, created: Int64, keys: Bool, mac: Setup
+        /// Proxy server passwords by keychain item, in a backup with keys only.
+        var socks5: [String: String]? = nil
     }
 
     // MARK: Reading
@@ -172,12 +184,19 @@ nonisolated enum Backup {
         s.profiles = (raw.mac.profiles ?? []).map { Profile(name: $0.name, defaultRoute: $0.defaultRoute, apps: $0.apps ?? [:], sites: $0.sites ?? [:]) }
         s.profile = raw.mac.profile
         s.blockedForLostRoute = 0
-        let setup = try valid(s)
+        var setup = try valid(s)
         // What passes is what the reader made of it: anything it repaired was refused above.
         guard setup.apps == body.mac.apps, setup.sites == body.mac.sites, setup.profiles == body.mac.profiles,
               setup.profile == body.mac.profile, setup.defaultRoute == body.mac.defaultRoute else { throw Failure.damaged }
+        let items = Set(setup.routes.compactMap { $0.keyless || $0.socks5?.username == nil ? nil : $0.socks5?.item })
+        let passwords = body.socks5 ?? [:]
+        try need((body.keys || passwords.isEmpty) && Set(passwords.keys).isSubset(of: items) && passwords.values.allSatisfy { $0.utf8.count <= 255 },
+                 "a proxy server's password is damaged")
+        // New keychain items: a restore never writes over a password this Mac keeps for a route of its own.
+        let renamed = Dictionary(uniqueKeysWithValues: Set(setup.routes.compactMap { $0.socks5?.item }).map { ($0, UUID().uuidString) })
+        for i in setup.routes.indices { if let old = setup.routes[i].socks5?.item { setup.routes[i].socks5?.item = renamed[old]! } }
         return Content(setup: setup, app: version(body.app), created: Date(timeIntervalSince1970: Double(body.created) / 1000), keys: body.keys,
-                       summary: Summary(setup))
+                       summary: Summary(setup), passwords: Dictionary(uniqueKeysWithValues: passwords.map { (renamed[$0.key]!, $0.value) }))
     }
 
     nonisolated(unsafe) private static let versionPattern = /[0-9][0-9A-Za-z.+-]{0,31}/
@@ -239,7 +258,7 @@ nonisolated enum Backup {
         }
         let known = Set(s.routes.map(\.id))
         for r in s.routes {
-            let n = [r.wg != nil, r.ovpn != nil, r.ss != nil, r.tsExit != nil].filter { $0 }.count
+            let n = [r.wg != nil, r.ovpn != nil, r.ss != nil, r.socks5 != nil, r.tsExit != nil].filter { $0 }.count
             try need(n <= 1, "a route has more than one exit")
             if n == 0 {
                 try need(Providers.get(r.loc.provider) != nil, "a route uses a provider this unbraid doesn't know")
@@ -248,7 +267,13 @@ nonisolated enum Backup {
             if let x = r.tsExit { try need(!x.isEmpty && plain(x, max: 253) && plain(r.tsName ?? "", max: 256), "a Tailscale route is damaged") }
             // A route saved without keys gets them back only through its own server, which must be saved without them too.
             let own = s.servers.first { $0.id == r.own }
-            try need(r.keyless == (own?.keyless == true) && (!r.keyless || (n == 1 && r.tsExit == nil)), "a route and its own server don't match")
+            // A proxy server has no own server: it waits for the password of its login on the route itself.
+            if let x = r.socks5 {
+                try need(x.valid && r.own == nil && (!r.keyless || x.username != nil) && plainName(x.name) && plain(x.username ?? "", max: 255),
+                         "proxy server \(String(x.name.prefix(40))) is damaged")
+            } else {
+                try need(r.keyless == (own?.keyless == true) && (!r.keyless || (n == 1 && r.tsExit == nil)), "a route and its own server don't match")
+            }
             // And it is that server's: this Mac's config for the server is what the route gets back, so a route that
             // names one server while describing another would come out somewhere else than it says.
             if r.keyless, let own { try need(r.wg == own.wg && r.ovpn == own.ovpn && r.ss == own.ss, "a route and its own server don't match") }
@@ -659,6 +684,13 @@ nonisolated enum Backup {
 
     private static func needConfig(_ s: Setup) -> [String] { s.servers.filter(\.keyless).map(\.name) }
 
+    /// [s] with each proxy route whose password the keychain didn't take ([items]) waiting for it (`Route.keyless`).
+    static func waiting(_ s: Setup, for items: Set<String>) -> Setup {
+        var s = s
+        for i in s.routes.indices where s.routes[i].socks5.map({ items.contains($0.item) }) == true { s.routes[i].keyless = true }
+        return s
+    }
+
     /// Own servers and routes of their own in `s` that the import would warn about (`Manual.weakness`), unless
     /// `accepted` has the very same config: "name: why", once each.
     static func weak(_ s: Setup, accepted: Setup) -> [String] {
@@ -890,9 +922,10 @@ nonisolated extension OwnServer {
 }
 
 nonisolated extension Route {
-    /// A provider route or a Tailscale exit holds no key: it stays as it is.
+    /// A provider route, a Tailscale exit or a proxy server without a login holds no key: it stays as it is. A proxy
+    /// server's password is never in the route; it keeps its username and waits for the password.
     func withoutSecrets() -> Route {
-        guard imported, tsExit == nil else { return self }
+        guard imported, tsExit == nil, socks5.map({ $0.username != nil }) != false else { return self }
         var r = self
         (r.wg, r.ovpn, r.ss, r.keyless) = (wg?.withoutSecrets(), ovpn?.withoutSecrets(), ss?.withoutSecrets(), true)
         return r

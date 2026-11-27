@@ -293,7 +293,7 @@ final class AppModel {
         // Stopped before the accounts go, so the running engine isn't torn down with a "sign in again" alert.
         await vpn.disconnect()
         if !(await store.forgetAll()) {
-            warn("Some of unbraid's files couldn't be deleted. They are deleted the next time unbraid opens.")
+            warn("Some of unbraid's files or saved passwords couldn't be deleted. Files are deleted the next time unbraid opens; a proxy server password may stay in the keychain.")
         }
         store.tsTestNode = false
         tailscaleLeft(loggedOut)
@@ -1195,7 +1195,11 @@ extension AppModel {
         let now = Date.now
         // Every route either setup has, and with the profile every assignment: no edit still under way lands on top.
         let targets = Set([RouteEdits.Target.profile, .defaultRoute] + (setup.routes + content.setup.routes).map { .location($0.id) })
-        guarded({ s in s = Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, judge: false).setup }, targets: targets, after: { [weak self] _, _ in
+        // Proxy server passwords first, under the new items the backup's routes name (`Backup.read`): one the keychain
+        // didn't take leaves its route waiting for it, and the restore says so.
+        let rejected = Set(content.passwords.filter { !Socks5Secrets.set($0.key, $0.value) }.map(\.key))
+        guarded({ s in s = Backup.waiting(Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, judge: false).setup, for: rejected) },
+                targets: targets, after: { [weak self] _, _ in
             // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
             UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)
             MoveHistory.generation += 1
@@ -1203,9 +1207,13 @@ extension AppModel {
             guard let self else { return }
             refusedProfile = nil
             autoSwitch.replaced()
-            notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n")
+            if rejected.isEmpty { notice = [notice, BackupTexts.restoredNotice(signedIn: signedIn)].compactMap { $0 }.joined(separator: "\n") }
+            else { warn("The backup was restored, but the keychain didn't keep \(rejected.count) proxy server password(s). The apps on those routes are blocked until you enter them again.") }
         }, finished: { [weak self] applied in
-            if !applied { self?.warn("The backup wasn't restored. Nothing changed.") }
+            guard !applied, let self else { return }
+            warn("The backup wasn't restored. Nothing changed.")
+            // Its passwords go too, unless an earlier restore of the same backup uses them.
+            for item in content.passwords.keys where !setup.routes.contains(where: { $0.socks5?.item == item }) { Socks5Secrets.set(item, nil) }
         })
     }
 

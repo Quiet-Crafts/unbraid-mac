@@ -128,14 +128,38 @@ nonisolated struct SsProfile: Codable, Hashable, Sendable {
     var pluginOpts: String?
 }
 
-/// One exit. Exactly one source: a provider `loc`, an imported `wg`/`ovpn`/`ss` server, or `tsExit`, a Tailscale exit
-/// node (its tailnet IP) reached through the built-in Tailscale client.
+/// A SOCKS5 proxy server the user entered: any address, this Mac's or another's. Its password is never part of the
+/// setup: it is a keychain item of its own (`Socks5Secrets`, named by `item`), so it stays out of the setup file, the
+/// engine records, backups without keys and what the extension seals.
+nonisolated struct Socks5Profile: Codable, Hashable, Sendable {
+    var name: String
+    var host: String
+    var port: Int
+    /// Nil: the proxy takes no login.
+    var username: String?
+    /// Names the password's keychain item; not secret. A backup's restore gives each route a new one.
+    var item: String
+
+    /// What the compiler may hand the engine: a name, an IPv4 or IPv6 address or a host name, a port, and a username the
+    /// SOCKS5 login can carry (1 to 255 bytes).
+    var valid: Bool {
+        var v6 = in6_addr()
+        let host = FilterServer.ipv4(host) || inet_pton(AF_INET6, host, &v6) == 1
+            || host.range(of: #"^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*$"#, options: .regularExpression) != nil
+        return host && !name.trimmingCharacters(in: .whitespaces).isEmpty && (1...65535).contains(port)
+            && username.map { (1...255).contains($0.utf8.count) } != false && UUID(uuidString: item) != nil
+    }
+}
+
+/// One exit. Exactly one source: a provider `loc`, an imported `wg`/`ovpn`/`ss` server, a `socks5` proxy server, or
+/// `tsExit`, a Tailscale exit node (its tailnet IP) reached through the built-in Tailscale client.
 nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     var id: String
     var loc = Location()
     var wg: WgPeer?
     var ovpn: OvpnProfile?
     var ss: SsProfile?
+    var socks5: Socks5Profile?
     var tsExit: String?
     /// Display name of the `tsExit` node.
     var tsName: String?
@@ -157,12 +181,12 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     /// of two tunnels. The entry route then needs no tunnel of its own.
     var viaNative = false
 
-    enum CodingKeys: String, CodingKey { case id, loc, wg, ovpn, ss, tsExit, tsName, hue, filter, own, checkInternet, keyless, via, viaNative }
+    enum CodingKeys: String, CodingKey { case id, loc, wg, ovpn, ss, socks5, tsExit, tsName, hue, filter, own, checkInternet, keyless, via, viaNative }
 
-    var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? tsName ?? tsExit ?? loc.country ?? "Fastest" }
-    var code: String { wg != nil ? "WG" : ovpn != nil ? "OV" : ss != nil ? "SS" : tsExit != nil ? "TS" : loc.code }
+    var name: String { wg?.name ?? ovpn?.name ?? ss?.name ?? socks5?.name ?? tsName ?? tsExit ?? loc.country ?? "Fastest" }
+    var code: String { wg != nil ? "WG" : ovpn != nil ? "OV" : ss != nil ? "SS" : socks5 != nil ? "S5" : tsExit != nil ? "TS" : loc.code }
     /// Not tied to a provider account.
-    var imported: Bool { wg != nil || ovpn != nil || ss != nil || tsExit != nil }
+    var imported: Bool { wg != nil || ovpn != nil || ss != nil || socks5 != nil || tsExit != nil }
     /// An own server whose tunnel is checked like a provider's: as the user chose, else when its config carries all
     /// traffic (a server that only reaches a home network would fail a check of the internet by design). Never moved
     /// to another server: there is none. Tailscale exits aren't checked.
@@ -191,7 +215,7 @@ nonisolated struct Route: Codable, Hashable, Identifiable, Sendable {
     var movable: Bool { !imported && loc.pinned == nil && loc.group != Nord.dedicatedIp }
     /// Who carries this route: the provider, or the kind of own server.
     var source: String {
-        wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : tsExit != nil ? "Tailscale" : Providers.short(loc.provider)
+        wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : socks5 != nil ? "SOCKS5" : tsExit != nil ? "Tailscale" : Providers.short(loc.provider)
     }
 }
 
@@ -447,12 +471,15 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
     enum CodingKeys: String, CodingKey { case version, routes, defaultRoute, apps, sites, favorites, home, prefs, servers, opts, profiles, profile, pendingSwitch, profileSalt }
 
     /// The newest saved format this build reads. 1: everything before websites (no number written). 2: websites. 4: a
-    /// route with a Via (the number the Android app writes for it; 3 is its own, for websites and Block).
-    static let format = 4
+    /// route with a Via (the number the Android app writes for it; 3 is its own, for websites and Block). 7: a proxy server
+    /// route (Android's number for its own; 5 and 6 are Android's too).
+    static let format = 7
     /// The format a setup is written in: the lowest that holds what it has, so a setup without websites still opens in
     /// a build from before them, and one with them is refused there by a build that knows to check. A Via is 4: an older
-    /// build would send that route straight to its server, so it refuses the file instead.
+    /// build would send that route straight to its server, so it refuses the file instead. A proxy server is 7: an older
+    /// build reads a route of a kind it doesn't know as a provider route (its `loc`), and would send its apps there.
     var format: Int {
+        if routes.contains(where: { $0.socks5 != nil }) { return 7 }
         if routes.contains(where: { $0.via != nil }) { return 4 }
         let pending = [pendingSwitch?.switched, pendingSwitch?.previous, pendingSwitch?.before].compactMap { $0 }
         return sites.isEmpty && profiles.allSatisfy(\.sites.isEmpty) && pending.allSatisfy(\.sites.isEmpty) ? 1 : 2
@@ -543,8 +570,8 @@ nonisolated struct Setup: Codable, Hashable, Sendable {
         }
         if e.ss?.plugin != nil { return "\(r.name) can't go through a Shadowsocks server with a plugin" }
         // The engine is only asked to run a tunnel inside another WireGuard tunnel here.
-        if e.ovpn != nil || e.ss != nil || e.loc.proto?.hasPrefix("openvpn") == true { return "\(r.name) can go through a WireGuard route only" }
-        if r.ovpn != nil || r.ss != nil || r.tsExit != nil || r.loc.proto?.hasPrefix("openvpn") == true { return "Via works for WireGuard routes only" }
+        if e.ovpn != nil || e.ss != nil || e.socks5 != nil || e.loc.proto?.hasPrefix("openvpn") == true { return "\(r.name) can go through a WireGuard route only" }
+        if r.ovpn != nil || r.ss != nil || r.socks5 != nil || r.tsExit != nil || r.loc.proto?.hasPrefix("openvpn") == true { return "Via works for WireGuard routes only" }
         // Its sign-up talks to the exit server itself, which would see this Mac's address.
         if !r.imported, provider?.viaUnsafe == true { return "\(provider?.name ?? r.loc.provider) routes can't use Via: setting one up contacts its server directly" }
         // A name would be looked up outside the entry, telling the local network where the tunnel goes; and the engine's
@@ -779,18 +806,20 @@ nonisolated extension Route {
         id = try c.decode(String.self, forKey: .id)
         // A server source that is there but can't be read fails the route: without it the route would silently turn into
         // the provider route that `loc` defaults to. The setup then leaves this route out (see `Unreadable`).
-        loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); tsExit = try c.source(.tsExit)
+        loc = try c.saved(.loc, Location()); wg = try c.source(.wg); ovpn = try c.source(.ovpn); ss = try c.source(.ss); socks5 = try c.source(.socks5)
+        tsExit = try c.source(.tsExit)
         tsName = try c.saved(.tsName, nil); hue = try c.saved(.hue, 0); filter = try c.saved(.filter, nil); own = try c.saved(.own, nil)
         checkInternet = try c.saved(.checkInternet, nil); keyless = try c.saved(.keyless, false)
         via = try c.saved(.via, nil); viaNative = try c.saved(.viaNative, false)
     }
 
-    /// The keys the synthesized encoding wrote, in the same cases, and `keyless`, `via` and `viaNative` only when set: a setup without them is
+    /// The keys the synthesized encoding wrote, in the same cases, and `socks5`, `keyless`, `via` and `viaNative` only when set: a setup without them is
     /// written byte for byte as before, so its revisions don't change.
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(id, forKey: .id); try c.encode(loc, forKey: .loc)
         try c.encodeIfPresent(wg, forKey: .wg); try c.encodeIfPresent(ovpn, forKey: .ovpn); try c.encodeIfPresent(ss, forKey: .ss)
+        try c.encodeIfPresent(socks5, forKey: .socks5)
         try c.encodeIfPresent(tsExit, forKey: .tsExit); try c.encodeIfPresent(tsName, forKey: .tsName); try c.encode(hue, forKey: .hue)
         try c.encodeIfPresent(filter, forKey: .filter); try c.encodeIfPresent(own, forKey: .own)
         try c.encodeIfPresent(checkInternet, forKey: .checkInternet)

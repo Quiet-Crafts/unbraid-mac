@@ -171,8 +171,9 @@ nonisolated extension Backup {
 nonisolated extension BackupFile {
     /// `setup` as a backup sealed under `passphrase`, written to `url`. The plaintext never touches the disk and is
     /// cleared once sealed. Slow (the key derivation): never on the main actor.
-    static func save(_ setup: Setup, app: String, keys: Bool, passphrase: String, to url: URL, now: Date = .now) throws {
-        var plain = Backup.export(setup, app: app, created: now, keys: keys)
+    /// [passwords]: proxy server passwords by keychain item; nil reads this Mac's (`Socks5Secrets`), with keys only.
+    static func save(_ setup: Setup, app: String, keys: Bool, passphrase: String, to url: URL, now: Date = .now, passwords: [String: String]? = nil) throws {
+        var plain = Backup.export(setup, app: app, created: now, keys: keys, passwords: passwords ?? (keys ? Socks5Secrets.passwords(setup) : [:]))
         defer { plain.withUnsafeMutableBytes { if let p = $0.baseAddress { _ = memset_s(p, $0.count, 0, $0.count) } } }
         // Read back before anything is written: a backup that couldn't be restored is said now, while the setup is
         // still here to mend, not on the day it is needed.

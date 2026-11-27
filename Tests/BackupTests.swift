@@ -1226,7 +1226,7 @@ extension BackupTests {
         let back = try Backup.read(data)
         XCTAssertEqual(back.setup.route("b")?.via, "a")
         // A backup from a build that knows a newer format is refused whole, as before.
-        XCTAssertEqual(failure { try Backup.read(self.edited(s) { $0["version"] = 5 }) }, .newer)
+        XCTAssertEqual(failure { try Backup.read(self.edited(s) { $0["version"] = Setup.format + 1 }) }, .newer)
     }
 
     func testAViaThatCantBeUsedIsRefusedBeforeAnythingChanges() throws {
@@ -1311,4 +1311,163 @@ extension BackupTests {
         XCTAssertNotNil(b.via)
         XCTAssertNil(plan.setup.route(b.via ?? ""), "still pointing at nothing")
     }
+}
+
+// MARK: Proxy servers
+
+extension BackupTests {
+    private static let proxyItem = "0F6C7A44-5B1E-4B7C-9D0A-3E2B1C4D5E6F", proxyPassword = "pr0xy-pass"
+
+    private func proxyRoute(_ id: String = "p1", username: String? = "me", item: String = BackupTests.proxyItem) -> Route {
+        Route(id: id, socks5: Socks5Profile(name: "Office proxy", host: "203.0.113.20", port: 1080, username: username, item: item), hue: 4)
+    }
+
+    private func withProxy() -> Setup {
+        var s = full()
+        s.routes.append(proxyRoute())
+        s.apps["org.example.p"] = "p1"
+        return s
+    }
+
+    private func encodedSetup(_ s: Setup) throws -> [String: Any] { try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(s)) as? [String: Any]) }
+
+    /// The setup file holds the proxy server but never its password, and is written as format 7: the build before reads
+    /// up to 4, so it refuses the file whole (shown as saved by a newer unbraid, never written over) instead of reading it.
+    func testAProxyRouteIsSavedAsFormat7WithoutItsPassword() throws {
+        let s = withProxy()
+        let json = try encodedSetup(s)
+        XCTAssertEqual(json["version"] as? Int, 7)
+        let route = try XCTUnwrap((json["routes"] as? [[String: Any]])?.first { $0["id"] as? String == "p1" })
+        XCTAssertEqual(Set(try XCTUnwrap(route["socks5"] as? [String: Any]).keys), ["name", "host", "port", "username", "item"])
+        XCTAssertFalse(String(decoding: try JSONEncoder().encode(s), as: UTF8.self).contains(Self.proxyPassword))
+        XCTAssertEqual(try JSONDecoder().decode(Setup.self, from: JSONEncoder().encode(s)).route("p1"), proxyRoute())
+        XCTAssertThrowsError(try JSONDecoder().decode(Setup.self, from: JSONSerialization.data(withJSONObject: json.merging(["version": Setup.format + 1]) { $1 })))
+        // Without one, nothing about it is written: the format is the one it was.
+        XCTAssertEqual(try encodedSetup(full())["version"] as? Int, 2)
+        XCTAssertNil((try encodedSetup(full())["routes"] as? [[String: Any]])?.first { $0["socks5"] != nil })
+    }
+
+    /// Why a proxy route needs a format of its own: a build that doesn't know a route's kind reads it as a provider route
+    /// (its place), so the apps on it would go there.
+    func testARouteOfAnUnknownKindIsReadAsAProviderRoute() throws {
+        let json = #"{"routes":[{"id":"p1","hue":4,"loc":{"provider":"nord"},"socks9":{"name":"Office proxy","host":"203.0.113.20","port":1080}}],"defaultRoute":"p1","apps":{"org.example.p":"p1"}}"#
+        let s = try JSONDecoder().decode(Setup.self, from: Data(json.utf8))
+        XCTAssertEqual(s.route("p1")?.imported, false)
+        XCTAssertEqual(s.route("p1")?.loc.provider, "nord")
+        XCTAssertEqual(s.apps["org.example.p"], "p1")
+    }
+
+    func testWithKeysAProxyPasswordComesBackUnderANewItem() throws {
+        let data = Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword, "other": "unrelated"])
+        let top = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(top["socks5"] as? [String: String], [Self.proxyItem: Self.proxyPassword], "only its own routes' passwords")
+        XCTAssertEqual((top["mac"] as? [String: Any])?["version"] as? Int, 7)
+        let back = try Backup.read(data)
+        let item = try XCTUnwrap(back.setup.route("p1")?.socks5?.item)
+        XCTAssertNotEqual(item, Self.proxyItem, "a restore never writes over a password this Mac keeps")
+        XCTAssertEqual(back.passwords, [item: Self.proxyPassword])
+        XCTAssertFalse(back.setup.route("p1")?.keyless ?? true)
+        var expected = proxyRoute(); expected.socks5?.item = item
+        XCTAssertEqual(back.setup.route("p1"), expected)
+        XCTAssertEqual(back.setup.apps["org.example.p"], "p1")
+        // Two routes on one proxy server's login keep sharing it.
+        var two = withProxy(); two.routes.append(proxyRoute("p2")); two.apps["org.example.q"] = "p2"
+        let both = try Backup.read(Backup.export(two, app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
+        XCTAssertEqual(both.setup.route("p1")?.socks5?.item, both.setup.route("p2")?.socks5?.item)
+        XCTAssertEqual(both.passwords.count, 1)
+    }
+
+    func testWithoutKeysAProxyRouteWaitsForItsPassword() throws {
+        var s = withProxy(); s.routes.append(proxyRoute("p2", username: nil, item: UUID().uuidString)); s.apps["org.example.q"] = "p2"
+        let data = Backup.export(s, app: "1.2.0", created: .now, keys: false, passwords: [Self.proxyItem: Self.proxyPassword])
+        XCTAssertFalse(String(decoding: data, as: UTF8.self).contains(Self.proxyPassword))
+        let back = try Backup.read(data)
+        XCTAssertEqual(back.passwords, [:])
+        XCTAssertEqual(back.setup.route("p1")?.keyless, true)
+        XCTAssertEqual(back.setup.route("p1")?.socks5?.username, "me", "only the password is typed again")
+        XCTAssertNil(back.setup.route("p1")?.own, "it waits on the route itself, not on an own server")
+        XCTAssertEqual(back.setup.route("p2")?.keyless, false, "one without a login holds nothing secret")
+        XCTAssertEqual(back.setup.servers.count, full().servers.count)
+        // A backup with keys whose password this Mac couldn't read: that route waits too.
+        let missing = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [:]))
+        XCTAssertEqual(missing.setup.route("p1")?.keyless, true)
+        XCTAssertEqual(missing.passwords, [:])
+    }
+
+    func testAProxyRouteFromAFileIsChecked() throws {
+        XCTAssertNoThrow(try Backup.valid(withProxy()))
+        for (change, why) in [({ (r: inout Route) in r.socks5?.host = "proxy example" }, "host"), ({ $0.socks5?.port = 70000 }, "port"),
+                              ({ $0.socks5?.username = "" }, "empty username"), ({ $0.socks5?.item = "x" }, "item"), ({ $0.socks5?.name = " " }, "name"),
+                              ({ $0.own = "s1" }, "own server"), ({ $0.ss = SsProfile(name: "x", server: "203.0.113.5", port: 1, method: "aes-256-gcm", password: "p") }, "two exits"),
+                              ({ $0.socks5?.username = nil; $0.keyless = true }, "waits for a password it doesn't have")] as [((inout Route) -> Void, String)] {
+            var s = withProxy()
+            change(&s.routes[s.routes.count - 1])
+            XCTAssertFalse(refused(s).isEmpty, why)
+        }
+        // Passwords only in a backup with keys, only for its own proxy servers' logins, and as long as a login takes.
+        let keyless = try edited(withProxy(), keys: false) { _ in }
+        var top = try XCTUnwrap(JSONSerialization.jsonObject(with: keyless) as? [String: Any])
+        top["socks5"] = [Self.proxyItem: Self.proxyPassword]
+        XCTAssertNotNil(failure { try Backup.read(JSONSerialization.data(withJSONObject: top)) })
+        for passwords in [["other": "p"], [Self.proxyItem: String(repeating: "p", count: 256)]] {
+            var keyed = try XCTUnwrap(JSONSerialization.jsonObject(with: Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true)) as? [String: Any])
+            keyed["socks5"] = passwords
+            XCTAssertNotNil(failure { try Backup.read(JSONSerialization.data(withJSONObject: keyed)) })
+        }
+        // Nor for a route that waits for its password.
+        var waiting = withProxy(); waiting.routes[waiting.routes.count - 1].keyless = true
+        var keyedWaiting = try XCTUnwrap(JSONSerialization.jsonObject(with: Backup.export(waiting, app: "1.2.0", created: .now, keys: true)) as? [String: Any])
+        keyedWaiting["socks5"] = [Self.proxyItem: Self.proxyPassword]
+        XCTAssertNotNil(failure { try Backup.read(JSONSerialization.data(withJSONObject: keyedWaiting)) })
+    }
+
+    func testRestoringKeepsThisMacsProxyPasswordsWhereTheyAre() throws {
+        var here = Setup(routes: [nl(), proxyRoute()], defaultRoute: "nl", apps: ["org.example.p": "p1"])
+        here.profileSalt = UUID().uuidString
+        let content = try Backup.read(Backup.export(withProxy(), app: "1.2.0", created: .now, keys: true, passwords: [Self.proxyItem: Self.proxyPassword]))
+        let plan = Backup.plan(onto: here, from: content, keepPrevious: true, now: .now, judge: false)
+        let items = plan.setup.routes.compactMap(\.socks5?.item)
+        XCTAssertEqual(items.count, 2, "this Mac's proxy route is kept beside the backup's")
+        XCTAssertTrue(items.contains(Self.proxyItem), "with its own item, so its password is still its own")
+        XCTAssertEqual(Set(content.passwords.keys), Set(items).subtracting([Self.proxyItem]))
+        // Saved and opened again: a backup with a proxy server is one that restores.
+        let url = FileManager.default.temporaryDirectory.appending(path: "unbraid-\(UUID()).unbraidbackup")
+        defer { try? FileManager.default.removeItem(at: url) }
+        try BackupFile.save(withProxy(), app: "1.2.0", keys: true, passphrase: "correct horse battery staple", to: url, passwords: [Self.proxyItem: Self.proxyPassword])
+    }
+}
+
+// MARK: Proxy servers, after review
+
+extension BackupTests {
+    /// A route that only waits for its config doesn't stop Connect: the config runs with its apps refused, so they stay
+    /// in the tunnel. Anything else blocking every route still can't run.
+    func testAPickWhoseRoutesOnlyWaitForTheirConfigStillRuns() throws {
+        XCTAssertFalse(LinkPicker.nothingRuns(["p1": .keyLeftOut], active: 1))
+        XCTAssertFalse(LinkPicker.nothingRuns(["p1": .keyLeftOut, "w1": .keyLeftOut], active: 2))
+        XCTAssertTrue(LinkPicker.nothingRuns(["p1": .keyLeftOut, "nl": .signedOut("NordVPN")], active: 2))
+        XCTAssertTrue(LinkPicker.nothingRuns(["nl": .waiting], active: 1))
+        XCTAssertFalse(LinkPicker.nothingRuns(["nl": .waiting], active: 2))
+        XCTAssertFalse(LinkPicker.nothingRuns([:], active: 0))
+        // And the config it runs refuses the apps of the only route, the default included, never Direct.
+        var s = Setup(routes: [proxyRoute()], defaultRoute: "p1", apps: ["org.example.p": "p1"])
+        s.routes[0].keyless = true
+        let app = Compiler.pattern(forPath: "/Applications/org.example.p.app")
+        let config = try Compiler.compile(Compiler.Input(setup: s, links: [:], blocked: ["p1"], apps: ["org.example.p": [app]],
+                                                         selfPattern: Compiler.pattern(forPath: "/Applications/unbraid.app"), tsSuffix: nil))
+        let walk = try EngineWalk(config)
+        XCTAssertEqual(walk.connect("/Applications/org.example.p.app/Contents/MacOS/main", name: nil, ip: EngineWalk.publicAddress), "reject")
+        XCTAssertEqual(walk.connect("/usr/local/bin/other", name: nil, ip: EngineWalk.publicAddress), "reject")
+    }
+
+    func testAPasswordTheKeychainDidntTakeLeavesItsRouteWaiting() throws {
+        var s = withProxy()
+        s.routes.append(proxyRoute("p2", item: UUID().uuidString))
+        let out = Backup.waiting(s, for: [Self.proxyItem])
+        XCTAssertEqual(out.route("p1")?.keyless, true)
+        XCTAssertEqual(out.route("p2")?.keyless, false)
+        XCTAssertEqual(out.routes.filter { $0.socks5 == nil }, s.routes.filter { $0.socks5 == nil })
+        XCTAssertEqual(Backup.waiting(s, for: []), s)
+    }
+
 }

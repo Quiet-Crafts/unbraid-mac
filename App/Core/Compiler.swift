@@ -53,6 +53,9 @@ nonisolated enum Compiler {
         /// What happens to connections whose program can't be found (see `Ownerless`).
         var ownerless: Ownerless = .refusedWhileBlocking
         var tsLoginPending = false
+        /// Proxy server passwords by keychain item (`Socks5Profile.item`). Nil: this caller runs no proxy server, and every
+        /// proxy route is refused (`waitingProxies`).
+        var socks5: [String: String]? = nil
     }
 
     /// Where an input's website domain comes from (`Input.siteDomain`): its setup's Home, or a domain given whole, none
@@ -98,6 +101,7 @@ nonisolated enum Compiler {
     static func compile(_ input: Input) throws -> String {
         var i = input
         i.links = LinkPicker.ported(i.setup, i.links, step: i.portStep)
+        i.blocked.formUnion(waitingProxies(i))
         return try build(i).string
     }
 
@@ -105,7 +109,26 @@ nonisolated enum Compiler {
     static func probeDNS(_ input: Input) throws -> [String: String] {
         var i = input
         i.links = LinkPicker.ported(i.setup, i.links, step: i.portStep)
+        i.blocked.formUnion(waitingProxies(i))
         return try Plan(i).probeTags
+    }
+
+    /// The proxy routes that can't run now, refused like a route without a tunnel (never sent another way): all of them
+    /// for a caller that gives no passwords, and one that isn't valid, waits for its password (`Route.keyless`), or has a
+    /// login whose password isn't given.
+    static func waitingProxies(_ i: Input) -> Set<String> {
+        Set(i.setup.routes.filter { r in
+            guard let x = r.socks5 else { return false }
+            guard let passwords = i.socks5, x.valid, !r.keyless else { return true }
+            return x.username != nil && passwords[x.item] == nil
+        }.map(\.id))
+    }
+
+    /// A proxy server as the engine dials it: SOCKS version 5, with its login when it has one.
+    static func socks5Outbound(_ tag: String, _ x: Socks5Profile, password: String?) -> J {
+        var o: [String: J] = ["type": "socks", "tag": .s(tag), "server": .s(x.host), "server_port": .i(x.port), "version": "5"]
+        if let u = x.username { o["username"] = .s(u); o["password"] = .s(password ?? "") }
+        return .o(o)
     }
 
     /// What a change that failed twice leaves running (`Connection.recover`): every app that would go through a VPN
@@ -495,6 +518,7 @@ nonisolated enum Compiler {
                 let e = try Manual.ovpnEndpoint(p.tag(r.id), o)
                 endpoints.append(p.active.contains { p.tag($0.id) == p.tag(r.id) && (p.pushedDns($0) || (s.prefs.effectiveFilter.coversRoutes && s.prefs.effectiveFilter.server?.byName == true && ($0.imported || $0.loc.provider != "nord"))) } ? openVpn(e) : e)
             case .ss(_, let o): outbounds.append(Manual.ssOutbound(p.tag(r.id), o))
+            case .socks5(_, let x): outbounds.append(socks5Outbound(p.tag(r.id), x, password: p.i.socks5?[x.item]))
             case .ts: break
             }
         }
@@ -878,6 +902,8 @@ nonisolated enum Compiler {
         // Same remotes but another protocol, CA or login is another tunnel: compare the whole profile.
         case .ovpn(_, let p): ["ovpn", sha(p.config), p.username, sha(p.password)].joined(separator: "|")
         case .ss(_, let p): ["ss", p.server, String(p.port), p.method, sha(p.password), p.plugin ?? "", sha(p.pluginOpts ?? "")].joined(separator: "|")
+        // Its own keychain item is its own login, whatever the two passwords are.
+        case .socks5(_, let x): ["socks5", x.host, String(x.port), x.username ?? "", x.item].joined(separator: "|")
         case .ts: "ts"
         }
     }

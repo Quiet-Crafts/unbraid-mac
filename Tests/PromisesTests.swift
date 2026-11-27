@@ -105,10 +105,22 @@ final class PromisesTests: XCTestCase {
                     links["iw"] = .wg(sv, peer, ports: ports, entries: entries)
                 }
             }
+            // A proxy server, sometimes, with an app or the default on it: refused while the caller gives no passwords (the
+            // app gives none yet) or its login's isn't there. The extension doesn't take one that runs yet (P6).
+            var passwords: [String: String]? = nil, proxy = "-"
+            if next(3) == 0 {
+                let login = coin(), item = "6B1F3C2A-0D4E-4F5A-8B9C-1D2E3F4A5B6C"
+                let px = Route(id: "px", socks5: Socks5Profile(name: "Proxy", host: "203.0.113.30", port: 1080, username: login ? "me" : nil, item: item), hue: 6)
+                s.routes.append(px)
+                links["px"] = LinkPicker.imported(px)
+                if coin() { s.apps[appKeys[next(appKeys.count)]] = "px" } else { s.defaultRoute = "px" }
+                if login && coin() { passwords = ["another-item": "proxy-password"]; proxy = "password missing" } else { proxy = "no passwords" }
+            }
             var input = Compiler.Input(setup: s, links: links, blocked: blockedNow, apps: installed, remembered: remembered,
                                        selfPattern: Compiler.pattern(forPath: selfApp), tsSuffix: s.tailscale ? s.home.tsSuffix : nil,
                                        probe: next(4) == 0 ? (port: 18080, password: "probe") : nil, ownerless: ownerless,
                                        tsLoginPending: next(5) == 0)
+            input.socks5 = passwords
             // The tailnet domain the app judges websites by, sometimes not the one this setup holds (a recovery's older
             // setup, a pause). The app takes it and the engine's tailnet domain from the same saved settings, so the two
             // agree whenever Tailscale runs.
@@ -119,7 +131,7 @@ final class PromisesTests: XCTestCase {
             }
             let label = "case \(n): default \(s.defaultRoute) apps \(s.apps.sorted { $0.key < $1.key }) sites \(s.sites.sorted { $0.key < $1.key }) "
                 + "blocked \(blocked.sorted()) remembered \(remembered.sorted()) \(ownerless) kill \(s.prefs.killLevel) lan \(s.prefs.lan) "
-                + "tailscale \(s.home.tailscale) suffix \(s.home.tsSuffix ?? "-") disguise \(disguise) share \(share) via \(via) native \(native) domain \(input.websiteDomain ?? "-")"
+                + "tailscale \(s.home.tailscale) suffix \(s.home.tsSuffix ?? "-") disguise \(disguise) share \(share) via \(via) native \(native) domain \(input.websiteDomain ?? "-") proxy \(proxy)"
             return Case(input: input, label: label)
         }
     }
@@ -150,12 +162,12 @@ final class PromisesTests: XCTestCase {
         "Route": [
             "id": "gen", "loc": "gen", "tsExit": "gen", "tsName": "gen", "hue": "window only",
             "wg": "imported: batch 4", "ovpn": "imported: batch 4", "ss": "imported: batch 4", "keyless": "imported: batch 4",
-            "via": "gen", "viaNative": "gen", "own": "own servers: batch 4", "filter": "lookups: batch 2", "checkInternet": "health checks: batch 5",
+            "via": "gen", "viaNative": "gen", "socks5": "gen", "own": "own servers: batch 4", "filter": "lookups: batch 2", "checkInternet": "health checks: batch 5",
         ],
         "Input": [
             "setup": "gen", "links": "gen", "blocked": "gen", "apps": "gen", "remembered": "gen", "selfPattern": "gen",
             "tsSuffix": "gen", "probe": "gen (its own path: batch 2)", "ownerless": "gen", "tsLoginPending": "gen (sign-in hosts walk: batch 2)",
-            "portStep": "ports step: batch 4", "siteDomain": "gen (and the named case below)",
+            "portStep": "ports step: batch 4", "siteDomain": "gen (and the named case below)", "socks5": "gen",
         ],
         "Location": [
             "provider": "gen (Nord, IVPN)", "countryId": "gen", "countryCode": "gen", "country": "gen",
@@ -226,10 +238,13 @@ final class PromisesTests: XCTestCase {
             var kinds: Set<String> = []
             func count(_ k: String) { kinds.insert(k) }
             defer { for k in kinds { seen[k, default: 0] += 1 } }
-            let s = c.setup, i = c.input
+            let s = c.setup, given = c.input
             let config: String
-            do { config = try Compiler.compile(i) } catch { refusals.append("\(c.label): \(error)"); continue }
-            let denyConfig = try Compiler.denyAll(i)
+            do { config = try Compiler.compile(given) } catch { refusals.append("\(c.label): \(error)"); continue }
+            let denyConfig = try Compiler.denyAll(given)
+            // Refused besides the routes without a tunnel: every generated proxy route, as none is given its password.
+            var i = given
+            i.blocked.formUnion(s.routes.filter { $0.socks5 != nil }.map(\.id))
             let shared = try Compiler.shared(s, LinkPicker.ported(s, i.links, step: [:]), blocked: i.blocked, tailnet: i.websiteDomain)
             let w = Walked(c: c, walk: try EngineWalk(config), deny: try EngineWalk(denyConfig), config: config, denyConfig: denyConfig, shared: shared)
             let applied = Sites.applied(s, tailnet: i.websiteDomain)
@@ -263,6 +278,7 @@ final class PromisesTests: XCTestCase {
                             // P2: an app on a route with no usable tunnel is refused, never sent elsewhere.
                             XCTAssertEqual(normal, "reject", "P2 no tunnel \(ctx)")
                             count("app:route-without-tunnel")
+                            if s.route(route)?.socks5 != nil { count("app:proxy-refused") }
                         } else {
                             // P1 Apps keep their route: out on the route's own tunnel (the shared one, Tailscale for an
                             // exit route); never Direct, never another route, never refused while the tunnel is there.
@@ -376,7 +392,8 @@ final class PromisesTests: XCTestCase {
         // generated setup may be refused (each is valid by construction).
         for k in ["default:direct", "default:vpn", "default:tx", "default:blocked", "tunnel:shared", "sites:applied", "app:block",
                   "app:direct", "app:vpn", "app:tx", "app:route-without-tunnel", "site:followed", "ownerless:refused:refusedWhileBlocking",
-                  "ownerless:refused:refusedWhileSplit", "ownerless:split-only", "ownerless:vpn-default-split", "ownerless:default", "disguise:on", "domain:given"] {
+                  "ownerless:refused:refusedWhileSplit", "ownerless:split-only", "ownerless:vpn-default-split", "ownerless:default", "disguise:on", "domain:given",
+                  "app:proxy-refused"] {
             XCTAssertGreaterThanOrEqual(seen[k, default: 0], 5, "coverage: \(k) came up in \(seen[k, default: 0]) setups")
         }
         XCTAssertEqual(refusals, [], "compiles refused")

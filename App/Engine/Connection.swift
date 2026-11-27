@@ -3103,7 +3103,7 @@ final class Connection {
                   store.accounts[route.loc.provider] == account else { continue }
             refusedAccounts[route.loc.provider] = (account, reason)
         }
-        if !allowBlocked && !s.activeRoutes.isEmpty && r.blocked.count == s.activeRoutes.count {
+        if !allowBlocked && LinkPicker.nothingRuns(r.blocked, active: s.activeRoutes.count) {
             throw BlockedPick(blocked: r.blocked)
         }
         store.rememberLinks(r.remember, from: accounts)

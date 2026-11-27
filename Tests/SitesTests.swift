@@ -121,10 +121,10 @@ final class SitesTests: XCTestCase {
     }
 
     func testASetupFromANewerUnbraidIsRefusedWhole() throws {
-        let newer = Data(#"{"version":5,"routes":[],"defaultRoute":"direct","sites":{"example.com":"block"}}"#.utf8)
+        let newer = Data(#"{"version":8,"routes":[],"defaultRoute":"direct","sites":{"example.com":"block"}}"#.utf8)
         for strict in [false, true] {
             XCTAssertThrowsError(try SavedDecoding.$strict.withValue(strict) { try JSONDecoder().decode(Setup.self, from: newer) }) {
-                XCTAssertEqual($0 as? Setup.Newer, Setup.Newer(format: 5))
+                XCTAssertEqual($0 as? Setup.Newer, Setup.Newer(format: 8))
             }
         }
         // This build's own number, and a file from before the number, are read.
