@@ -693,6 +693,9 @@ nonisolated enum Socks5Secrets {
         return Dictionary(uniqueKeysWithValues: items.compactMap { i in password(i).map { (i, $0) } })
     }
 
+    /// The items of [setup]'s proxy servers whose password can be read now.
+    static func held(_ setup: Setup) -> Set<String> { Set(passwords(setup).keys) }
+
     /// Stores [password] as [item]'s, or removes it (nil); false when the keychain didn't take the change.
     @discardableResult
     static func set(_ item: String, _ password: String?) -> Bool {

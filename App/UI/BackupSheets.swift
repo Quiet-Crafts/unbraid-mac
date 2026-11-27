@@ -380,15 +380,17 @@ private struct RestoreSheet: View {
     @State private var weakens: [String]?
     /// What `weakens` was worked out from: this Mac's setup and the app patterns.
     private struct Inputs: Hashable { var setup: Setup; var patterns: [String: [String]]? }
+    /// This Mac's proxy items with a password, read from the keychain again with each change of this Mac's setup.
+    @State private var held: Set<String> = []
 
     var body: some View {
         let current = model.setup
         let here = Backup.setUp(current)
         // Worked out again for every change, of the switch or of this Mac's setup meanwhile.
-        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now, judge: false)
+        let keeping = Backup.plan(onto: current, from: content, keepPrevious: true, now: .now, held: held, judge: false)
         let canKeep = here && !keeping.unkept
         let plan = {
-            var p = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, judge: false)
+            var p = canKeep && keep ? keeping : Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, held: held, judge: false)
             p.weakens = weakens ?? []
             return p
         }()
@@ -405,15 +407,17 @@ private struct RestoreSheet: View {
         } actions: {
             Button("Cancel") { flow.close() }.keyboardShortcut(.cancelAction)
             Button("Restore") {
-                model.restoreBackup(content, keepPrevious: canKeep && keep)
+                model.restoreBackup(content, keepPrevious: canKeep && keep, held: held)
                 flow.close()
             }.keyboardShortcut(.defaultAction).contentButton(prominent: true).disabled((!plan.weak.isEmpty && !weakAccepted) || weakens == nil)
         }
         // Worked out again when this Mac's setup changes meanwhile; a result for inputs since replaced is dropped.
         .task(id: Inputs(setup: current, patterns: patterns)) {
+            let mine = Socks5Secrets.held(current)
+            held = mine
             guard let patterns else { return }
             weakens = nil
-            let restored = Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, judge: false).setup
+            let restored = Backup.plan(onto: current, from: content, keepPrevious: false, now: .now, held: mine, judge: false).setup
             let found = await Task.detached(priority: .userInitiated) { Backup.weakens(current, restored, apps: patterns) }.value
             if !Task.isCancelled { weakens = found }
         }

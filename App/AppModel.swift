@@ -1227,14 +1227,15 @@ extension AppModel {
     /// Replaces this Mac's setup with a backup's (`Backup.plan`), worked out again from the setup at that moment, as one
     /// change through the same checks as any other; the engine follows it as it follows any change. Not undoable, and
     /// moves waiting on Undo are dropped: they name the setup it replaces.
-    func restoreBackup(_ content: Backup.Content, keepPrevious: Bool) {
+    /// [held]: this Mac's proxy items with a password (`Socks5Secrets.held`), as the restore sheet worked its plan out with.
+    func restoreBackup(_ content: Backup.Content, keepPrevious: Bool, held: Set<String>) {
         let now = Date.now
         // Every route either setup has, and with the profile every assignment: no edit still under way lands on top.
         let targets = Set([RouteEdits.Target.profile, .defaultRoute] + (setup.routes + content.setup.routes).map { .location($0.id) })
         // Proxy server passwords first, under the new items the backup's routes name (`Backup.read`): one the keychain
         // didn't take leaves its route waiting for it, and the restore says so.
         let rejected = Set(content.passwords.filter { !Socks5Secrets.set($0.key, $0.value) }.map(\.key))
-        guarded({ s in s = Backup.waiting(Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, judge: false).setup, for: rejected) },
+        guarded({ s in s = Backup.waiting(Backup.plan(onto: s, from: content, keepPrevious: keepPrevious, now: now, held: held, judge: false).setup, for: rejected) },
                 targets: targets, after: { [weak self] _, _ in
             // Apps the backup routes that this Mac has never seen keep their choice a while (`AppPresence.restoreGrace`).
             UserDefaults.standard.set(now, forKey: AppPresence.restoredKey)

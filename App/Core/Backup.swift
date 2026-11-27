@@ -589,8 +589,8 @@ nonisolated enum Backup {
             || !s.servers.isEmpty || s.home.wg != nil
     }
 
-    static func restored(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date) -> Setup {
-        plan(onto: current, from: content, keepPrevious: keepPrevious, now: now).setup
+    static func restored(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, held: Set<String> = []) -> Setup {
+        plan(onto: current, from: content, keepPrevious: keepPrevious, now: now, held: held).setup
     }
 
     /// This Mac's setup replaced by `content`'s. This Mac's Tailscale, statistics consent and profile request salt
@@ -600,8 +600,10 @@ nonisolated enum Backup {
     /// `previous` (or with a number), with this Mac's routes and own servers: shared where the backup has the same one,
     /// under a new id where it uses that id for something else, and the kept profile follows it. `now` is when the
     /// restore happens, for rules that run from it. `apps` are the patterns of the apps on this Mac, as the engine is
-    /// given them, for what the sheet says each app gets (made up from their keys when nil).
-    static func plan(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, apps: [String: [String]]? = nil, judge: Bool = true) -> Plan {
+    /// given them, for what the sheet says each app gets (made up from their keys when nil). `held`: this Mac's proxy
+    /// keychain items that hold a password (`Socks5Secrets.held`), the same for the sheet and the restore.
+    static func plan(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, held: Set<String> = [], apps: [String: [String]]? = nil,
+                     judge: Bool = true) -> Plan {
         var b = content.setup
         // Saved without keys: an own server this Mac still has gets its config back here.
         let full = Dictionary(b.servers.filter(\.keyless).compactMap { k in
