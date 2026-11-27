@@ -652,6 +652,8 @@ final class AppModel {
 
     func renameRoute(_ id: String, _ name: String) {
         if let own = setup.route(id)?.own { renameServer(own, name); return }
+        // A proxy server is renamed everywhere it is used, as a saved server is, so My Servers names it the same.
+        if let item = setup.route(id)?.socks5?.item { renameProxy(item, name); return }
         let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
         guard !n.isEmpty else { return }
         edit(id) { r in

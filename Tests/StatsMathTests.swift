@@ -182,7 +182,7 @@ final class StatsMathTests: XCTestCase {
         var s = Setup()
         XCTAssertEqual(s.proxyKillNote, "")
         s.routes = [Route(id: "p", socks5: Socks5Profile(name: "p", host: "203.0.113.20", port: 1080, item: UUID().uuidString))]
-        XCTAssertTrue(s.proxyKillNote.contains("not a VPN"))
+        XCTAssertTrue(s.proxyKillNote.contains("If a proxy stops responding, unbraid blocks connections from apps routed through it."))
     }
 
     func testProcessesBelongToTheAppWhoseBundleHoldsThem() {
