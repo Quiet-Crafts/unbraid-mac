@@ -595,9 +595,10 @@ nonisolated enum Backup {
 
     /// This Mac's setup replaced by `content`'s. This Mac's Tailscale, statistics consent and profile request salt
     /// stay; its Home WireGuard tunnel stays too unless the backup has keys. A server saved without keys that this Mac
-    /// still has (`OwnServer.sameAs`) takes this Mac's config. With `keepPrevious` (and something set up here), the
-    /// setup in use is kept as the profile `previous` (or with a number), with this Mac's routes and own servers: one
-    /// whose id the backup uses for something else gets a new id, and the kept profile follows it. `now` is when the
+    /// still has (`OwnServer.sameAs`) takes this Mac's config, and a proxy route waiting for its password takes this
+    /// Mac's keychain item. With `keepPrevious` (and something set up here), the setup in use is kept as the profile
+    /// `previous` (or with a number), with this Mac's routes and own servers: shared where the backup has the same one,
+    /// under a new id where it uses that id for something else, and the kept profile follows it. `now` is when the
     /// restore happens, for rules that run from it. `apps` are the patterns of the apps on this Mac, as the engine is
     /// given them, for what the sheet says each app gets (made up from their keys when nil).
     static func plan(onto current: Setup, from content: Content, keepPrevious: Bool, now: Date, apps: [String: [String]]? = nil, judge: Bool = true) -> Plan {
@@ -612,6 +613,19 @@ nonisolated enum Backup {
                 guard let sv = full[b.routes[i].own ?? ""] else { continue }
                 (b.routes[i].wg, b.routes[i].ovpn, b.routes[i].ss, b.routes[i].keyless) = (sv.wg, sv.ovpn, sv.ss, false)
             }
+        }
+        // A proxy route waiting for its password that this Mac has under the same id, the very same apart from its
+        // keychain item, takes this Mac's item, where the password is; so do the backup's other routes on that proxy
+        // (its item), with the same server and login.
+        func mine(_ x: Route) -> Socks5Profile? {
+            guard x.keyless, let p = x.socks5, let m = current.route(x.id), !m.keyless, let q = m.socks5, sameProxy(p, q) else { return nil }
+            return q
+        }
+        let here = Dictionary(b.routes.compactMap { x in mine(x).map { (x.socks5?.item ?? "", $0) } }) { a, _ in a }
+        for i in b.routes.indices where b.routes[i].keyless {
+            guard let p = b.routes[i].socks5, let q = mine(b.routes[i]) ?? here[p.item],
+                  (p.host, p.port, p.username) == (q.host, q.port, q.username) else { continue }
+            b.routes[i].socks5?.item = q.item; b.routes[i].keyless = false
         }
         var r = b
         r.home = current.home
@@ -716,12 +730,22 @@ nonisolated enum Backup {
         var r = r
         r.loc = bare(r.loc)
         if !r.keyless { r.wg = r.wg.map { asRead($0) ?? $0 } }
+        // A proxy route's keychain item is new with every restore (`read`), and one waiting for its password is still the
+        // same route: the backup's stays, with the password it brings.
+        if r.socks5 != nil { r.socks5?.item = ""; r.keyless = false }
         return r
     }
     private static func filed(_ s: OwnServer) -> OwnServer {
         var s = s
         if !s.keyless { s.wg = s.wg.map { asRead($0) ?? $0 } }
         return s
+    }
+
+    /// The same in everything but the keychain item that holds the password.
+    private static func sameProxy(_ a: Socks5Profile, _ b: Socks5Profile) -> Bool {
+        var b = b
+        b.item = a.item
+        return a == b
     }
 
     private static func fresh(_ prefix: String, _ taken: Set<String>) -> String {
