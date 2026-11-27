@@ -720,6 +720,11 @@ with the patches in the tools folder of unbraid's source (published with each re
 - sing-tun-gvisor-start-lock.patch, 2026-11-27: a network change while the engine's network stack is starting waits
   for the start to finish.
 - sing-box-zz-mac-dns-wait-test.patch, 2026-11-27: tests only (a waiting lookup holds up no other connection).
+- sing-tun-z-reassembled-echo.patch, 2026-11-27: a ping too large for one packet, put back together by the engine,
+  takes the route its destination selects, like an ordinary one; replies come back from the address the app pinged,
+  a refusal of an earlier ping of the same exchange still stands, and replies arriving after a network change are
+  not taken for new ones.
+- sing-box-zz-mac-ping-fixtures.patch and sing-box-zz-ping-target-test.patch, 2026-11-27: tests only.
 
 === lzokay (the LZO code in github.com/anchore/go-lzo derives from it)
 The MIT License

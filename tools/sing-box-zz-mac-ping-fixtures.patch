@@ -1,0 +1,39 @@
+diff --git a/route/tun_ping_fixtures_test.go b/route/tun_ping_fixtures_test.go
+new file mode 100644
+--- /dev/null
++++ b/route/tun_ping_fixtures_test.go
+@@ -0,0 +1,34 @@
++//go:build with_gvisor
++
++package route
++
++import (
++	"github.com/sagernet/gvisor/pkg/tcpip/link/channel"
++	"github.com/sagernet/gvisor/pkg/tcpip/stack"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-tun"
++)
++
++// unbraid: the two test fixtures tun_ping_address_test.go takes from the UDP socket-sharing tests, which the Mac
++// engine doesn't carry: a gVisor TUN on a channel link, and an outbound manager with fixed tags ("proxy" the default).
++
++type udpTestTun struct {
++	tun.GVisorTun
++	link *channel.Endpoint
++}
++
++func (t udpTestTun) Name() (string, error) { return "test", nil }
++func (t udpTestTun) NewEndpoint() (stack.LinkEndpoint, stack.NICOptions, error) {
++	return t.link, stack.NICOptions{}, nil
++}
++
++type udpTestOutbounds struct {
++	adapter.OutboundManager
++	byTag map[string]adapter.Outbound
++}
++
++func (m udpTestOutbounds) Outbound(tag string) (adapter.Outbound, bool) {
++	o, ok := m.byTag[tag]
++	return o, ok
++}
++func (m udpTestOutbounds) Default() adapter.Outbound { return m.byTag["proxy"] }

@@ -1,4 +1,4 @@
-411aa2dd7d713fc9568eca8dfdf0437f5189576422e31fe00f18d52dad42c4ff  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
+a23a17b30a8a5a19374f4ef17238c4cf9699a95ff80f6517eaa87846ff1cac74  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Versions/A/Libbox
 54808197c77fea31eb2c22504c5f2b8c817d8eef1c06dd40affb23d2619a76cf  Libbox.xcframework/Info.plist
 link Versions/Current/Headers  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Headers
 link Versions/Current/Libbox  Libbox.xcframework/macos-arm64_x86_64/Libbox.framework/Libbox
@@ -28,9 +28,12 @@ patch sing-box-tun-owner-path.patch b5651cc9e622c86403d33d4ce8c728139483babf8b77
 patch sing-box-z-deps-security.patch 6f7232981cc6b802da730081d8ecc770e29da0d5e8506aa133034b77e3d2f5dc
 patch sing-box-z-lifecycle.patch 8507dcca218b4e89e6cc4e66a9dcf833fc54774332ee4367691f0c5f5091b11a
 patch sing-box-zz-mac-dns-wait-test.patch ea7f86d1f625f3d58a775b847e46bc76ce5034dd98e85e252e5e80252a42a930
+patch sing-box-zz-mac-ping-fixtures.patch dd488ef9350a8e079f596c057a54fe0f05f717e2cadb1fb5d208a075cb56369d
+patch sing-box-zz-ping-target-test.patch 408186977ad0e8cc0075d0fd2bec1d342d74a98e5f028d6af6e86d9a15e7dacf
 patch sing-openvpn-bounded-exit-notify.patch 158be8026867e9be7141ebb8669e818c7f03c9e5ad86c33e9ee6f3ad2bf1a082
 patch sing-tun-deferred-flow.patch d5136d28ecb4cc3dff9f024f5ab0d61cc831aa99ebc92bb027930bb289d41a6b
 patch sing-tun-gvisor-start-lock.patch 5b35708f895bb6bb423d7ec99c7d7bd7f66a66584f3f3adfdbe98c58174417d6
+patch sing-tun-z-reassembled-echo.patch 1498677b78393384881bbc61fcb70cd04eb29b96b79f95b3691fff360aa1a3c7
 patch sing-tun-zz-tcp-restart-ports.patch 74aaf554ae97ce26733892c1ec93c6cd4fd054defe3040eb99e0e5d5bbb0703a
 patch gvisor-local-ingress-decision.patch 857895f24195456f20e2323593a5d7f2aac7d45c365468d276b59311d59bd596
 patch gvisor-tcp-forwarder-handler.patch 8096ac53abecf099df6d907437b583feb8ab0c403a5ad8c474453ef0a5af6e42
