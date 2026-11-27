@@ -199,11 +199,16 @@ nonisolated enum Compiler {
     /// What an unattended start runs in place of a sealed copy older than the setup (`SetupStamp`): no route, no home, no
     /// tailnet, no server and no account, everything direct, but the apps and websites [setup] blocks stay blocked, with
     /// the user's kill-switch and local-network preferences. Checked by `ConfigVet.isFallback(_:blocks:)`.
+    /// The apps and websites of a proxy server route are refused as blocked ones are: the proxy can't run without its
+    /// password, which only the open app gives, and its apps never go another way. (A proxy as the default leaves the
+    /// apps that follow it Direct, as a VPN default does: the fallback never refuses everything.)
     static func staleFallback(_ setup: Setup, selfPattern: String, apps: [String: [String]]) throws -> String {
         var prefs = setup.prefs
         prefs.filter = Filter(); prefs.customDns = []
-        var s = Setup(routes: [], defaultRoute: DIRECT, apps: setup.apps.filter { $0.value == BLOCK }, favorites: [], home: Home(), prefs: prefs, servers: [])
-        s.sites = setup.sites.filter { $0.value == BLOCK }
+        let proxies = Set(setup.routes.filter { $0.socks5 != nil }.map(\.id))
+        func refused(_ to: String) -> Bool { to == BLOCK || proxies.contains(to) }
+        var s = Setup(routes: [], defaultRoute: DIRECT, apps: setup.apps.filter { refused($0.value) }.mapValues { _ in BLOCK }, favorites: [], home: Home(), prefs: prefs, servers: [])
+        s.sites = setup.sites.filter { refused($0.value) }.mapValues { _ in BLOCK }
         return try compile(Input(setup: s, links: [:], apps: apps.filter { s.apps[$0.key] != nil }, selfPattern: selfPattern, tsSuffix: nil, probe: nil))
     }
 

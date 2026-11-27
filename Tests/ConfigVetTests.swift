@@ -1033,6 +1033,66 @@ final class FallbackConfigTests: XCTestCase {
         for (i, change) in refused.enumerated() { XCTAssertFalse(ConfigVet.isFallback(try with(change), blocks: true), "change \(i)") }
     }
 
+    /// A stale copy's fallback refuses the apps and websites of a proxy server route as it refuses blocked ones (the proxy
+    /// can't run without its password, which only the open app has), and still holds no account, server or login.
+    func testAStaleCopysFallbackRefusesProxyServerApps() throws {
+        // A VPN route, a proxy server route and a block, each with an app and a website.
+        func stale(_ p: Prefs, proxy: Bool) -> Setup {
+            var s = Setup()
+            s.prefs = p
+            s.routes = [Route(id: "nl", loc: Location(countryId: 153, countryCode: "NL", country: "Netherlands"))]
+            if proxy { s.routes.append(Route(id: "p1", socks5: Socks5Profile(name: "Office proxy", host: "203.0.113.20", port: 1080, username: "me", item: "0F6C7A44-5B1E-4B7C-9D0A-3E2B1C4D5E6F"), hue: 4)) }
+            s.apps = ["com.example.blocked": BLOCK, "com.example.routed": "nl"]
+            s.sites = ["blocked.example": BLOCK, "routed.example": "nl"]
+            if proxy { s.apps["com.example.proxied"] = "p1"; s.sites["proxied.example"] = "p1" }
+            return s
+        }
+        let staleApps = ["com.example.blocked": ["^/Applications/Blocked\\.app/"], "com.example.routed": ["^/Applications/Routed\\.app/"],
+                         "com.example.proxied": ["^/Applications/Proxied\\.app/"]]
+        let engine = try ProviderFixtures.engine()
+        for p in prefs {
+            let checked = try ConfigVet.check(Compiler.staleFallback(stale(p, proxy: true), selfPattern: me, apps: staleApps))
+            XCTAssertTrue(ConfigVet.isFallback(checked, blocks: true), "\(p)\n\(checked)")
+            XCTAssertFalse(checked.contains("203.0.113.20") || checked.contains("socks") || checked.contains("username") || checked.contains("0F6C7A44"), "\(p)")
+            let walk = try EngineWalk(checked)
+            XCTAssertEqual(walk.connect("/Applications/Proxied.app/Contents/MacOS/Proxied", name: nil, ip: EngineWalk.publicAddress), "reject", "\(p)")
+            XCTAssertEqual(walk.connect("/Applications/Other.app/Contents/MacOS/Other", name: "proxied.example", ip: EngineWalk.fake), "reject", "\(p)")
+            XCTAssertEqual(walk.connect("/Applications/Blocked.app/Contents/MacOS/Blocked", name: nil, ip: EngineWalk.publicAddress), "reject", "\(p)")
+            if let engine { XCTAssertNil(ProviderFixtures.engineRefusal(checked, engine), "\(p)") }
+        }
+    }
+
+    /// Without a proxy server the stale fallback is what it was: VPN apps and websites go Direct (a known leak of the
+    /// seal round), blocks stay; a VPN route adds nothing to what the blocks alone give.
+    func testAStaleCopysFallbackWithoutAProxyIsUnchanged() throws {
+        // A VPN route, a proxy server route and a block, each with an app and a website.
+        func stale(_ p: Prefs, proxy: Bool) -> Setup {
+            var s = Setup()
+            s.prefs = p
+            s.routes = [Route(id: "nl", loc: Location(countryId: 153, countryCode: "NL", country: "Netherlands"))]
+            if proxy { s.routes.append(Route(id: "p1", socks5: Socks5Profile(name: "Office proxy", host: "203.0.113.20", port: 1080, username: "me", item: "0F6C7A44-5B1E-4B7C-9D0A-3E2B1C4D5E6F"), hue: 4)) }
+            s.apps = ["com.example.blocked": BLOCK, "com.example.routed": "nl"]
+            s.sites = ["blocked.example": BLOCK, "routed.example": "nl"]
+            if proxy { s.apps["com.example.proxied"] = "p1"; s.sites["proxied.example"] = "p1" }
+            return s
+        }
+        let staleApps = ["com.example.blocked": ["^/Applications/Blocked\\.app/"], "com.example.routed": ["^/Applications/Routed\\.app/"],
+                         "com.example.proxied": ["^/Applications/Proxied\\.app/"]]
+        for p in prefs {
+            let s = stale(p, proxy: false)
+            var blocksOnly = Setup(); blocksOnly.prefs = p
+            blocksOnly.apps = s.apps.filter { $0.value == BLOCK }; blocksOnly.sites = s.sites.filter { $0.value == BLOCK }
+            let json = try Compiler.staleFallback(s, selfPattern: me, apps: staleApps)
+            XCTAssertEqual(json, try Compiler.staleFallback(blocksOnly, selfPattern: me, apps: staleApps), "\(p)")
+            let walk = try EngineWalk(try ConfigVet.check(json))
+            XCTAssertTrue(walk.connect("/Applications/Routed.app/Contents/MacOS/Routed", name: nil, ip: EngineWalk.publicAddress).hasPrefix("exit:direct"), "\(p)")
+            XCTAssertTrue(walk.connect("/Applications/Other.app/Contents/MacOS/Other", name: "routed.example", ip: EngineWalk.fake).hasPrefix("exit:direct"), "\(p)")
+            // With a proxy too, the VPN app still goes Direct: only the proxy's apps are added to the refusals.
+            let proxied = try EngineWalk(try ConfigVet.check(Compiler.staleFallback(stale(p, proxy: true), selfPattern: me, apps: staleApps)))
+            XCTAssertTrue(proxied.connect("/Applications/Routed.app/Contents/MacOS/Routed", name: nil, ip: EngineWalk.publicAddress).hasPrefix("exit:direct"), "\(p)")
+        }
+    }
+
     func testOnlyADirectConfigurationWithoutAccountsOrServersIsAFallback() throws {
         var free = 0
         for name in try FileManager.default.contentsOfDirectory(atPath: XCTUnwrap(Bundle(for: Fixture.self).resourceURL).appending(path: "Fixtures/golden").path)
