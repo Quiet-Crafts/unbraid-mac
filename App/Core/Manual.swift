@@ -800,20 +800,45 @@ nonisolated extension Route {
         wg != nil ? "WireGuard" : ovpn != nil ? "OpenVPN" : ss != nil ? "Shadowsocks" : socks5 != nil ? "SOCKS5" : tsExit != nil ? "Tailscale exit" : nil
     }
 
-    /// What tells this route apart from another of the same name in menus: a proxy's address, an own server's kind, or a
-    /// provider route's city, server group or provider. An imported route's `loc` is the default one, no provider's.
+    /// What tells this route apart from another of the same name in menus: the address an imported route reaches (a
+    /// proxy's host and port, a WireGuard or Shadowsocks server, a named Tailscale exit), its kind where it has none to
+    /// show, or a provider route's city, server group or provider. An imported route's `loc` is the default one, no
+    /// provider's.
     var nameDetail: String? {
         if let x = socks5 { return x.endpoint }
-        if imported { return ownPlace }
+        let address = wg.map { w in String(w.endpoint[..<(w.endpoint.lastIndex(of: ":") ?? w.endpoint.endIndex)]) } ?? ss?.server ?? (tsName != nil ? tsExit : nil)
+        if imported { return address.map(Self.shown).flatMap { $0.isEmpty ? nil : $0 } ?? ownPlace }
         return loc.city ?? loc.group ?? Providers.get(loc.provider)?.name
     }
 
     /// The server [s] this route runs on, as the route's header and the menu bar name it: its name and, where the
-    /// provider publishes it, its load ("nl1256 · 9% load"). None for an imported route: its place says what it is.
+    /// provider publishes it, its load ("nl1256 · 9% load"). For an imported route the address it reaches, never a load,
+    /// and nothing where that is empty or its name already.
     func serverLine(_ s: Server) -> String? {
-        guard !imported else { return nil }
+        if imported {
+            let address = socks5?.endpoint ?? Self.shown(s.host)
+            return address.isEmpty || address == self.name ? nil : address
+        }
         let name = loc.provider == "nord" ? String(s.host.split(separator: ".").first ?? "") : s.name
         return [name, s.load >= 0 && Providers.get(loc.provider)?.hasLoad == true ? "\(s.load)% load" : nil].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// A host as a label shows it: an IPv6 address in brackets, once.
+    private static func shown(_ host: String) -> String {
+        let bare = host.hasPrefix("[") && host.hasSuffix("]") ? String(host.dropFirst().dropLast()) : host
+        return bare.contains(":") ? "[\(bare)]" : bare
+    }
+}
+
+nonisolated extension Setup {
+    /// Names for a route id in menus and labels.
+    func label(_ id: String) -> String {
+        if id == DIRECT { return "Direct" }
+        if id == BLOCK { return "Blocked" }
+        guard let r = route(id) else { return "Removed route" }
+        // Two routes with one name (same country, another city or provider) are told apart in every menu.
+        guard routes.contains(where: { $0.id != id && $0.name == r.name }) else { return r.name }
+        return r.nameDetail.map { "\(r.name) · \($0)" } ?? r.name
     }
 }
 

@@ -217,15 +217,17 @@ final class SetupImportTests: XCTestCase {
         XCTAssertNil(provider("n").ownPlace, "a provider route shows its city or Fastest")
     }
 
-    /// A provider route's server line: NordVPN's host code, another provider's server name, and the load only where the
-    /// provider publishes one.
+    /// A provider route's server line: NordVPN's host code, another provider's server name (never its host's first part),
+    /// and the load, 0% included, only where the provider publishes one.
     func testAProviderRoutesServerLineNamesItsServerAndLoad() {
         let nord = Server(name: "Netherlands #1256", host: "nl1256.nordvpn.com", ip: "203.0.113.80", publicKey: "", load: 9)
         XCTAssertEqual(provider("n").serverLine(nord), "nl1256 · 9% load")
+        var idle = nord; idle.load = 0
+        XCTAssertEqual(provider("n").serverLine(idle), "nl1256 · 0% load")
         var unknown = nord; unknown.load = -1
         XCTAssertEqual(provider("n").serverLine(unknown), "nl1256")
-        XCTAssertEqual(provider("i", "ivpn").serverLine(Server(name: "nl-ams-wg-1", host: "nl-ams-wg-1.example", ip: "", publicKey: "", load: 30)), "nl-ams-wg-1 · 30% load")
-        XCTAssertEqual(provider("m", "mullvad").serverLine(Server(name: "se-got-wg-001", host: "se-got-wg-001.example", ip: "", publicKey: "", load: 12)), "se-got-wg-001")
+        XCTAssertEqual(provider("i", "ivpn").serverLine(Server(name: "nl-ams-wg-1", host: "gw7.ams.example", ip: "", publicKey: "", load: 30)), "nl-ams-wg-1 · 30% load")
+        XCTAssertEqual(provider("m", "mullvad").serverLine(Server(name: "se-got-wg-001", host: "relay12.got.example", ip: "", publicKey: "", load: 12)), "se-got-wg-001")
     }
 
     /// Two provider routes of one name are told apart by their city, else their server group, else their provider.
@@ -239,27 +241,59 @@ final class SetupImportTests: XCTestCase {
         XCTAssertNil(provider("e", "gone").nameDetail, "a provider this build doesn't know adds nothing")
     }
 
-    /// An imported route has no provider's server code or load: its place ("SOCKS5", "WireGuard") already says what it
-    /// is, so no server line shows beside it.
-    func testAnImportedRouteShowsNoServerCodeOrLoad() {
-        let server = { (host: String) in Server(name: "x", host: host, ip: host, publicKey: "", load: 0) }
-        XCTAssertNil(Route(id: "p", socks5: local).serverLine(server("127.0.0.1")))
-        XCTAssertNil(Route(id: "q", socks5: proxy).serverLine(server("proxy.example.net")))
-        XCTAssertNil(Route(id: "w", wg: wg).serverLine(server("203.0.113.70")))
-        XCTAssertNil(Route(id: "s", ss: ss).serverLine(server("203.0.113.71")))
-        XCTAssertNil(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").serverLine(server("100.64.0.1")))
+    /// An imported route has no provider's server code or load: its server line is the address it reaches (a proxy's
+    /// host and port), nothing where that is its name already, never a load.
+    func testAnImportedRouteShowsNoServerCodeOrLoad() throws {
+        let server = { (host: String) in Server(name: "x", host: host, ip: host, publicKey: "", load: 5) }
+        XCTAssertEqual(Route(id: "p", socks5: local).serverLine(server("127.0.0.1")), "127.0.0.1:1080")
+        XCTAssertEqual(Route(id: "q", socks5: proxy).serverLine(server("proxy.example.net")), "proxy.example.net:1080")
+        XCTAssertEqual(Route(id: "w", wg: wg).serverLine(server("alpha.example")), "alpha.example")
+        XCTAssertEqual(Route(id: "w", wg: wg).serverLine(server("[2001:db8::1]")), "[2001:db8::1]")
+        XCTAssertEqual(Route(id: "s", ss: ss).serverLine(server("2001:db8::2")), "[2001:db8::2]")
+        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").serverLine(server("100.64.0.1")), "100.64.0.1")
+        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1", tsName: "").serverLine(server("100.64.0.1")), "100.64.0.1", "a row with no name still says which exit")
+        XCTAssertNil(Route(id: "t", tsExit: "100.64.0.1").serverLine(server("100.64.0.1")), "its name is its address already")
+        let o = try ovpn()
+        XCTAssertNil(Route(id: "o", ovpn: o).serverLine(Server(name: o.name, host: o.name, ip: "", publicKey: "", load: 0)), "an OpenVPN profile's server is its name")
+        XCTAssertNil(Route(id: "w", wg: wg).serverLine(server("")))
     }
 
-    /// Two imported routes of one name are told apart by what is true of them: a proxy's address, another own server's
-    /// kind; never by the provider a provider route would have.
-    func testImportedRoutesOfOneNameAreToldApartByAddressOrKind() {
+    /// Two imported routes of one name are told apart by what is true of them: the address they reach, or their kind
+    /// where there is none to show; never by the provider a provider route would have.
+    func testImportedRoutesOfOneNameAreToldApartByAddressOrKind() throws {
         XCTAssertEqual(Route(id: "p", socks5: local).nameDetail, "127.0.0.1:1080")
         var v6 = local; v6.host = "::1"; v6.port = 9050
         XCTAssertEqual(Route(id: "p", socks5: v6).nameDetail, "[::1]:9050")
         XCTAssertEqual(Route(id: "q", socks5: proxy).nameDetail, "proxy.example.net:1080")
-        XCTAssertEqual(Route(id: "w", wg: wg).nameDetail, "WireGuard")
-        XCTAssertEqual(Route(id: "s", ss: ss).nameDetail, "Shadowsocks")
-        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").nameDetail, "Tailscale exit")
+        XCTAssertEqual(Route(id: "w", wg: wg).nameDetail, "203.0.113.70")
+        var wg6 = wg; wg6.endpoint = "[2001:db8::1]:51820"
+        XCTAssertEqual(Route(id: "w", wg: wg6).nameDetail, "[2001:db8::1]")
+        XCTAssertEqual(Route(id: "s", ss: ss).nameDetail, "203.0.113.71")
+        XCTAssertEqual(Route(id: "o", ovpn: try ovpn()).nameDetail, "OpenVPN")
+        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1", tsName: "box").nameDetail, "100.64.0.1")
+        XCTAssertEqual(Route(id: "t", tsExit: "100.64.0.1").nameDetail, "Tailscale exit")
+    }
+
+    /// What menus call two routes of one name, as the sidebar, Move To and the menu bar show them.
+    func testRoutesOfOneNameAreToldApartInEveryMenu() {
+        var alpha = wg, beta = wg
+        alpha.endpoint = "alpha.example:51820"; beta.endpoint = "beta.example:51820"
+        var amsterdam = provider("n1"); amsterdam.loc.city = "Amsterdam"
+        let s = Setup(routes: [Route(id: "w1", wg: alpha), Route(id: "w2", wg: beta), Route(id: "p1", socks5: local), Route(id: "p2", socks5: proxy),
+                               provider("n0"), amsterdam, Route(id: "x1", ss: ss)], defaultRoute: DIRECT)
+        XCTAssertEqual(s.label("w1"), "Home box · alpha.example")
+        XCTAssertEqual(s.label("w2"), "Home box · beta.example")
+        XCTAssertEqual(s.label("n0"), "Netherlands · NordVPN")
+        XCTAssertEqual(s.label("n1"), "Netherlands · Amsterdam")
+        XCTAssertEqual(s.label("p1"), "Proxy on this Mac", "a name of its own needs nothing more")
+        XCTAssertEqual(s.label("x1"), "Outline")
+        var two = s
+        two.routes.append(Route(id: "p3", socks5: { var x = local; x.port = 1081; return x }()))
+        XCTAssertEqual(two.label("p1"), "Proxy on this Mac · 127.0.0.1:1080")
+        XCTAssertEqual(two.label("p3"), "Proxy on this Mac · 127.0.0.1:1081")
+        XCTAssertEqual(s.label(DIRECT), "Direct")
+        XCTAssertEqual(s.label(BLOCK), "Blocked")
+        XCTAssertEqual(s.label("gone"), "Removed route")
     }
 
     func testRemovingTheDefaultNeverHandsItToALocalProxyWithoutItsApp() {
