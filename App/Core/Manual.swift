@@ -731,7 +731,7 @@ nonisolated extension Setup {
     /// reconnect wait. One that doesn't answer blocks its apps, and the proxy app on this Mac keeps your normal connection.
     var proxyKillNote: String {
         routes.contains { $0.socks5 != nil }
-            ? " A proxy server is not a VPN: apps on one that doesn't answer are blocked, never sent another way, and a proxy app on this Mac uses your normal connection."
+            ? " If a proxy stops responding, unbraid blocks connections from apps routed through it. If your default route uses a proxy on this Mac, the app you chose to run the proxy uses your normal connection."
             : ""
     }
 
