@@ -4,6 +4,8 @@ import SwiftUI
 private enum Choice: Hashable {
     case loc(Location)
     case own(String)
+    /// A proxy server, by its keychain item (`Setup.proxyServers`, or one just added here).
+    case proxy(String)
     case ts(ip: String, name: String)
 }
 
@@ -45,6 +47,9 @@ struct PickerSheet: View {
     @State private var optionsOpen = false
     @State private var expanded: Set<Int> = []
     @State private var selection: Choice?
+    /// A proxy server added from this sheet: its password is kept, and it becomes a route only on "Use".
+    @State private var addedProxy: Socks5Profile?
+    @State private var addingProxy = false
     /// Countries offering the chosen Nord server type; nil while unknown.
     @State private var allowed: Set<String>?
     @State private var timedOut = false
@@ -69,7 +74,7 @@ struct PickerSheet: View {
         let current = route.flatMap { $0.imported ? nil : $0.loc }
         let signed = Providers.all.filter { m.accounts[$0.id] != nil }
         // A route that already uses a Tailscale exit or a saved server opens on "My Servers".
-        _mine = State(initialValue: route?.imported == true || signed.isEmpty && (s.tailscale || !s.servers.isEmpty))
+        _mine = State(initialValue: route?.imported == true || signed.isEmpty && (s.tailscale || !s.servers.isEmpty || !s.proxyServers.isEmpty))
         _viaChoice = State(initialValue: ViaChoice(entry: route?.via, native: route?.viaNative ?? false))
         _groupChoice = State(initialValue: current?.group)
         _protocolChoice = State(initialValue: current?.proto)
@@ -77,7 +82,7 @@ struct PickerSheet: View {
         var l = current.flatMap { stale($0) ? nil : $0 }
         let proto = effectiveProtocol(l?.provider, group: l?.group, choice: l?.proto)
         l?.proto = proto
-        _selection = State(initialValue: l.map(Choice.loc) ?? route.flatMap { r in r.own.map(Choice.own) ?? r.tsExit.map { Choice.ts(ip: $0, name: r.tsName ?? $0) } })
+        _selection = State(initialValue: l.map(Choice.loc) ?? route.flatMap { r in r.own.map(Choice.own) ?? r.socks5.map { Choice.proxy($0.item) } ?? r.tsExit.map { Choice.ts(ip: $0, name: r.tsName ?? $0) } })
     }
 
     // MARK: Derived
@@ -98,6 +103,11 @@ struct PickerSheet: View {
     private var q: String { query.trimmingCharacters(in: .whitespaces) }
     private var selectedLocation: Location? { if case .loc(let l) = selection { l } else { nil } }
     private func hit(_ s: String) -> Bool { q.isEmpty || s.localizedStandardContains(q) }
+    private var proxies: [Socks5Profile] {
+        let saved = model.setup.proxyServers
+        return saved + [addedProxy].compactMap { $0 }.filter { a in !saved.contains { $0.item == a.item } }
+    }
+    private func proxy(_ item: String) -> Socks5Profile? { proxies.first { $0.item == item } }
 
     private func place(_ country: Country, _ city: City? = nil) -> Location {
         Location(provider: provider?.id ?? "", countryId: country.id, countryCode: country.code, country: country.name,
@@ -119,7 +129,7 @@ struct PickerSheet: View {
         } status: {
             status
         } actions: {
-            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(applying)
+            Button("Cancel") { close() }.keyboardShortcut(.cancelAction).disabled(applying)
             Button(existingRoute != nil ? "Show \(picked ?? "…")" : "Use \(picked ?? "…")") { apply() }
                 .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil || applying || viaProblem != nil)
         }
@@ -134,6 +144,8 @@ struct PickerSheet: View {
             }
         }
         .task(id: "\(provider?.id ?? "")\(catalog.isEmpty)") { await load() }
+        // After saving, the new server is selected, so "Use [Name]" applies it.
+        .sheet(isPresented: $addingProxy) { ProxySheet { if let a = addedProxy { model.dropProxyIfUnused(a) }; addedProxy = $0; selection = .proxy($0.item) } }
     }
 
     /// An empty catalogue is fetched; a fetch that never lands is reported after a while.
@@ -175,7 +187,7 @@ struct PickerSheet: View {
     private func keepSelection(mine: Bool, provider: String?) {
         switch selection {
         case .loc(let l): if mine || l.provider != provider { selection = nil }
-        case .own, .ts: if !mine { selection = nil }
+        case .own, .proxy, .ts: if !mine { selection = nil }
         case nil: break
         }
     }
@@ -298,6 +310,7 @@ struct PickerSheet: View {
         switch selection {
         case .loc(let l): p.loc = l
         case .own(let id): if let o = model.setup.servers.first(where: { $0.id == id }) { (p.wg, p.ovpn, p.ss) = (o.wg, o.ovpn, o.ss) } else { return r }
+        case .proxy(let item): if let x = proxy(item) { p.socks5 = x } else { return r }
         case .ts(let ip, let name): (p.tsExit, p.tsName) = (ip, name)
         case nil: return r
         }
@@ -457,6 +470,7 @@ struct PickerSheet: View {
         let nodes = model.vpn.state.tsExitNodes.sorted { $0.online && !$1.online }
         let devices = nodes.filter { hit($0.name) || hit($0.ip) }
         let own = s.servers.filter { hit($0.name) || hit($0.kind) }
+        let socks = proxies.filter { hit($0.name) || hit($0.caption) }
         let exit = s.routes.first { $0.tsExit != nil }
         let typed = s.tailscale && !q.isEmpty && validNode(q) && !nodes.contains { $0.ip == q || $0.name.caseInsensitiveCompare(q) == .orderedSame } ? q : nil
         return List(selection: $selection) {
@@ -484,7 +498,7 @@ struct PickerSheet: View {
                     }
                 }
             }
-            if !own.isEmpty {
+            if !own.isEmpty || !socks.isEmpty {
                 Section("My Servers") {
                     ForEach(own) { o in
                         HStack(spacing: 10) {
@@ -495,17 +509,27 @@ struct PickerSheet: View {
                             }
                         }.tag(Choice.own(o.id))
                     }
+                    ForEach(socks, id: \.item) { x in
+                        HStack(spacing: 10) {
+                            Text("S5").font(.system(size: 11, weight: .bold)).foregroundStyle(.secondary).frame(width: 34)
+                            VStack(alignment: .leading, spacing: 0) {
+                                Text(x.name)
+                                Text(x.caption).font(.caption).foregroundStyle(.secondary)
+                            }
+                        }.tag(Choice.proxy(x.item))
+                    }
                 }
             }
-            if devices.isEmpty && own.isEmpty && typed == nil && !q.isEmpty { Text("No matches").foregroundStyle(.secondary) }
+            if devices.isEmpty && own.isEmpty && socks.isEmpty && typed == nil && !q.isEmpty { Text("No matches").foregroundStyle(.secondary) }
             if q.isEmpty {
                 Section {
                     HStack {
-                        Text(!s.tailscale && s.servers.isEmpty
+                        Text(!s.tailscale && s.servers.isEmpty && proxies.isEmpty
                              ? "No servers yet. Add a WireGuard, OpenVPN or Shadowsocks server, or turn on Tailscale, in Settings."
                              : "Add or manage servers in Settings.")
                             .font(.callout).foregroundStyle(.secondary)
                         Spacer()
+                        Button("Add Proxy Server…") { addingProxy = true }
                         Button("Open Settings") { Presentation.shared.settingsTab = 0; openSettings() }
                     }
                 }.selectionDisabled()
@@ -519,6 +543,7 @@ struct PickerSheet: View {
         switch selection {
         case .loc(let l): return l.pinned?.name ?? l.country.map { _ in l.label } ?? (hasLoad ? "Fastest anywhere" : "Automatic")
         case .own(let id): return model.setup.servers.first { $0.id == id }?.name
+        case .proxy(let item): return proxy(item)?.name
         case .ts(_, let name): return name
         case nil: return nil
         }
@@ -552,13 +577,20 @@ struct PickerSheet: View {
                 var filter: Bool??
                 if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { filter = choice }
                 applying = true
-                model.setLocation(target, l, filter: filter, via: viaTouched ? viaChoice : nil) { applying = false; if $0 { dismiss() } }
+                model.setLocation(target, l, filter: filter, via: viaTouched ? viaChoice : nil) { applying = false; if $0 { close() } }
                 return
             }
         case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s, via: route == nil || !viaTouched ? nil : viaChoice) }
+        case .proxy(let item): if let x = proxy(item) { model.useProxy(target, x) }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
         case nil: return
         }
+        close()
+    }
+
+    /// A proxy server added here but not used on "Use" (Cancel, or something else picked) doesn't keep its password.
+    private func close() {
+        if let a = addedProxy { model.dropProxyIfUnused(a) }
         dismiss()
     }
 }

@@ -137,4 +137,31 @@ final class SetupImportTests: XCTestCase {
         s.addImported("", id: "r1", signedIn: []) { $0.ss = self.ss }
         XCTAssertEqual(s.route("r1")?.hue, 2)
     }
+
+    private var proxy: Socks5Profile { Socks5Profile(name: "Office", host: "proxy.example.net", port: 1080, username: "bob", item: "6F1B5D2E-2C4A-4F8E-9B1D-3A7C5E9F0B12") }
+
+    func testProxyServersAreListedOnceAndAUseReplacesARoutesSource() {
+        let p = proxy
+        var s = Setup(routes: [Route(id: "r1", wg: wg, hue: 3, own: "s1")], defaultRoute: "r1")
+        XCTAssertEqual(s.useProxy("r1", p, id: "r9", signedIn: []), "r1")
+        let r = s.route("r1")
+        XCTAssertEqual(r?.socks5, p)
+        XCTAssertNil(r?.wg)
+        XCTAssertNil(r?.own, "the route no longer copies the saved server")
+        XCTAssertEqual(r?.hue, 3)
+        XCTAssertEqual(s.useProxy("app:com.example.mail", p, id: "r2", signedIn: []), "r2")
+        XCTAssertEqual(s.apps["com.example.mail"], "r2")
+        XCTAssertEqual(s.defaultRoute, "r1")
+        XCTAssertEqual(s.proxyServers, [p], "two routes through one proxy share its keychain item and list it once")
+    }
+
+    func testAProxyServerIsListedAsItsNamePlusSocks5HostAndPort() {
+        var s = reset
+        s.useProxy("", proxy, id: "r1", signedIn: [])
+        var v6 = proxy
+        (v6.name, v6.host, v6.port, v6.item) = ("Proxy on this Mac", "::1", 9050, "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C")
+        s.useProxy("", v6, id: "r2", signedIn: [])
+        XCTAssertEqual(s.proxyServers.map { "\($0.name) | \($0.caption)" },
+                       ["Office | SOCKS5 · proxy.example.net:1080", "Proxy on this Mac | SOCKS5 · [::1]:9050"])
+    }
 }

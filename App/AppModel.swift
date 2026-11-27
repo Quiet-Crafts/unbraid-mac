@@ -878,6 +878,29 @@ final class AppModel {
         if !secrets.isEmpty { clearClipboardAfterSave(secrets) }
     }
 
+    /// Keeps a proxy server added in its sheet: its password in the keychain, then the pasted link off the clipboard.
+    /// Nil when kept; otherwise why not, and nothing is kept.
+    func keepProxy(_ p: PendingProxy) -> String? {
+        if let password = p.password, !Socks5Secrets.set(p.profile.item, password) { return "Couldn't save the password in Keychain. Try again." }
+        p.secrets.forEach(clearClipboardIf)
+        return nil
+    }
+
+    /// Route `target` exits through proxy server `p`, whose password is already kept (`keepProxy`); returns the route id.
+    @discardableResult
+    func useProxy(_ target: String, _ p: Socks5Profile) -> String {
+        let fresh = newId("r", taken: setup.routes.map(\.id))
+        let signedIn = Set(accounts.keys)
+        var id = fresh
+        store.update { s in id = s.useProxy(target, p, id: fresh, signedIn: signedIn) }
+        return id
+    }
+
+    /// A proxy server kept in its sheet but never given to a route (the picker was cancelled): its password goes.
+    func dropProxyIfUnused(_ p: Socks5Profile) {
+        if !setup.routes.contains(where: { $0.socks5?.item == p.item }) { _ = Socks5Secrets.remove(p.item) }
+    }
+
     /// Route `target` exits through saved server `s`; returns the route id.
     @discardableResult
     func useServer(_ target: String, _ s: OwnServer, via: ViaChoice? = nil) -> String {

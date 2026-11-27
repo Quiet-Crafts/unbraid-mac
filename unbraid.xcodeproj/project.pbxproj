@@ -112,6 +112,7 @@
 		4A5FA3FDE5F9292C80D750C2 /* AutoSwitchRun.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1162A28739C2DC2345C6FC6 /* AutoSwitchRun.swift */; };
 		4BD6B80FEF68B4AD9F99BF1D /* TsLogin.swift in Sources */ = {isa = PBXBuildFile; fileRef = CC6E69C354579E2A39529D6A /* TsLogin.swift */; };
 		4C240FBFCC218D475FFF48F3 /* Catalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD2ACFB5613385EB016CE9D6 /* Catalog.swift */; };
+		4C4F7407A5ABB6ADB64A0C95 /* ProxyFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49BA1FA743EA0737FB12A4A8 /* ProxyFormTests.swift */; };
 		4D9FEBEF61793E88BCBA409C /* RouteText.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A97F4F1DEB354DA17A0545E /* RouteText.swift */; };
 		4DD10AE5BC150B86FCBF138C /* PerfFake.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D0FEDEE337217524D91E019 /* PerfFake.swift */; };
 		4DF8070839F2147F60DA3170 /* Fixtures in Resources */ = {isa = PBXBuildFile; fileRef = D52255D7E21F9B3CE0F381FA /* Fixtures */; };
@@ -278,6 +279,7 @@
 		D15D3B44AB2618EE2AF7536D /* Scrypt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 91BB1C90FA1673CBEEAF4D21 /* Scrypt.swift */; };
 		D1E1824D01228AF603C43B2F /* AppsTable.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C01D7BF00036B3C28A5F581 /* AppsTable.swift */; };
 		D3094AA28945653DEA6B8470 /* WidgetView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE83A30925AAE7D2363B21A /* WidgetView.swift */; };
+		D34FBC437FBA17446F9C6024 /* ProxySheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8AF651160E9EB732214E4935 /* ProxySheet.swift */; };
 		D3AEF1B37EA508153A00B70F /* LiveGraph.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75376280B11400D332553B6E /* LiveGraph.swift */; };
 		D40588E9663D57D1173295A7 /* Palette.swift in Sources */ = {isa = PBXBuildFile; fileRef = C885B6A78F36934F52AA1EE3 /* Palette.swift */; };
 		D521772551C9F386354C700A /* ExitCheckStateTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 261EE4615464A6502995A0E0 /* ExitCheckStateTests.swift */; };
@@ -443,6 +445,7 @@
 		45FE611A211A8590F54A4461 /* LinkPicker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkPicker.swift; sourceTree = "<group>"; };
 		46E4AF239415C7D2899745ED /* Ndt7Tests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ndt7Tests.swift; sourceTree = "<group>"; };
 		4785607FED79AD809FBF193E /* SpeedTestView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpeedTestView.swift; sourceTree = "<group>"; };
+		49BA1FA743EA0737FB12A4A8 /* ProxyFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxyFormTests.swift; sourceTree = "<group>"; };
 		4B66ABBBB806D5A530447170 /* Widgets.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Widgets.entitlements; sourceTree = "<group>"; };
 		4BBFB10D7CC0760276F8BBF3 /* StatsSitesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatsSitesTests.swift; sourceTree = "<group>"; };
 		4BC7FF123A44A862101F8D71 /* UnbraidWidgets.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UnbraidWidgets.swift; sourceTree = "<group>"; };
@@ -501,6 +504,7 @@
 		88CB31C841DA6E9DB1EB7680 /* UiStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UiStateTests.swift; sourceTree = "<group>"; };
 		8A799180C8053B12FBA00804 /* Tunnel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Tunnel.entitlements; sourceTree = "<group>"; };
 		8A8882D44810E7996091C410 /* Ivpn.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ivpn.swift; sourceTree = "<group>"; };
+		8AF651160E9EB732214E4935 /* ProxySheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ProxySheet.swift; sourceTree = "<group>"; };
 		8B106CFCAC881E2F3C2C58DC /* Ndt7.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Ndt7.swift; sourceTree = "<group>"; };
 		8BA11D9791601F194AE7176B /* UpdateCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UpdateCheck.swift; sourceTree = "<group>"; };
 		8C985551A744D041EF69DA9F /* unbraid.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = unbraid.entitlements; sourceTree = "<group>"; };
@@ -731,6 +735,7 @@
 				B10CDF892D2E0475652CD4A6 /* ProviderFixesTests.swift */,
 				CCEF33A0BE1C5BA94FD7FE22 /* ProviderFixtures.swift */,
 				0181226376E6F2E479EA9DBD /* ProviderStatusTests.swift */,
+				49BA1FA743EA0737FB12A4A8 /* ProxyFormTests.swift */,
 				FFBFF80940E76A337E1B5C0F /* QRTests.swift */,
 				DDEE78DD04165096E13E8F37 /* RedactTests.swift */,
 				787CCEEF91EE371CA53B7D97 /* RescansTests.swift */,
@@ -782,6 +787,7 @@
 				9060318165B60A1DFD49010F /* PickerSheet.swift */,
 				376782ABF6F20BB15AC667F9 /* Privacy.swift */,
 				B6944A8F14196C3770A1140F /* Profiles.swift */,
+				8AF651160E9EB732214E4935 /* ProxySheet.swift */,
 				04A67376A74E3B0D37372042 /* Publish.swift */,
 				BF3BE9CCBF3FC6123FEA8759 /* RootView.swift */,
 				0A97F4F1DEB354DA17A0545E /* RouteText.swift */,
@@ -1311,6 +1317,7 @@
 				BF79DDFCA9F381BD750A6476 /* ProtonFree.swift in Sources */,
 				7F344A358F279E4AF266F90C /* Provider.swift in Sources */,
 				D738EA50985FD4B488CAE468 /* ProviderStatus.swift in Sources */,
+				D34FBC437FBA17446F9C6024 /* ProxySheet.swift in Sources */,
 				1B8D789CADEB54C693914118 /* Publish.swift in Sources */,
 				42603CBC8BE857EB2A96FAF6 /* QR.swift in Sources */,
 				719C70AC9B92D9FBF3E21D04 /* Redact.swift in Sources */,
@@ -1471,6 +1478,7 @@
 				C8C0C4E9DC9CDEDA78560D29 /* ProviderFixtures.swift in Sources */,
 				BE706B193B0FEF062AC258B9 /* ProviderStatus.swift in Sources */,
 				EEFCC09BFF27BB192B22F609 /* ProviderStatusTests.swift in Sources */,
+				4C4F7407A5ABB6ADB64A0C95 /* ProxyFormTests.swift in Sources */,
 				656FA17B3B561FFEBFF144B7 /* QR.swift in Sources */,
 				A0B78BC1AF6E3BBD58A15B76 /* QRTests.swift in Sources */,
 				F7AD95B9EDD613592129B34A /* Redact.swift in Sources */,

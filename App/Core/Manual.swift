@@ -609,3 +609,124 @@ private nonisolated extension StringProtocol {
     func beforeLast(_ c: Character) -> String { lastIndex(of: c).map { String(self[..<$0]) } ?? String(self) }
     func afterLast(_ c: Character, missing: String? = nil) -> String { lastIndex(of: c).map { String(self[index(after: $0)...]) } ?? missing ?? String(self) }
 }
+
+/// A proxy server as the user enters it (the Add Proxy Server sheet): what is typed, the errors beside the fields, the
+/// line under them and the profile it saves. A remote proxy is added in two steps, as a weak import is: the first Add
+/// Server shows "Add Anyway", and a change to the address or port asks again.
+nonisolated struct ProxyForm: Equatable {
+    static let remoteWarning = "unbraid can't verify this proxy. SOCKS5 doesn't encrypt the connection to it. Someone on the network could see where your apps connect and read your proxy login."
+
+    var address = "" { didSet { if address != oldValue { accepted = false } } }
+    var port = "1080" { didSet { if port != oldValue { accepted = false } } }
+    var username = ""
+    var password = ""
+    var name = ""
+    /// Add was tried: from then on the errors show beside their fields.
+    private(set) var tried = false
+    /// The remote warning was accepted with Add Server; the next Add is "Add Anyway".
+    private(set) var accepted = false
+    /// The link that filled the fields, cleared from the clipboard once the server is saved.
+    private(set) var link: String?
+
+    /// A `socks5://[user[:pass]@]host[:port]` link (or `socks5h://`) typed or pasted into Address fills every field
+    /// from it, so the password never stays in Address. False, with nothing changed, for anything else.
+    mutating func fill(link text: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let scheme = t.range(of: "^socks5h?://", options: [.regularExpression, .caseInsensitive]) else { return false }
+        var rest = t[scheme.upperBound...]
+        var user = "", pass = ""
+        if let at = rest.lastIndex(of: "@") {
+            let login = rest[..<at].split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map { $0.removingPercentEncoding ?? String($0) }
+            (user, pass) = (login[0], login.count > 1 ? login[1] : "")
+            rest = rest[rest.index(after: at)...]
+        }
+        if let end = rest.firstIndex(where: { "/?#".contains($0) }) { rest = rest[..<end] }
+        var host = String(rest), port: String?
+        if rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
+            host = String(rest[rest.index(after: rest.startIndex)..<close])
+            if rest[rest.index(after: close)...].hasPrefix(":") { port = String(rest[rest.index(close, offsetBy: 2)...]) }
+        } else if rest.filter({ $0 == ":" }).count == 1, let colon = rest.firstIndex(of: ":") {
+            (host, port) = (String(rest[..<colon]), String(rest[rest.index(after: colon)...]))
+        }
+        address = host
+        if let port { self.port = port }
+        (username, password, link) = (user, pass, t)
+        return true
+    }
+
+    var host: String {
+        let h = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        return h.hasPrefix("[") && h.hasSuffix("]") ? String(h.dropFirst().dropLast()) : h
+    }
+    private var portNumber: Int? { Int(port.trimmingCharacters(in: .whitespaces)).flatMap { (1...65535).contains($0) ? $0 : nil } }
+    private var login: String? { username.isEmpty ? nil : username }
+    /// The host as the saved profile checks it (`Socks5Profile.valid`): an IPv4 or IPv6 address or a host name.
+    private var hostValid: Bool { Socks5Profile(name: "x", host: host, port: 1, item: UUID().uuidString).valid }
+    var onThisMac: Bool { hostValid && Socks5Profile(name: "", host: host, port: 1, item: "").onThisMac }
+    /// A proxy elsewhere on the network: the warning shows and Add takes two steps.
+    var remote: Bool { hostValid && !onThisMac }
+
+    var hostError: String? { tried && !hostValid ? "Enter a host name or IP address." : nil }
+    var portError: String? { tried && portNumber == nil ? "Enter a port from 1 to 65535." : nil }
+    var usernameError: String? { tried && username.utf8.count > 255 ? "Enter a username of up to 255 characters." : nil }
+    /// A SOCKS5 login carries a password of at least one character.
+    var passwordError: String? { tried && login != nil && password.isEmpty ? "Enter the password for this username." : nil }
+
+    var displayName: String {
+        let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+        return !n.isEmpty ? n : onThisMac ? "Proxy on this Mac" : String(host.prefix(40))
+    }
+    /// The sheet's status line: "SOCKS5 · proxy.example.net · Port 1080", "SOCKS5 · This Mac · Port 1080".
+    var status: String {
+        ["SOCKS5", onThisMac ? "This Mac" : host.isEmpty ? nil : host, portNumber.map { "Port \($0)" }].compactMap { $0 }.joined(separator: " · ")
+    }
+    var primaryTitle: String { accepted ? "Add Anyway" : "Add Server" }
+    /// Beside a password that will be kept: SOCKS5 sends one only with a username.
+    var passwordNote: String? { login != nil && !password.isEmpty ? "Saved in Keychain when you add the server." : nil }
+
+    /// Address edited to [new]. A socks5 link that arrives at once (a paste, not one typed character) fills every field
+    /// from it, so its password is never shown in Address.
+    mutating func setAddress(_ new: String) {
+        let old = address
+        address = new
+        if abs(new.count - old.count) != 1 { _ = fill(link: new) }
+    }
+
+    /// Add pressed: the proxy to save, or nil while a field is wrong or a remote proxy waits for Add Anyway.
+    mutating func add() -> PendingProxy? {
+        tried = true
+        guard let port = portNumber, hostError == nil, usernameError == nil, passwordError == nil else { return nil }
+        if remote && !accepted { accepted = true; return nil }
+        let profile = Socks5Profile(name: displayName, host: host, port: port, username: login, item: UUID().uuidString)
+        guard profile.valid else { return nil }
+        return PendingProxy(profile: profile, password: login == nil ? nil : password, secrets: [link, login == nil ? nil : password].compactMap { $0 })
+    }
+}
+
+/// A proxy server added in the sheet, not saved yet: its profile, its password for the keychain, and the text to clear
+/// from the clipboard once it is saved.
+nonisolated struct PendingProxy: Hashable {
+    var profile: Socks5Profile
+    var password: String?
+    var secrets: [String] = []
+}
+
+nonisolated extension Setup {
+    /// The user's proxy servers: they live on routes, and routes made from one share its keychain item, so each is
+    /// listed once, in route order.
+    var proxyServers: [Socks5Profile] {
+        var seen = Set<String>()
+        return routes.compactMap(\.socks5).filter { seen.insert($0.item).inserted }
+    }
+
+    /// Route [target] ("" a new route, "app:<key>", or a route id) exits through proxy server [p], as `addImported` does.
+    @discardableResult
+    mutating func useProxy(_ target: String, _ p: Socks5Profile, id: String, signedIn: Set<String>) -> String {
+        addImported(target, id: id, signedIn: signedIn) { $0.socks5 = p }
+    }
+}
+
+nonisolated extension Socks5Profile {
+    /// "SOCKS5 · proxy.example.net:1080", "SOCKS5 · [::1]:1080".
+    var caption: String { "SOCKS5 · \(host.contains(":") ? "[\(host)]" : host):\(port)" }
+}

@@ -297,6 +297,7 @@ struct ErrorLine: View {
 private struct ConnectionsTab: View {
     private let model = AppModel.shared
     @State private var adding = false
+    @State private var addingProxy = false
     @Binding var path: [String]
     @State private var importer = Importer()
     @State private var erasing = false
@@ -305,7 +306,8 @@ private struct ConnectionsTab: View {
     var body: some View {
         let s = model.setup
         let signed = Providers.all.filter { model.accounts[$0.id] != nil }
-        SettingsPage(title: "Providers", subtitle: "\(signed.count) provider\(signed.count == 1 ? "" : "s") · \(s.servers.count) server\(s.servers.count == 1 ? "" : "s") of your own", tile: IconTile.Tile.blue) {
+        let own = s.servers.count + s.proxyServers.count
+        SettingsPage(title: "Providers", subtitle: "\(signed.count) provider\(signed.count == 1 ? "" : "s") · \(own) server\(own == 1 ? "" : "s") of your own", tile: IconTile.Tile.blue) {
             if let n = model.notice { Section { NoticeRow(text: n) } }
             Section("Signed in") {
                 ForEach(signed, id: \.id) { p in
@@ -325,8 +327,14 @@ private struct ConnectionsTab: View {
                 Button { importer.file() } label: {
                     SettingsRow(title: "Import WireGuard or OpenVPN File…", symbol: "doc") { EmptyView() }
                 }.buttonStyle(.plain)
+                ForEach(s.proxyServers, id: \.item) { x in
+                    SettingsRow(title: x.name, caption: x.caption, symbol: "server.rack", mark: "S5") { EmptyView() }
+                }
                 Button { importer.shadowsocks() } label: {
                     SettingsRow(title: "Add Shadowsocks Link…", symbol: "link") { EmptyView() }
+                }.buttonStyle(.plain)
+                Button { addingProxy = true } label: {
+                    SettingsRow(title: "Add Proxy Server…", symbol: "network") { EmptyView() }
                 }.buttonStyle(.plain)
                 if let e = importer.error { ErrorLine(text: e) }
             }
@@ -356,6 +364,8 @@ private struct ConnectionsTab: View {
             }
         }
         .sheet(isPresented: $adding) { SignInView(first: false) }
+        // A proxy server lives on a route (it has no saved-server copy), so one added here is a new route.
+        .sheet(isPresented: $addingProxy) { ProxySheet { model.useProxy("", $0) } }
         // Saved servers made here are not routes yet: they are picked for a route in Routes.
         .importFlow(importer, target: nil)
     }
