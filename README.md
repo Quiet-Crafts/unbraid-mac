@@ -185,7 +185,10 @@ machine the network in between can see where your apps connect and read the prox
 with *Add Anyway*. If a proxy stops answering, its apps are blocked at once and don't fall back to your normal
 connection; after about three minutes the route says *Not answering*. A proxy on this Mac can be your default route once you choose the app
 that runs it: that app, and everything inside its bundle, then uses your normal connection. Removing a proxy leaves
-its password in the keychain until *Sign Out of Everything*, and a proxy route can't be used with *Via*.
+its password in the keychain until *Sign Out of Everything*, and a proxy route can't be used with *Via*. A proxy
+that needs a login, restored from a backup without its password onto a Mac that doesn't have that proxy already, keeps
+its apps blocked and can't be given the password afterwards: remove it in My Servers, add it again and put its apps
+back on it.
 
 ### Does it get around my provider's device limit?
 
