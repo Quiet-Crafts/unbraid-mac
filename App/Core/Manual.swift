@@ -698,19 +698,13 @@ nonisolated struct ProxyForm: Equatable {
     /// Beside a password that will be kept: SOCKS5 sends one only with a username.
     var passwordNote: String? { login != nil && !password.isEmpty ? "Saved in Keychain when you add the server." : nil }
 
-    /// Address edited to [new], before the field shows it. A socks5 link that arrives at once (a paste, not one typed
-    /// character), anywhere in the text, fills every field from it, so its password is never shown in Address.
+    /// Address edited to [new], before the field shows it. Address never shows a value with `://` or `@`: such text is
+    /// read as a whole socks5 link that fills every field (Address then holds its host), or Address is cleared and says
+    /// the link couldn't be read. Either way a password in it never shows.
     mutating func setAddress(_ new: String) {
-        let old = address
         linkRefused = false
-        guard abs(new.count - old.count) != 1,
-              let scheme = new.range(of: "socks5h?://", options: [.regularExpression, .caseInsensitive]) else { address = new; return }
-        // The link: from its scheme to where the text after the cursor starts again (never cutting into its login).
-        var pasted = String(new[scheme.lowerBound...])
-        let tail = zip(old.reversed(), new.reversed()).prefix { $0 == $1 }.count
-        if tail > 0, tail < pasted.count, !pasted.suffix(tail).contains("@") { pasted.removeLast(tail) }
-        // A link that can't be read is never left showing: Address keeps what it had.
-        if !fill(link: pasted) { address = old; linkRefused = true }
+        guard new.contains("://") || new.contains("@") else { address = new; return }
+        if !fill(link: new) { address = ""; linkRefused = true }
     }
 
     /// Add pressed: the proxy to save, or nil while a field is wrong or a remote proxy waits for Add Anyway.
@@ -749,11 +743,6 @@ nonisolated extension Setup {
         let made = addImported(target, id: id, signedIn: signedIn) { $0.socks5 = p }
         if keepDefault, defaultRoute == made, before != made { defaultRoute = route(before) != nil ? before : DIRECT }
         return made
-    }
-
-    /// The proxy password items [old] named that no route here names any more: their keychain items can go.
-    func proxyItemsDropped(from old: Setup) -> Set<String> {
-        Set(old.routes.compactMap(\.socks5?.item)).subtracting(routes.compactMap(\.socks5?.item))
     }
 }
 

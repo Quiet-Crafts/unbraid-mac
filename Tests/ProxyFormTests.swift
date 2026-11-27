@@ -95,18 +95,41 @@ final class ProxyFormTests: XCTestCase {
         XCTAssertEqual(g.primaryTitle, "Add Server")
     }
 
-    func testAPastedLinkFillsTheFieldsButTypingOneCharacterAtATimeDoesNot() {
+    func testALinkInAddressFillsTheFieldsHoweverItArrives() {
         var f = ProxyForm()
         f.setAddress("socks5://alice:secret@proxy.example.net:1081")
         XCTAssertEqual(f.address, "proxy.example.net")
         XCTAssertEqual(f.password, "secret")
         XCTAssertEqual(f.port, "1081")
 
+        // Typed by hand, one character at a time: from "socks5://" on, Address holds only the host.
         var typed = ProxyForm()
         for c in "socks5://h" { typed.setAddress(typed.address + String(c)) }
-        XCTAssertEqual(typed.address, "socks5://h", "a link typed by hand stays as typed, and gets the host error")
+        XCTAssertEqual(typed.address, "h")
         typed.setAddress("10.0.0.2")
-        XCTAssertEqual(typed.address, "10.0.0.2", "a host pasted over it is kept as it is")
+        XCTAssertEqual(typed.address, "10.0.0.2", "a plain host is kept as it is")
+
+        // One character longer than what was there: still read as a link.
+        var same = ProxyForm()
+        same.address = "socks5://u:p@h:108"
+        same.setAddress("socks5://u:p@h:1081")
+        XCTAssertEqual(same.address, "h")
+        XCTAssertEqual(same.password, "p")
+    }
+
+    func testAddressNeverShowsAnythingWithASchemeOrAnAt() {
+        for text in ["bob@proxy.example.net", "http://u:p@host:8080", "socks5://u:p@ss@host:1080", "proxy.socks5://u:s3cret@h:1"] {
+            var f = ProxyForm()
+            f.address = "proxy.example.net"
+            f.setAddress(text)
+            XCTAssertEqual(f.address, "", text)
+            XCTAssertEqual(f.hostError, "Couldn't read that link. Fill in the fields instead.", text)
+            XCTAssertFalse(f.status.contains("@") || f.status.contains("://"), f.status)
+        }
+        var f = ProxyForm()
+        f.setAddress("bob@x")
+        f.setAddress("proxy.example.net")
+        XCTAssertNil(f.hostError, "the next edit clears the message")
     }
 
     func testTheKeychainNoteShowsBesideAPasswordThatWillBeKept() {
@@ -169,15 +192,19 @@ final class ProxyFormTests: XCTestCase {
     }
 
     func testALinkPastedAtTheCursorNeverShowsItsPassword() {
-        for (before, after) in [("proxy.example.net", ""), ("", "proxy.example.net"), ("proxy.", "example.net"), ("server", "")] {
+        for (before, after) in [("proxy.example.net", ""), ("", "proxy.example.net"), ("proxy.", "example.net"), ("server", ""), ("", "t")] {
             var f = ProxyForm()
             f.address = before + after
             f.setAddress(before + "socks5://alice:s3cret@10.0.0.9:1081" + after)
-            XCTAssertFalse(f.address.contains("s3cret"), f.address)
+            XCTAssertFalse(f.address.contains("s3cret") || f.address.contains("@") || f.address.contains("://"), f.address)
             XCTAssertFalse(f.status.contains("s3cret"), f.status)
-            XCTAssertEqual(f.password, "s3cret", before + "|" + after)
-            XCTAssertEqual(f.port, "1081")
         }
+        // A link replacing the whole field, ending in the host that was there: the host is the link's.
+        var f = ProxyForm()
+        f.address = "proxy.example.net"
+        f.setAddress("socks5://alice:s3cret@proxy.example.net")
+        XCTAssertEqual(f.address, "proxy.example.net")
+        XCTAssertEqual(f.password, "s3cret")
     }
 
     func testTheLoginIsReadOnlyFromTheAuthority() {

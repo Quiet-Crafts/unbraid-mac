@@ -110,14 +110,6 @@ final class Store {
         var s = Self.edited(setup, f)
         guard s != setup || s.profileSalt != setup.profileSalt else { return }
         if s.profileSalt == nil { s.profileSalt = UUID().uuidString }
-        // The last route naming a proxy password went (removed, or given another source): the password goes once this
-        // setup is written, unless a route names it again by then.
-        let dropped = s.proxyItemsDropped(from: setup)
-        if !dropped.isEmpty {
-            afterSave("setup") { [weak self] in
-                for item in dropped where self?.setup.routes.contains(where: { $0.socks5?.item == item }) == false { _ = Socks5Secrets.remove(item) }
-            }
-        }
         setup = s
         // A keychain hiccup must not lose the change in memory; the next change writes again.
         save("setup", s)
