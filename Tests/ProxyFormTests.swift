@@ -167,4 +167,45 @@ final class ProxyFormTests: XCTestCase {
         XCTAssertEqual(a.secrets, ["socks5://u:pw@10.1.2.3:1080", "pw"])
         XCTAssertNil(a.profile.proxyApp)
     }
+
+    func testALinkPastedAtTheCursorNeverShowsItsPassword() {
+        for (before, after) in [("proxy.example.net", ""), ("", "proxy.example.net"), ("proxy.", "example.net"), ("server", "")] {
+            var f = ProxyForm()
+            f.address = before + after
+            f.setAddress(before + "socks5://alice:s3cret@10.0.0.9:1081" + after)
+            XCTAssertFalse(f.address.contains("s3cret"), f.address)
+            XCTAssertFalse(f.status.contains("s3cret"), f.status)
+            XCTAssertEqual(f.password, "s3cret", before + "|" + after)
+            XCTAssertEqual(f.port, "1081")
+        }
+    }
+
+    func testTheLoginIsReadOnlyFromTheAuthority() {
+        var f = ProxyForm()
+        XCTAssertTrue(f.fill(link: "socks5://proxy.example.net:1080/path@evil.example"))
+        XCTAssertEqual(f.address, "proxy.example.net")
+        XCTAssertEqual(f.username, "")
+        XCTAssertTrue(f.fill(link: "socks5://u:p@proxy.example.net:1080?x=a@b#c@d"))
+        XCTAssertEqual(f.address, "proxy.example.net")
+        XCTAssertEqual(f.password, "p")
+
+        var two = ProxyForm()
+        two.username = "kept"
+        XCTAssertFalse(two.fill(link: "socks5://u:p@ss@proxy.example.net:1080"), "an unencoded @ in the login is refused")
+        XCTAssertEqual(two.username, "kept")
+        two.setAddress("socks5://u:p@ss@proxy.example.net:1080")
+        XCTAssertFalse(two.address.contains("p@ss"), "a refused link isn't left showing in Address")
+    }
+
+    func testOnlyALoopbackAddressOrLocalhostCountsAsThisMac() {
+        for host in ["127.0.0.1", "127.8.9.10", "localhost", "LOCALHOST", "::1", "[::1]", "0:0:0:0:0:0:0:1"] {
+            var f = ProxyForm(); f.address = host
+            XCTAssertTrue(f.onThisMac, host); XCTAssertFalse(f.remote, host)
+        }
+        for host in ["proxy.localhost", "localhost.example.net", "128.0.0.1", "::2", "::ffff:127.0.0.1", "mac.local"] {
+            var f = ProxyForm(); f.address = host
+            XCTAssertFalse(f.onThisMac, host); XCTAssertTrue(f.remote, host)
+            XCTAssertNotEqual(f.displayName, "Proxy on this Mac", host)
+        }
+    }
 }

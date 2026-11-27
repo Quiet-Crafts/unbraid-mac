@@ -364,8 +364,11 @@ private struct ConnectionsTab: View {
             }
         }
         .sheet(isPresented: $adding) { SignInView(first: false) }
-        // A proxy server lives on a route (it has no saved-server copy), so one added here is a new route.
-        .sheet(isPresented: $addingProxy) { ProxySheet { model.useProxy("", $0) } }
+        // A proxy server lives on a route (it has no saved-server copy), so one added here is a new route; only the user
+        // makes it the default.
+        .sheet(isPresented: $addingProxy) {
+            ProxySheet(note: "Adding a server also creates a route for it.") { model.addProxy("", $0, keepDefault: true) }
+        }
         // Saved servers made here are not routes yet: they are picked for a route in Routes.
         .importFlow(importer, target: nil)
     }

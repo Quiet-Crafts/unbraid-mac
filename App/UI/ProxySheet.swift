@@ -1,11 +1,12 @@
 import SwiftUI
 
 /// Add Proxy Server: a SOCKS5 proxy on this Mac or elsewhere. The logic (the pasted link, the errors, the remote
-/// warning's two steps) is `ProxyForm`; this view only shows it. `added` gets the server once its password is kept.
+/// warning's two steps) is `ProxyForm`; this view only shows it. `add` saves the server, or holds it for later, and
+/// says why it couldn't; `note` is the sheet's footer.
 struct ProxySheet: View {
-    let added: (Socks5Profile) -> Void
+    var note: String?
+    let add: (PendingProxy) -> String?
 
-    private let model = AppModel.shared
     @Environment(\.dismiss) private var dismiss
     @State private var form = ProxyForm()
     @State private var saveError: String?
@@ -23,7 +24,7 @@ struct ProxySheet: View {
                     field(form.usernameError) { TextField("Username (optional)", text: $form.username) }
                     field(form.passwordError, note: form.passwordNote) { SecretField("Password (optional)", text: $form.password) }
                     TextField("Name (optional)", text: $form.name, prompt: Text(form.host.isEmpty ? "e.g. Office" : form.displayName))
-                }
+                } footer: { if let note { Text(note) } }
                 if form.remote {
                     Section {
                         Label { Text(ProxyForm.remoteWarning) } icon: {
@@ -38,7 +39,7 @@ struct ProxySheet: View {
             Text(form.status).lineLimit(1)
         } actions: {
             Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
-            Button(form.primaryTitle, action: add).keyboardShortcut(.defaultAction).contentButton(prominent: true)
+            Button(form.primaryTitle, action: submit).keyboardShortcut(.defaultAction).contentButton(prominent: true)
         }
         .frame(height: 470)
         // The password field and a pasted link stay out of screen recordings, as in the importer.
@@ -56,10 +57,9 @@ struct ProxySheet: View {
         }
     }
 
-    private func add() {
+    private func submit() {
         guard let p = form.add() else { return }
-        if let e = model.keepProxy(p) { saveError = e; return }
-        added(p.profile)
+        if let e = add(p) { saveError = e; return }
         dismiss()
     }
 }

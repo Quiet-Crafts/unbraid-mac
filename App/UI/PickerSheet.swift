@@ -47,9 +47,12 @@ struct PickerSheet: View {
     @State private var optionsOpen = false
     @State private var expanded: Set<Int> = []
     @State private var selection: Choice?
-    /// A proxy server added from this sheet: its password is kept, and it becomes a route only on "Use".
-    @State private var addedProxy: Socks5Profile?
+    /// A proxy server added from this sheet, held in memory: its password reaches the keychain, and the server a route,
+    /// only on "Use". Closing the sheet any other way leaves nothing behind.
+    @State private var addedProxy: PendingProxy?
     @State private var addingProxy = false
+    /// Why "Use" couldn't save the added proxy's password.
+    @State private var proxyError: String?
     /// Countries offering the chosen Nord server type; nil while unknown.
     @State private var allowed: Set<String>?
     @State private var timedOut = false
@@ -105,7 +108,7 @@ struct PickerSheet: View {
     private func hit(_ s: String) -> Bool { q.isEmpty || s.localizedStandardContains(q) }
     private var proxies: [Socks5Profile] {
         let saved = model.setup.proxyServers
-        return saved + [addedProxy].compactMap { $0 }.filter { a in !saved.contains { $0.item == a.item } }
+        return saved + [addedProxy?.profile].compactMap { $0 }.filter { a in !saved.contains { $0.item == a.item } }
     }
     private func proxy(_ item: String) -> Socks5Profile? { proxies.first { $0.item == item } }
 
@@ -129,7 +132,7 @@ struct PickerSheet: View {
         } status: {
             status
         } actions: {
-            Button("Cancel") { close() }.keyboardShortcut(.cancelAction).disabled(applying)
+            Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction).disabled(applying)
             Button(existingRoute != nil ? "Show \(picked ?? "…")" : "Use \(picked ?? "…")") { apply() }
                 .contentButton(prominent: true).keyboardShortcut(.defaultAction).disabled(picked == nil || applying || viaProblem != nil)
         }
@@ -145,7 +148,8 @@ struct PickerSheet: View {
         }
         .task(id: "\(provider?.id ?? "")\(catalog.isEmpty)") { await load() }
         // After saving, the new server is selected, so "Use [Name]" applies it.
-        .sheet(isPresented: $addingProxy) { ProxySheet { if let a = addedProxy { model.dropProxyIfUnused(a) }; addedProxy = $0; selection = .proxy($0.item) } }
+        .sheet(isPresented: $addingProxy) { ProxySheet { addedProxy = $0; selection = .proxy($0.profile.item); return nil } }
+        .onChange(of: selection) { proxyError = nil }
     }
 
     /// An empty catalogue is fetched; a fetch that never lands is reported after a while.
@@ -557,6 +561,7 @@ struct PickerSheet: View {
 
     private var status: some View {
         let who = target.hasPrefix("app:") ? model.apps.app(String(target.dropFirst(4)))?.name ?? "This app" : "This route"
+        if let proxyError { return Text(proxyError).lineLimit(1) }
         if existingRoute != nil, let picked { return Text("\(picked) is already a route.").lineLimit(1) }
         return Text(picked.map { "\(who) will leave through \($0)." } ?? "Pick where this route exits").lineLimit(1)
     }
@@ -577,20 +582,17 @@ struct PickerSheet: View {
                 var filter: Bool??
                 if let choice = filterChoice, let r = model.setup.route(target), !r.imported, r.loc.provider == l.provider { filter = choice }
                 applying = true
-                model.setLocation(target, l, filter: filter, via: viaTouched ? viaChoice : nil) { applying = false; if $0 { close() } }
+                model.setLocation(target, l, filter: filter, via: viaTouched ? viaChoice : nil) { applying = false; if $0 { dismiss() } }
                 return
             }
         case .own(let id): if let s = model.setup.servers.first(where: { $0.id == id }) { model.useServer(target, s, via: route == nil || !viaTouched ? nil : viaChoice) }
-        case .proxy(let item): if let x = proxy(item) { model.useProxy(target, x) }
+        case .proxy(let item):
+            if let a = addedProxy, a.profile.item == item {
+                if let e = model.addProxy(target, a) { proxyError = e; return }
+            } else if let x = proxy(item) { model.useProxy(target, x) }
         case .ts(let ip, let name): model.addTsExit(target, ip: ip, name: name)
         case nil: return
         }
-        close()
-    }
-
-    /// A proxy server added here but not used on "Use" (Cancel, or something else picked) doesn't keep its password.
-    private func close() {
-        if let a = addedProxy { model.dropProxyIfUnused(a) }
         dismiss()
     }
 }

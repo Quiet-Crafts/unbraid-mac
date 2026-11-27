@@ -155,6 +155,34 @@ final class SetupImportTests: XCTestCase {
         XCTAssertEqual(s.proxyServers, [p], "two routes through one proxy share its keychain item and list it once")
     }
 
+    func testAProxyAddedFromSettingsNeverBecomesTheDefaultByItself() {
+        var s = reset
+        XCTAssertEqual(s.useProxy("", proxy, id: "r1", signedIn: [], keepDefault: true), "r1")
+        XCTAssertEqual(s.defaultRoute, DIRECT)
+        var kept = Setup(routes: [Route(id: "r0", wg: wg)], defaultRoute: "r0")
+        kept.useProxy("", proxy, id: "r1", signedIn: [], keepDefault: true)
+        XCTAssertEqual(kept.defaultRoute, "r0")
+    }
+
+    func testAProxyPasswordGoesOnlyWhenNoRouteNamesItsItemAnyMore() {
+        var other = proxy
+        other.item = "0C6A2B1E-7D3F-4E5A-8B9C-1D2E3F4A5B6C"
+        var s = reset
+        s.useProxy("", proxy, id: "r1", signedIn: [])
+        s.useProxy("", proxy, id: "r2", signedIn: [])
+        s.useProxy("", other, id: "r3", signedIn: [])
+        let before = s
+        s.removeRoute("r1")
+        XCTAssertEqual(s.proxyItemsDropped(from: before), [], "r2 still uses the shared item")
+        let one = s
+        s.removeRoute("r2")
+        XCTAssertEqual(s.proxyItemsDropped(from: one), [proxy.item])
+        let two = s
+        s.addImported("r3", id: "r9", signedIn: []) { $0.wg = self.wg }
+        XCTAssertEqual(s.proxyItemsDropped(from: two), [other.item], "replacing the last route's source drops it too")
+        XCTAssertEqual(two.proxyItemsDropped(from: s), [], "an item only gained is never dropped")
+    }
+
     func testAProxyServerIsListedAsItsNamePlusSocks5HostAndPort() {
         var s = reset
         s.useProxy("", proxy, id: "r1", signedIn: [])

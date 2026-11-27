@@ -627,20 +627,24 @@ nonisolated struct ProxyForm: Equatable {
     private(set) var accepted = false
     /// The link that filled the fields, cleared from the clipboard once the server is saved.
     private(set) var link: String?
+    /// The last paste was a socks5 link that can't be read (`fill`); Address kept what it had.
+    private(set) var linkRefused = false
 
     /// A `socks5://[user[:pass]@]host[:port]` link (or `socks5h://`) typed or pasted into Address fills every field
     /// from it, so the password never stays in Address. False, with nothing changed, for anything else.
     mutating func fill(link text: String) -> Bool {
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let scheme = t.range(of: "^socks5h?://", options: [.regularExpression, .caseInsensitive]) else { return false }
+        // The authority ends at the first /, ? or #; a login is read only from it, and one with a second @ is refused.
         var rest = t[scheme.upperBound...]
+        if let end = rest.firstIndex(where: { "/?#".contains($0) }) { rest = rest[..<end] }
+        guard rest.filter({ $0 == "@" }).count <= 1 else { return false }
         var user = "", pass = ""
-        if let at = rest.lastIndex(of: "@") {
+        if let at = rest.firstIndex(of: "@") {
             let login = rest[..<at].split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false).map { $0.removingPercentEncoding ?? String($0) }
             (user, pass) = (login[0], login.count > 1 ? login[1] : "")
             rest = rest[rest.index(after: at)...]
         }
-        if let end = rest.firstIndex(where: { "/?#".contains($0) }) { rest = rest[..<end] }
         var host = String(rest), port: String?
         if rest.hasPrefix("["), let close = rest.firstIndex(of: "]") {
             host = String(rest[rest.index(after: rest.startIndex)..<close])
@@ -662,11 +666,21 @@ nonisolated struct ProxyForm: Equatable {
     private var login: String? { username.isEmpty ? nil : username }
     /// The host as the saved profile checks it (`Socks5Profile.valid`): an IPv4 or IPv6 address or a host name.
     private var hostValid: Bool { Socks5Profile(name: "x", host: host, port: 1, item: UUID().uuidString).valid }
-    var onThisMac: Bool { hostValid && Socks5Profile(name: "", host: host, port: 1, item: "").onThisMac }
+    /// For the warning, the name and the status line: only `localhost` itself or a loopback address (127.0.0.0/8, ::1).
+    /// Any other name, `*.localhost` included, may resolve elsewhere, so it is warned about.
+    var onThisMac: Bool {
+        let h = host.lowercased()
+        if h == "localhost" { return true }
+        if FilterServer.ipv4(h) { return h.hasPrefix("127.") }
+        var v6 = in6_addr(), loopback = in6addr_loopback
+        return inet_pton(AF_INET6, h, &v6) == 1 && memcmp(&v6, &loopback, MemoryLayout<in6_addr>.size) == 0
+    }
     /// A proxy elsewhere on the network: the warning shows and Add takes two steps.
     var remote: Bool { hostValid && !onThisMac }
 
-    var hostError: String? { tried && !hostValid ? "Enter a host name or IP address." : nil }
+    var hostError: String? {
+        linkRefused ? "Couldn't read that link. Fill in the fields instead." : tried && !hostValid ? "Enter a host name or IP address." : nil
+    }
     var portError: String? { tried && portNumber == nil ? "Enter a port from 1 to 65535." : nil }
     var usernameError: String? { tried && username.utf8.count > 255 ? "Enter a username of up to 255 characters." : nil }
     /// A SOCKS5 login carries a password of at least one character.
@@ -684,12 +698,19 @@ nonisolated struct ProxyForm: Equatable {
     /// Beside a password that will be kept: SOCKS5 sends one only with a username.
     var passwordNote: String? { login != nil && !password.isEmpty ? "Saved in Keychain when you add the server." : nil }
 
-    /// Address edited to [new]. A socks5 link that arrives at once (a paste, not one typed character) fills every field
-    /// from it, so its password is never shown in Address.
+    /// Address edited to [new], before the field shows it. A socks5 link that arrives at once (a paste, not one typed
+    /// character), anywhere in the text, fills every field from it, so its password is never shown in Address.
     mutating func setAddress(_ new: String) {
         let old = address
-        address = new
-        if abs(new.count - old.count) != 1 { _ = fill(link: new) }
+        linkRefused = false
+        guard abs(new.count - old.count) != 1,
+              let scheme = new.range(of: "socks5h?://", options: [.regularExpression, .caseInsensitive]) else { address = new; return }
+        // The link: from its scheme to where the text after the cursor starts again (never cutting into its login).
+        var pasted = String(new[scheme.lowerBound...])
+        let tail = zip(old.reversed(), new.reversed()).prefix { $0 == $1 }.count
+        if tail > 0, tail < pasted.count, !pasted.suffix(tail).contains("@") { pasted.removeLast(tail) }
+        // A link that can't be read is never left showing: Address keeps what it had.
+        if !fill(link: pasted) { address = old; linkRefused = true }
     }
 
     /// Add pressed: the proxy to save, or nil while a field is wrong or a remote proxy waits for Add Anyway.
@@ -720,9 +741,19 @@ nonisolated extension Setup {
     }
 
     /// Route [target] ("" a new route, "app:<key>", or a route id) exits through proxy server [p], as `addImported` does.
+    /// [keepDefault]: the default stays as it was (Direct if it was a route that went), even on a setup that had nothing
+    /// usable: a proxy added in Settings is only made the default by the user.
     @discardableResult
-    mutating func useProxy(_ target: String, _ p: Socks5Profile, id: String, signedIn: Set<String>) -> String {
-        addImported(target, id: id, signedIn: signedIn) { $0.socks5 = p }
+    mutating func useProxy(_ target: String, _ p: Socks5Profile, id: String, signedIn: Set<String>, keepDefault: Bool = false) -> String {
+        let before = defaultRoute
+        let made = addImported(target, id: id, signedIn: signedIn) { $0.socks5 = p }
+        if keepDefault, defaultRoute == made, before != made { defaultRoute = route(before) != nil ? before : DIRECT }
+        return made
+    }
+
+    /// The proxy password items [old] named that no route here names any more: their keychain items can go.
+    func proxyItemsDropped(from old: Setup) -> Set<String> {
+        Set(old.routes.compactMap(\.socks5?.item)).subtracting(routes.compactMap(\.socks5?.item))
     }
 }
 

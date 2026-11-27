@@ -878,27 +878,24 @@ final class AppModel {
         if !secrets.isEmpty { clearClipboardAfterSave(secrets) }
     }
 
-    /// Keeps a proxy server added in its sheet: its password in the keychain, then the pasted link off the clipboard.
-    /// Nil when kept; otherwise why not, and nothing is kept.
-    func keepProxy(_ p: PendingProxy) -> String? {
+    /// Saves a proxy server added in its sheet: its password into the keychain, then route `target` through it
+    /// (`Setup.useProxy`), then the pasted link off the clipboard once the setup is written. Nil when saved; otherwise
+    /// why not, and nothing changed.
+    func addProxy(_ target: String, _ p: PendingProxy, keepDefault: Bool = false) -> String? {
         if let password = p.password, !Socks5Secrets.set(p.profile.item, password) { return "Couldn't save the password in Keychain. Try again." }
-        p.secrets.forEach(clearClipboardIf)
+        useProxy(target, p.profile, keepDefault: keepDefault)
+        if !p.secrets.isEmpty { clearClipboardAfterSave(p.secrets) }
         return nil
     }
 
-    /// Route `target` exits through proxy server `p`, whose password is already kept (`keepProxy`); returns the route id.
+    /// Route `target` exits through a saved proxy server `p` (its password already kept); returns the route id.
     @discardableResult
-    func useProxy(_ target: String, _ p: Socks5Profile) -> String {
+    func useProxy(_ target: String, _ p: Socks5Profile, keepDefault: Bool = false) -> String {
         let fresh = newId("r", taken: setup.routes.map(\.id))
         let signedIn = Set(accounts.keys)
         var id = fresh
-        store.update { s in id = s.useProxy(target, p, id: fresh, signedIn: signedIn) }
+        store.update { s in id = s.useProxy(target, p, id: fresh, signedIn: signedIn, keepDefault: keepDefault) }
         return id
-    }
-
-    /// A proxy server kept in its sheet but never given to a route (the picker was cancelled): its password goes.
-    func dropProxyIfUnused(_ p: Socks5Profile) {
-        if !setup.routes.contains(where: { $0.socks5?.item == p.item }) { _ = Socks5Secrets.remove(p.item) }
     }
 
     /// Route `target` exits through saved server `s`; returns the route id.
